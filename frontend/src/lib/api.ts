@@ -45,7 +45,7 @@ export interface Job {
   finished: boolean
 }
 
-export type Source = 'deezer' | 'spotify' | 'itunes' | 'youtube' | 'soundcloud'
+export type Source = 'deezer' | 'itunes' | 'youtube' | 'soundcloud'
 
 export type ResultKind = 'track' | 'album' | 'artist' | 'playlist'
 

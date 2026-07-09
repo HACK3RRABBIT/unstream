@@ -3,6 +3,7 @@ import {
   ArrowDownToLine,
   Check,
   ChevronDown,
+  Download,
   LoaderCircle,
   TriangleAlert,
   X,
@@ -47,8 +48,12 @@ function TrackLine({ entry, state }: { entry: DownloadEntry; state: JobTrack }) 
       {state.status === 'done' ? (
         <a
           href={trackFileUrl(entry.jobId, state.id)}
-          className="text-[12px] font-medium text-lime-flash transition hover:text-lime-soft"
+          download
+          title={`Download ${title}.mp3`}
+          aria-label={`Download ${title} as mp3`}
+          className="flex shrink-0 items-center gap-1 rounded-md border border-ink-600 px-2 py-0.5 text-[11px] font-medium text-lime-flash transition hover:border-lime-flash/50 hover:bg-ink-800"
         >
+          <Download className="size-3" />
           mp3
         </a>
       ) : state.status === 'error' ? (
@@ -70,6 +75,8 @@ function JobCard({ entry }: { entry: DownloadEntry }) {
   const failed = job?.failed ?? 0
   const total = job?.total ?? entry.tracks.length
   const finished = job?.finished ?? false
+  // ZIP is for batches — a single song is just the mp3 link on its row.
+  const showZip = total > 1 && done > 0
 
   return (
     <div className="border-b border-ink-800 last:border-b-0">
@@ -95,10 +102,12 @@ function JobCard({ entry }: { entry: DownloadEntry }) {
             )}
           </p>
         </div>
-        {done > 0 && (
+        {showZip && (
           <a
             href={jobZipUrl(entry.jobId)}
-            title="Download ZIP"
+            download
+            title="Download all as ZIP"
+            aria-label="Download all tracks as ZIP"
             className="grid size-7 shrink-0 place-items-center rounded-lg border border-ink-600 text-ink-100 transition hover:border-lime-flash/50 hover:text-lime-flash"
           >
             <Archive className="size-3.5" />

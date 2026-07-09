@@ -98,13 +98,17 @@ export function CollectionView({ url, collection }: Props) {
             <span className="mx-1.5 text-ink-600">·</span>
             {collection.tracks.length}{' '}
             {collection.tracks.length === 1 ? 'track' : 'tracks'}
-            <span className="mx-1.5 text-ink-600">·</span>
-            {formatTotal(totalMs)}
+            {totalMs > 0 && (
+              <>
+                <span className="mx-1.5 text-ink-600">·</span>
+                {formatTotal(totalMs)}
+              </>
+            )}
           </p>
         </div>
 
         <div className="flex items-center gap-2">
-          {zipEntry && (
+          {zipEntry && (zipEntry.job?.total ?? zipEntry.tracks.length) > 1 && (
             <a
               href={jobZipUrl(zipEntry.jobId)}
               className="flex items-center gap-1.5 rounded-xl border border-ink-600 px-4 py-2.5 text-sm font-medium text-ink-100 transition hover:border-ink-400"
@@ -148,6 +152,8 @@ export function CollectionView({ url, collection }: Props) {
       <ol>
         {collection.tracks.map((track, index) => {
           const tj = jobTracks.get(track.id)
+          const queuing =
+            startTrack.isPending && startTrack.variables?.id === track.id
           return (
             <TrackRow
               key={`${track.id}-${index}`}
@@ -155,6 +161,7 @@ export function CollectionView({ url, collection }: Props) {
               track={track}
               jobId={tj?.jobId ?? null}
               state={tj?.state}
+              downloading={queuing}
               onDownload={tj ? undefined : () => startTrack.mutate(track)}
             />
           )

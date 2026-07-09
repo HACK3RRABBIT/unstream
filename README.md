@@ -16,8 +16,7 @@ Streaming services are DRM-protected, so nothing is downloaded from them directl
    - **iTunes Search API** — keyless; adds Apple Music coverage to search and resolves `music.apple.com` URLs.
    - **SoundCloud web API** — the site's own `api-v2` endpoints, using a client id scraped from its public JS bundles (the same trick yt-dlp uses). Full search parity with soundcloud.com: tracks, people, albums and playlists; artist profiles resolve to their complete uploads. Go-only (DRM) tracks are filtered out.
    - **yt-dlp** — reads public YouTube and SoundCloud pages; resolves their URLs (videos, playlists, sets, profiles) and contributes YouTube search results.
-   - **Spotify Web API** (optional) — used only if you configure credentials in `backend/.env`; falls back to embed scraping automatically on any API error.
-   Search fans out to all of these in parallel and merges the results, deduped by name + artist.
+   Search fans out to all of these in parallel and merges the results, deduped by name + artist. There is deliberately no Spotify Web API integration — since 2025 it requires the app owner to hold an active Premium subscription, and this project stays 100% free and keyless.
 2. **yt-dlp** finds the audio: tracks that already point at a YouTube/SoundCloud page download directly; everything else is searched (`ytsearch8:` on "artists - title") picking the result whose duration is closest to the catalog's (rejects live versions and hour-long mixes). Retries exclude broken uploads, and the last attempt searches SoundCloud instead of YouTube.
 3. The best audio stream is downloaded and **ffmpeg** converts it to mp3 (192 kbps); if the converter leaves raw audio behind, a direct ffmpeg pass salvages it.
 4. **mutagen** embeds ID3 tags + cover art into the file.
@@ -26,7 +25,7 @@ The FastAPI backend runs downloads on a small thread pool (3 concurrent) and exp
 
 ```
 frontend (Vite + React + Tailwind)  ──proxy /api──▶  backend (FastAPI)
-                                                      ├─ spotify.py / embed.py   Spotify URL → metadata
+                                                      ├─ embed.py                Spotify URL → metadata
                                                       ├─ deezer.py               search, artists, Deezer URLs
                                                       ├─ itunes.py               search, Apple Music URLs
                                                       ├─ ytdlp.py                YouTube/SoundCloud URLs + search
@@ -38,9 +37,9 @@ frontend (Vite + React + Tailwind)  ──proxy /api──▶  backend (FastAPI)
 
 Prereqs: Python 3.12+ with [uv](https://docs.astral.sh/uv/), Node 20+, ffmpeg (`brew install ffmpeg`).
 
-**1. Spotify credentials (optional — skip this)** — the app works without any account via embed scraping + Deezer. If you *do* want the official API path (more robust, official): create an app at [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard) and put the Client ID/Secret in `backend/.env` (copy `.env.example`). Note: since 2025 Spotify requires the app owner to have an **active Premium subscription**, otherwise all API calls are rejected — which is exactly why the no-auth path is the default.
+No accounts, keys or `.env` needed — every provider is public and keyless.
 
-**2. Backend**
+**1. Backend**
 
 ```sh
 cd backend
@@ -48,7 +47,7 @@ uv sync
 uv run uvicorn app.main:app --reload --port 8000
 ```
 
-**3. Frontend**
+**2. Frontend**
 
 ```sh
 cd frontend
@@ -83,7 +82,6 @@ unstream.amiralibg.xyz ──▶ Traefik ──▶ frontend (nginx :80) ──/a
 2. Dokploy → **Create Service → Compose**, pick the repo, compose path `./docker-compose.yml`.
 3. **Domains tab**: add `unstream.amiralibg.xyz` → service `frontend`, port `80`, HTTPS on (Let's Encrypt).
 4. DNS: `A` record `unstream` → VPS IP.
-5. (Optional) Environment tab: `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` for the official API path.
 
 Local run of the same stack: `docker compose up --build` (add a port mapping override for `frontend`, or use Dokploy's network by creating it: `docker network create dokploy-network`).
 

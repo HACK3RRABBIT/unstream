@@ -20,10 +20,8 @@ services:
     restart: always
     # Not exposed publicly — only reachable through the frontend nginx proxy
     environment:
-      # Optional: official Spotify API path. Leave unset to use the
-      # no-auth embed/Deezer providers (set in Dokploy's Environment tab).
-      - SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID:-}
-      - SPOTIFY_CLIENT_SECRET=${SPOTIFY_CLIENT_SECRET:-}
+      # How long finished downloads stay on disk before the sweeper deletes them.
+      - DOWNLOADS_TTL_HOURS=${DOWNLOADS_TTL_HOURS:-24}
     volumes:
       - downloads:/app/downloads
     networks:

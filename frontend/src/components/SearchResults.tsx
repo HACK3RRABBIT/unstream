@@ -11,7 +11,6 @@ interface Props {
 
 const SOURCE_META: Record<Source, { label: string; dot: string }> = {
   deezer: { label: 'Deezer', dot: 'bg-[#a238ff]' },
-  spotify: { label: 'Spotify', dot: 'bg-[#1db954]' },
   itunes: { label: 'Apple', dot: 'bg-[#fa5c73]' },
   youtube: { label: 'YouTube', dot: 'bg-[#ff4e45]' },
   soundcloud: { label: 'SoundCloud', dot: 'bg-[#ff7700]' },

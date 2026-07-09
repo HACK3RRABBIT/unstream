@@ -9,22 +9,17 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor, wait
 from contextlib import asynccontextmanager
 from dataclasses import asdict
-from pathlib import Path
 from urllib.parse import quote
 
-from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
-load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+from . import deezer, embed, itunes, jobs, soundcloud, ytdlp
+from .models import Collection, ProviderError, SearchResult
 
-from . import deezer, embed, itunes, jobs, soundcloud, spotify, ytdlp  # noqa: E402  (needs env loaded first)
-from .models import Collection, ProviderError, SearchResult  # noqa: E402
-
-# Every provider here is keyless and free; Spotify API creds are an
-# optional extra, never a requirement.
+# Every provider here is keyless and free — no accounts, no API credentials.
 SEARCH_TIMEOUT_SECONDS = 15
 
 
@@ -32,29 +27,29 @@ def resolve_any(url: str) -> Collection:
     """Route a URL to the right metadata provider.
 
     Deezer / Apple Music URLs go to their public JSON APIs; YouTube and
-    SoundCloud go through yt-dlp. Spotify URLs prefer the official API when
-    credentials are configured, but fall back to the public embed pages —
-    so no account or API key is ever required.
+    SoundCloud go through yt-dlp. Spotify URLs go through the public embed
+    pages — no account or API key is ever required.
     """
     if deezer.is_deezer_url(url):
         return deezer.resolve(url)
     if itunes.is_itunes_url(url):
         return itunes.resolve(url)
+    # SoundCloud via its web API first — yt-dlp flat playlists often omit
+    # titles, artwork and duration. Fall back to yt-dlp if the API is unreachable.
+    if soundcloud.is_soundcloud_url(url):
+        try:
+            return soundcloud.resolve(url)
+        except ProviderError:
+            return ytdlp.resolve(url)
     if ytdlp.is_supported_url(url):
         return ytdlp.resolve(url)
-    try:
-        kind, spotify_id = spotify.parse_url(url)
-    except spotify.SpotifyError:
-        raise ProviderError(
-            "Unsupported link — paste a Spotify, Deezer, Apple Music, "
-            "YouTube or SoundCloud URL, or search by name instead."
-        ) from None
-    if spotify.has_credentials():
-        try:
-            return spotify.resolve(url)
-        except spotify.SpotifyError:
-            pass  # e.g. Premium-required or rate limit — use the embed page
-    return embed.resolve(kind, spotify_id)
+    spotify_ref = embed.parse_url(url)
+    if spotify_ref:
+        return embed.resolve(*spotify_ref)
+    raise ProviderError(
+        "Unsupported link — paste a Spotify, Deezer, Apple Music, "
+        "YouTube or SoundCloud URL, or search by name instead."
+    )
 
 
 def _dedup_key(result: SearchResult) -> tuple[str, str, str]:
@@ -76,10 +71,7 @@ def search_any(query: str) -> list[SearchResult]:
         except Exception:
             return ytdlp.search_soundcloud(q)  # fallback: tracks only
 
-    providers = [deezer.search, itunes.search, soundcloud_search]
-    if spotify.has_credentials():
-        providers.append(spotify.search)
-    providers.append(ytdlp.search_youtube)
+    providers = [deezer.search, itunes.search, soundcloud_search, ytdlp.search_youtube]
 
     pool = ThreadPoolExecutor(max_workers=len(providers))
     futures = [pool.submit(p, query) for p in providers]

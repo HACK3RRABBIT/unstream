@@ -1,7 +1,7 @@
 """Provider-agnostic data models.
 
-Metadata can come from the official Spotify API, Spotify's public embed
-pages, Deezer, iTunes, or yt-dlp (YouTube / SoundCloud) — everything
+Metadata can come from Spotify's public embed pages, Deezer, iTunes, the
+SoundCloud web API, or yt-dlp (YouTube / SoundCloud) — everything
 downstream (downloader, jobs, API responses) only sees these shapes.
 """
 
@@ -49,4 +49,4 @@ class SearchResult:
     subtitle: str
     cover_url: str | None
     url: str
-    source: str = "deezer"  # deezer | spotify | itunes | youtube | soundcloud
+    source: str = "deezer"  # deezer | itunes | youtube | soundcloud

@@ -1,4 +1,4 @@
-import { Check, Download, TriangleAlert } from 'lucide-react'
+import { Check, Download, LoaderCircle, TriangleAlert } from 'lucide-react'
 import clsx from 'clsx'
 import { trackFileUrl, type JobTrack, type Track } from '../lib/api'
 
@@ -9,6 +9,8 @@ interface Props {
   state?: JobTrack
   /** Queue just this track; button shown while the track has no job yet. */
   onDownload?: () => void
+  /** True while the queue request for this row is in flight. */
+  downloading?: boolean
 }
 
 function formatDuration(ms: number): string {
@@ -24,7 +26,14 @@ const STAGE_LABEL: Record<string, string> = {
   retrying: 'Retrying…',
 }
 
-export function TrackRow({ index, track, jobId, state, onDownload }: Props) {
+export function TrackRow({
+  index,
+  track,
+  jobId,
+  state,
+  onDownload,
+  downloading = false,
+}: Props) {
   const status = state?.status
   const active =
     status === 'searching' ||
@@ -86,16 +95,28 @@ export function TrackRow({ index, track, jobId, state, onDownload }: Props) {
           ) : (
             <>
               <span className="text-[13px] text-ink-400 tabular-nums">
-                {formatDuration(track.duration_ms)}
+                {track.duration_ms > 0 ? formatDuration(track.duration_ms) : '—'}
               </span>
               {onDownload && (
                 <button
                   onClick={onDownload}
-                  title="Download this track"
+                  disabled={downloading}
+                  title={downloading ? 'Starting download…' : 'Download this track'}
                   aria-label={`Download ${track.title}`}
-                  className="grid size-8 shrink-0 place-items-center rounded-lg border border-ink-700 text-ink-400 transition hover:border-lime-flash/50 hover:text-lime-flash focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-flash"
+                  aria-busy={downloading}
+                  className={clsx(
+                    'grid size-8 shrink-0 place-items-center rounded-lg border transition',
+                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-flash',
+                    downloading
+                      ? 'cursor-not-allowed border-lime-flash/40 text-lime-flash opacity-70'
+                      : 'border-ink-700 text-ink-400 hover:border-lime-flash/50 hover:text-lime-flash',
+                  )}
                 >
-                  <Download className="size-4" />
+                  {downloading ? (
+                    <LoaderCircle className="size-4 animate-spin" />
+                  ) : (
+                    <Download className="size-4" />
+                  )}
                 </button>
               )}
             </>

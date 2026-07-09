@@ -24,6 +24,15 @@ _NEXT_DATA_RE = re.compile(
     r'<script id="__NEXT_DATA__" type="application/json"[^>]*>(.+?)</script>',
     re.DOTALL,
 )
+_URL_RE = re.compile(
+    r"open\.spotify\.com/(?:intl-[a-z]{2}(?:-[A-Z]{2})?/)?(track|album|playlist)/([A-Za-z0-9]+)"
+)
+
+
+def parse_url(url: str) -> tuple[str, str] | None:
+    """Extract (kind, id) from a Spotify track/album/playlist URL, else None."""
+    match = _URL_RE.search(url.strip())
+    return (match.group(1), match.group(2)) if match else None
 
 
 def _fetch_entity(kind: str, spotify_id: str) -> dict:
