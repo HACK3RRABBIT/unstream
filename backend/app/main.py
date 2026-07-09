@@ -106,7 +106,7 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="Unstream", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="Unstream", version="0.0.1", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
