@@ -86,7 +86,9 @@ export function CollectionView({ url, collection }: Props) {
           </div>
         )}
 
-        <div className="min-w-0 flex-1">
+        {/* basis keeps the title from being crushed on phones — the buttons
+            wrap to their own row instead of truncating the name */}
+        <div className="min-w-0 grow basis-40">
           <span className="text-[11px] font-semibold tracking-[0.14em] text-lime-flash uppercase">
             {KIND_LABEL[collection.kind]}
           </span>
