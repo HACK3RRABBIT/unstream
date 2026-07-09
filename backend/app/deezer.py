@@ -9,6 +9,7 @@ matter — the audio is found on YouTube either way.
 
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 from urllib.error import URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -42,52 +43,109 @@ def _get(path: str, **params) -> dict:
     return data
 
 
+def _track_result(item: dict) -> SearchResult:
+    return SearchResult(
+        kind="track",
+        id=str(item["id"]),
+        url=item.get("link", f"https://www.deezer.com/track/{item['id']}"),
+        name=item.get("title", ""),
+        subtitle=(item.get("artist") or {}).get("name", ""),
+        cover_url=(item.get("album") or {}).get("cover_medium"),
+    )
+
+
+def _album_result(item: dict, artist: str = "") -> SearchResult:
+    year = (item.get("release_date") or "")[:4]
+    record_type = (item.get("record_type") or "").upper()
+    artist = (item.get("artist") or {}).get("name") or artist
+    subtitle = " · ".join(p for p in (artist, year, record_type if record_type not in ("", "ALBUM") else "") if p)
+    return SearchResult(
+        kind="album",
+        id=str(item["id"]),
+        url=item.get("link", f"https://www.deezer.com/album/{item['id']}"),
+        name=item.get("title", ""),
+        subtitle=subtitle,
+        cover_url=item.get("cover_medium"),
+    )
+
+
+def _artist_result(item: dict) -> SearchResult:
+    count = item.get("nb_album")
+    return SearchResult(
+        kind="artist",
+        id=str(item["id"]),
+        url=item.get("link", f"https://www.deezer.com/artist/{item['id']}"),
+        name=item.get("name", ""),
+        subtitle=f"{count} releases" if count else "Artist",
+        cover_url=item.get("picture_medium"),
+    )
+
+
+def _playlist_result(item: dict) -> SearchResult:
+    owner = (item.get("user") or {}).get("name", "")
+    count = item.get("nb_tracks")
+    subtitle = " · ".join(
+        part
+        for part in (f"by {owner}" if owner else "", f"{count} tracks" if count else "")
+        if part
+    )
+    return SearchResult(
+        kind="playlist",
+        id=str(item["id"]),
+        url=item.get("link", f"https://www.deezer.com/playlist/{item['id']}"),
+        name=item.get("title", ""),
+        subtitle=subtitle,
+        cover_url=item.get("picture_medium"),
+    )
+
+
 def search(query: str) -> list[SearchResult]:
+    """Tracks, albums, artists and playlists — the four calls run in parallel."""
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        tracks = pool.submit(_get, "/search/track", q=query, limit=8)
+        albums = pool.submit(_get, "/search/album", q=query, limit=8)
+        artists = pool.submit(_get, "/search/artist", q=query, limit=6)
+        playlists = pool.submit(_get, "/search/playlist", q=query, limit=6)
+
     results: list[SearchResult] = []
-
-    for item in _get("/search/track", q=query, limit=4).get("data") or []:
-        results.append(
-            SearchResult(
-                kind="track",
-                id=str(item["id"]),
-                url=item.get("link", f"https://www.deezer.com/track/{item['id']}"),
-                name=item.get("title", ""),
-                subtitle=(item.get("artist") or {}).get("name", ""),
-                cover_url=(item.get("album") or {}).get("cover_medium"),
-            )
-        )
-
-    for item in _get("/search/album", q=query, limit=4).get("data") or []:
-        results.append(
-            SearchResult(
-                kind="album",
-                id=str(item["id"]),
-                url=item.get("link", f"https://www.deezer.com/album/{item['id']}"),
-                name=item.get("title", ""),
-                subtitle=(item.get("artist") or {}).get("name", ""),
-                cover_url=item.get("cover_medium"),
-            )
-        )
-
-    for item in _get("/search/playlist", q=query, limit=4).get("data") or []:
-        owner = (item.get("user") or {}).get("name", "")
-        count = item.get("nb_tracks")
-        subtitle = " · ".join(
-            part
-            for part in (f"by {owner}" if owner else "", f"{count} tracks" if count else "")
-            if part
-        )
-        results.append(
-            SearchResult(
-                kind="playlist",
-                id=str(item["id"]),
-                url=item.get("link", f"https://www.deezer.com/playlist/{item['id']}"),
-                name=item.get("title", ""),
-                subtitle=subtitle,
-                cover_url=item.get("picture_medium"),
-            )
-        )
+    results += [_track_result(i) for i in tracks.result().get("data") or []]
+    results += [_album_result(i) for i in albums.result().get("data") or []]
+    results += [_artist_result(i) for i in artists.result().get("data") or []]
+    results += [_playlist_result(i) for i in playlists.result().get("data") or []]
     return results
+
+
+def artist(artist_id: str) -> dict:
+    """Full artist page: profile, top tracks, and complete discography."""
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        profile_f = pool.submit(_get, f"/artist/{artist_id}")
+        top_f = pool.submit(_get, f"/artist/{artist_id}/top", limit=10)
+        albums_f = pool.submit(_get, f"/artist/{artist_id}/albums", limit=100)
+
+    profile = profile_f.result()
+    name = profile.get("name", "")
+
+    top = [_track_result(item) for item in top_f.result().get("data") or []]
+
+    # Discography is paginated via an absolute "next" URL, like playlists.
+    page = albums_f.result()
+    items = list(page.get("data") or [])
+    next_url = page.get("next")
+    while next_url:
+        page = json.loads(urlopen(Request(next_url), timeout=15).read().decode())
+        items.extend(page.get("data") or [])
+        next_url = page.get("next")
+    items.sort(key=lambda i: i.get("release_date") or "", reverse=True)
+    albums = [_album_result(item, artist=name) for item in items]
+
+    return {
+        "id": str(profile.get("id", artist_id)),
+        "name": name,
+        "picture_url": profile.get("picture_big") or profile.get("picture_medium"),
+        "fan_count": profile.get("nb_fan"),
+        "top_tracks": top,
+        "albums": albums,
+    }
 
 
 def _track_from_api(item: dict, album_name: str = "", cover_url: str | None = None) -> Track:

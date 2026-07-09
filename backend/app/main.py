@@ -1,10 +1,13 @@
-"""Unstream API — resolve Spotify URLs and download their tracks.
+"""Unstream API — resolve music URLs and download their tracks.
 
 Run with:  uvicorn app.main:app --reload --port 8000
 """
 
 import io
+import re
 import zipfile
+from concurrent.futures import ThreadPoolExecutor, wait
+from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
 from urllib.parse import quote
@@ -17,20 +20,35 @@ from pydantic import BaseModel
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
-from . import deezer, embed, jobs, spotify  # noqa: E402  (needs env loaded first)
+from . import deezer, embed, itunes, jobs, soundcloud, spotify, ytdlp  # noqa: E402  (needs env loaded first)
 from .models import Collection, ProviderError, SearchResult  # noqa: E402
+
+# Every provider here is keyless and free; Spotify API creds are an
+# optional extra, never a requirement.
+SEARCH_TIMEOUT_SECONDS = 15
 
 
 def resolve_any(url: str) -> Collection:
     """Route a URL to the right metadata provider.
 
-    Deezer URLs go to the Deezer public API. Spotify URLs prefer the
-    official API when credentials are configured, but fall back to the
-    public embed pages — so no Spotify account is ever required.
+    Deezer / Apple Music URLs go to their public JSON APIs; YouTube and
+    SoundCloud go through yt-dlp. Spotify URLs prefer the official API when
+    credentials are configured, but fall back to the public embed pages —
+    so no account or API key is ever required.
     """
     if deezer.is_deezer_url(url):
         return deezer.resolve(url)
-    kind, spotify_id = spotify.parse_url(url)  # raises if not a Spotify URL
+    if itunes.is_itunes_url(url):
+        return itunes.resolve(url)
+    if ytdlp.is_supported_url(url):
+        return ytdlp.resolve(url)
+    try:
+        kind, spotify_id = spotify.parse_url(url)
+    except spotify.SpotifyError:
+        raise ProviderError(
+            "Unsupported link — paste a Spotify, Deezer, Apple Music, "
+            "YouTube or SoundCloud URL, or search by name instead."
+        ) from None
     if spotify.has_credentials():
         try:
             return spotify.resolve(url)
@@ -39,15 +57,64 @@ def resolve_any(url: str) -> Collection:
     return embed.resolve(kind, spotify_id)
 
 
-def search_any(query: str) -> list[SearchResult]:
-    if spotify.has_credentials():
-        try:
-            return spotify.search(query)
-        except spotify.SpotifyError:
-            pass
-    return deezer.search(query)
+def _dedup_key(result: SearchResult) -> tuple[str, str, str]:
+    norm = lambda s: re.sub(r"[^a-z0-9]+", "", s.lower())  # noqa: E731
+    return result.kind, norm(result.name), norm(result.subtitle.split("·")[0])
 
-app = FastAPI(title="Unstream", version="0.1.0")
+
+def search_any(query: str) -> list[SearchResult]:
+    """Fan out to every free source in parallel and merge the results.
+
+    Providers are ordered by metadata quality — catalog APIs first, then
+    raw YouTube/SoundCloud uploads — and near-duplicates (same kind, name
+    and artist) keep only the higher-quality hit. A slow or failing source
+    never blocks the others.
+    """
+    def soundcloud_search(q: str) -> list[SearchResult]:
+        try:
+            return soundcloud.search(q)  # full parity: tracks/people/albums/sets
+        except Exception:
+            return ytdlp.search_soundcloud(q)  # fallback: tracks only
+
+    providers = [deezer.search, itunes.search, soundcloud_search]
+    if spotify.has_credentials():
+        providers.append(spotify.search)
+    providers.append(ytdlp.search_youtube)
+
+    pool = ThreadPoolExecutor(max_workers=len(providers))
+    futures = [pool.submit(p, query) for p in providers]
+    wait(futures, timeout=SEARCH_TIMEOUT_SECONDS)
+    # Don't block on stragglers — abandon anything still running.
+    pool.shutdown(wait=False, cancel_futures=True)
+
+    merged: list[SearchResult] = []
+    seen: set[tuple[str, str, str]] = set()
+    errors: list[Exception] = []
+    for future in futures:
+        if not future.done():
+            continue
+        if future.exception():
+            errors.append(future.exception())
+            continue
+        for result in future.result():
+            key = _dedup_key(result)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(result)
+
+    if not merged and errors:
+        raise ProviderError(f"Search failed: {errors[0]}")
+    return merged
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    jobs.start_sweeper()
+    yield
+
+
+app = FastAPI(title="Unstream", version="0.2.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -81,6 +148,19 @@ def search(q: str) -> dict:
     except ProviderError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {"results": [asdict(r) for r in results]}
+
+
+@app.get("/api/artist/{artist_id}")
+def artist(artist_id: str) -> dict:
+    if not artist_id.isdigit():
+        raise HTTPException(status_code=400, detail="Bad artist id")
+    try:
+        data = deezer.artist(artist_id)
+    except ProviderError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    data["top_tracks"] = [asdict(r) for r in data["top_tracks"]]
+    data["albums"] = [asdict(r) for r in data["albums"]]
+    return data
 
 
 @app.post("/api/resolve")

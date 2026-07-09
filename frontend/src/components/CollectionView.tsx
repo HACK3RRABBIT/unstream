@@ -1,15 +1,9 @@
-import { useMemo, useState } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMemo } from 'react'
+import { useMutation } from '@tanstack/react-query'
 import { Archive, Download, LoaderCircle, Music2 } from 'lucide-react'
 import clsx from 'clsx'
-import {
-  apiError,
-  getJob,
-  jobZipUrl,
-  startDownload,
-  type Collection,
-  type JobTrack,
-} from '../lib/api'
+import { apiError, jobZipUrl, type Collection, type JobTrack } from '../lib/api'
+import { useDownloads } from '../lib/downloads'
 import { TrackRow } from './TrackRow'
 
 interface Props {
@@ -26,28 +20,56 @@ function formatTotal(ms: number): string {
 }
 
 export function CollectionView({ url, collection }: Props) {
-  const [jobId, setJobId] = useState<string | null>(null)
+  // Downloads live in the global store, so they keep running (and stay
+  // visible in the dock) when the user navigates to another search.
+  // A collection can spawn several jobs for the same URL — one "Download
+  // all" plus any number of single-track ones — so merge them all here.
+  const downloads = useDownloads()
+  const entries = downloads.entriesForUrl(url)
 
   const start = useMutation({
-    mutationFn: () => startDownload(url),
-    onSuccess: setJobId,
+    mutationFn: () => downloads.start(url, collection),
   })
 
-  const job = useQuery({
-    queryKey: ['job', jobId],
-    queryFn: () => getJob(jobId!),
-    enabled: jobId !== null,
-    refetchInterval: (query) => (query.state.data?.finished ? false : 800),
+  const startTrack = useMutation({
+    mutationFn: (track: Props['collection']['tracks'][number]) =>
+      downloads.start(
+        url,
+        { ...collection, name: track.title, cover_url: track.cover_url ?? collection.cover_url },
+        [track.id],
+      ),
   })
 
+  // Latest job state per track id, plus which job it belongs to (for the
+  // per-track mp3 link). Later entries win.
   const jobTracks = useMemo(() => {
-    const map = new Map<string, JobTrack>()
-    for (const t of job.data?.tracks ?? []) map.set(t.id, t)
+    const map = new Map<string, { jobId: string; state: JobTrack }>()
+    for (const entry of entries) {
+      for (const t of entry.job?.tracks ?? []) {
+        map.set(t.id, { jobId: entry.jobId, state: t })
+      }
+    }
     return map
-  }, [job.data])
+  }, [entries])
 
   const totalMs = collection.tracks.reduce((sum, t) => sum + t.duration_ms, 0)
-  const running = jobId !== null && !job.data?.finished
+  const running = entries.some((e) => !e.job?.finished)
+  const settled = entries.reduce(
+    (n, e) => n + (e.job ? e.job.done + e.job.failed : 0),
+    0,
+  )
+  const queuedTotal = entries.reduce(
+    (n, e) => n + (e.job?.total ?? e.tracks.length),
+    0,
+  )
+  const doneTotal = entries.reduce((n, e) => n + (e.job?.done ?? 0), 0)
+  const failedTotal = entries.reduce((n, e) => n + (e.job?.failed ?? 0), 0)
+  const allFinished = entries.length > 0 && !running
+  const allTracksDone = collection.tracks.every(
+    (t) => jobTracks.get(t.id)?.state.status === 'done',
+  )
+  // ZIP covers one job — offer it for the newest job that has files.
+  const zipEntry = [...entries].reverse().find((e) => (e.job?.done ?? 0) > 0)
 
   return (
     <section className="overflow-hidden rounded-2xl border border-ink-700 bg-ink-900">
@@ -82,16 +104,16 @@ export function CollectionView({ url, collection }: Props) {
         </div>
 
         <div className="flex items-center gap-2">
-          {job.data && job.data.done > 0 && (
+          {zipEntry && (
             <a
-              href={jobZipUrl(jobId!)}
+              href={jobZipUrl(zipEntry.jobId)}
               className="flex items-center gap-1.5 rounded-xl border border-ink-600 px-4 py-2.5 text-sm font-medium text-ink-100 transition hover:border-ink-400"
             >
               <Archive className="size-4" />
-              ZIP ({job.data.done})
+              ZIP ({zipEntry.job!.done})
             </a>
           )}
-          {(!jobId || running) && (
+          {(running || !allTracksDone) && (
             <button
               onClick={() => start.mutate()}
               disabled={start.isPending || running}
@@ -104,7 +126,7 @@ export function CollectionView({ url, collection }: Props) {
               {running || start.isPending ? (
                 <>
                   <LoaderCircle className="size-4 animate-spin" />
-                  {job.data ? `${job.data.done}/${job.data.total}` : 'Starting…'}
+                  {entries.length > 0 ? `${settled}/${queuedTotal}` : 'Starting…'}
                 </>
               ) : (
                 <>
@@ -117,29 +139,33 @@ export function CollectionView({ url, collection }: Props) {
         </div>
       </div>
 
-      {start.isError && (
+      {(start.isError || startTrack.isError) && (
         <p role="alert" className="border-b border-ink-800 px-5 py-3 text-sm text-danger">
-          {apiError(start.error)}
+          {apiError(start.error ?? startTrack.error)}
         </p>
       )}
 
       <ol>
-        {collection.tracks.map((track, index) => (
-          <TrackRow
-            key={`${track.id}-${index}`}
-            index={index + 1}
-            track={track}
-            jobId={jobId}
-            state={jobTracks.get(track.id)}
-          />
-        ))}
+        {collection.tracks.map((track, index) => {
+          const tj = jobTracks.get(track.id)
+          return (
+            <TrackRow
+              key={`${track.id}-${index}`}
+              index={index + 1}
+              track={track}
+              jobId={tj?.jobId ?? null}
+              state={tj?.state}
+              onDownload={tj ? undefined : () => startTrack.mutate(track)}
+            />
+          )
+        })}
       </ol>
 
-      {job.data?.finished && (
+      {allFinished && (
         <p className="border-t border-ink-800 px-5 py-3.5 text-sm text-ink-300">
-          Finished — {job.data.done} of {job.data.total} downloaded
-          {job.data.failed > 0 && (
-            <span className="text-danger"> · {job.data.failed} failed</span>
+          Finished — {doneTotal} of {queuedTotal} downloaded
+          {failedTotal > 0 && (
+            <span className="text-danger"> · {failedTotal} failed</span>
           )}
         </p>
       )}

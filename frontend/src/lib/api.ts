@@ -45,13 +45,27 @@ export interface Job {
   finished: boolean
 }
 
+export type Source = 'deezer' | 'spotify' | 'itunes' | 'youtube' | 'soundcloud'
+
+export type ResultKind = 'track' | 'album' | 'artist' | 'playlist'
+
 export interface SearchResult {
-  kind: 'track' | 'album' | 'playlist'
+  kind: ResultKind
   id: string
   name: string
   subtitle: string
   cover_url: string | null
   url: string
+  source: Source
+}
+
+export interface ArtistDetail {
+  id: string
+  name: string
+  picture_url: string | null
+  fan_count: number | null
+  top_tracks: SearchResult[]
+  albums: SearchResult[]
 }
 
 const client = axios.create({ baseURL: '/api' })
@@ -63,16 +77,27 @@ export function apiError(err: unknown): string {
   return err instanceof Error ? err.message : 'Something went wrong'
 }
 
+const URL_PATTERNS = [
+  /open\.spotify\.com\/(intl-[a-zA-Z-]+\/)?(track|album|playlist)\//,
+  /deezer\.com\/([a-z]{2}\/)?(track|album|playlist)\/\d+/,
+  /music\.apple\.com\/([a-z]{2}\/)?(album|song)\//,
+  /(music\.|www\.|m\.)?(youtube\.com\/(watch|playlist)\?|youtu\.be\/)/,
+  /(www\.|m\.|on\.)?soundcloud\.com\/./,
+]
+
 export const isCatalogUrl = (input: string) =>
-  /open\.spotify\.com\/(intl-[a-zA-Z-]+\/)?(track|album|playlist)\/|deezer\.com\/([a-z]{2}\/)?(track|album|playlist)\/\d+/.test(
-    input,
-  )
+  URL_PATTERNS.some((re) => re.test(input))
 
 export async function searchCatalog(query: string): Promise<SearchResult[]> {
   const { data } = await client.get<{ results: SearchResult[] }>('/search', {
     params: { q: query },
   })
   return data.results
+}
+
+export async function getArtist(id: string): Promise<ArtistDetail> {
+  const { data } = await client.get<ArtistDetail>(`/artist/${id}`)
+  return data
 }
 
 export async function resolveUrl(url: string): Promise<Collection> {

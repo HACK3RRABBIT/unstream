@@ -1,8 +1,8 @@
 """Provider-agnostic data models.
 
 Metadata can come from the official Spotify API, Spotify's public embed
-pages, or Deezer — everything downstream (downloader, jobs, API responses)
-only sees these shapes.
+pages, Deezer, iTunes, or yt-dlp (YouTube / SoundCloud) — everything
+downstream (downloader, jobs, API responses) only sees these shapes.
 """
 
 from dataclasses import dataclass, field
@@ -22,6 +22,9 @@ class Track:
     cover_url: str | None
     track_number: int = 0
     release_date: str = ""
+    # Set when the track already lives on a downloadable page (YouTube or
+    # SoundCloud URL) — the downloader then skips the search step.
+    source_url: str | None = None
 
     @property
     def query(self) -> str:
@@ -40,9 +43,10 @@ class Collection:
 
 @dataclass
 class SearchResult:
-    kind: str  # "track" | "album" | "playlist"
+    kind: str  # "track" | "album" | "artist" | "playlist"
     id: str
     name: str
     subtitle: str
     cover_url: str | None
     url: str
+    source: str = "deezer"  # deezer | spotify | itunes | youtube | soundcloud

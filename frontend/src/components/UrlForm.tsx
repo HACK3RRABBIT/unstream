@@ -30,7 +30,7 @@ export function UrlForm({ loading, onSubmit, className }: Props) {
         type="text"
         value={input}
         onChange={(e) => setInput(e.target.value)}
-        placeholder="Search songs, albums, playlists — or paste a Spotify / Deezer link"
+        placeholder="Search songs, albums, artists — or paste a Spotify / Deezer / YouTube / SoundCloud link"
         spellCheck={false}
         autoFocus
         className="min-w-0 flex-1 bg-transparent text-[15px] text-ink-100 placeholder:text-ink-600 focus:outline-none"
