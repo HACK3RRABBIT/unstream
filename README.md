@@ -4,7 +4,18 @@
 
 <h1 align="center">Unstream</h1>
 
+<p align="center">
+  <img src="docs/media/hero.png" alt="Unstream — your music library, as files" />
+</p>
+
 Educational project: paste a **Spotify / Deezer / Apple Music / YouTube / SoundCloud** track, album or playlist URL — or search every catalog at once — and get tagged mp3 files. No accounts, no API keys, nothing paid.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/media/progress.png" alt="Live per-track download progress" /></td>
+    <td width="50%"><img src="docs/media/tagged.png" alt="Finished album — tagged mp3s and one-click ZIP" /></td>
+  </tr>
+</table>
 
 ## How it actually works
 
