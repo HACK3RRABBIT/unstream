@@ -1,0 +1,39 @@
+services:
+  frontend:
+    build: ./frontend
+    restart: always
+    depends_on:
+      - api
+    networks:
+      - unstream
+      # Traefik (Dokploy's proxy) reaches the container over this network;
+      # the domain itself is configured in Dokploy's Domains tab.
+      - dokploy-network
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  api:
+    build: ./backend
+    restart: always
+    # Not exposed publicly — only reachable through the frontend nginx proxy
+    environment:
+      # Optional: official Spotify API path. Leave unset to use the
+      # no-auth embed/Deezer providers (set in Dokploy's Environment tab).
+      - SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID:-}
+      - SPOTIFY_CLIENT_SECRET=${SPOTIFY_CLIENT_SECRET:-}
+    volumes:
+      - downloads:/app/downloads
+    networks:
+      - unstream
+    logging: *logging
+
+networks:
+  unstream:
+  dokploy-network:
+    external: true
+
+volumes:
+  downloads:

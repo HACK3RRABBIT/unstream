@@ -1,0 +1,13 @@
+{
+  "name": "Unstream",
+  "short_name": "Unstream",
+  "description": "Search songs, albums and playlists — or paste a Spotify / Deezer link — and download them as tagged mp3 files.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b0d0a",
+  "theme_color": "#0b0d0a",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

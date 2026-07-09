@@ -1,0 +1,17 @@
+[project]
+name = "unstream-api"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.139.0",
+    "mutagen>=1.48.1",
+    "python-dotenv>=1.2.2",
+    "spotipy>=2.26.0",
+    "uvicorn[standard]>=0.51.0",
+    "yt-dlp>=2026.7.4",
+]
+
+[dependency-groups]
+dev = [
+    "httpx2>=2.5.0",
+]

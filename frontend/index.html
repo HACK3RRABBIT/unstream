@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <title>Unstream — Download playlists &amp; albums as tagged MP3s</title>
+    <meta
+      name="description"
+      content="Search songs, albums and playlists — or paste a Spotify / Deezer link — and Unstream downloads them as clean, fully tagged mp3 files with cover art."
+    />
+    <meta name="theme-color" content="#0b0d0a" />
+
+    <!-- Icons -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+
+    <!-- Open Graph / Twitter. When deploying, replace the og:url and og:image
+         values with absolute URLs on your domain — scrapers need them. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Unstream" />
+    <meta property="og:title" content="Unstream — your music library, as files" />
+    <meta
+      property="og:description"
+      content="Search or paste a Spotify / Deezer link and download tracks, albums and playlists as tagged mp3s."
+    />
+    <meta property="og:image" content="/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Unstream — your music library, as files" />
+    <meta
+      name="twitter:description"
+      content="Search or paste a Spotify / Deezer link and download tracks, albums and playlists as tagged mp3s."
+    />
+    <meta name="twitter:image" content="/og.png" />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "Unstream",
+        "applicationCategory": "MultimediaApplication",
+        "operatingSystem": "Web",
+        "description": "Search songs, albums and playlists — or paste a Spotify / Deezer link — and download them as tagged mp3 files.",
+        "offers": { "@type": "Offer", "price": "0" }
+      }
+    </script>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
