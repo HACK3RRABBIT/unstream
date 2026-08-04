@@ -1,11 +1,4 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react'
+import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react'
 import { CircleAlert, CircleCheck, Info, X } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -73,9 +66,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 : toast.kind === 'error'
                   ? 'border-danger/40'
                   : 'border-ink-700',
-              toast.leaving
-                ? 'translate-y-1 scale-[0.97] opacity-0'
-                : 'animate-toast-in',
+              toast.leaving ? 'translate-y-1 scale-[0.97] opacity-0' : 'animate-toast-in',
             )}
           >
             {KIND_ICON[toast.kind]}

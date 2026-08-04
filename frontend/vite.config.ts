@@ -25,10 +25,7 @@ function pwaServiceWorker(): PluginOption {
     closeBundle() {
       const html = readFileSync(resolve(outDir, 'index.html'))
       const version = createHash('sha256').update(html).digest('hex').slice(0, 16)
-      const sw = readFileSync(SW_TEMPLATE, 'utf8').replaceAll(
-        '__UNSTREAM_BUILD__',
-        version,
-      )
+      const sw = readFileSync(SW_TEMPLATE, 'utf8').replaceAll('__UNSTREAM_BUILD__', version)
       writeFileSync(resolve(outDir, 'sw.js'), sw)
     },
   }

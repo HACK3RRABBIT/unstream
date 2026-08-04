@@ -1,19 +1,8 @@
 import type { CSSProperties } from 'react'
-import {
-  Check,
-  Download,
-  LoaderCircle,
-  Pause,
-  Play,
-  TriangleAlert,
-} from 'lucide-react'
+import { Check, Download, LoaderCircle, Pause, Play, TriangleAlert } from 'lucide-react'
 import clsx from 'clsx'
 import { trackFileUrl, type JobTrack, type Track } from '../lib/api'
-import {
-  togglePreview,
-  usePlayingPreviewId,
-  usePreviewLoading,
-} from '../lib/preview'
+import { togglePreview, usePlayingPreviewId, usePreviewLoading } from '../lib/preview'
 
 interface Props {
   index: number
@@ -83,10 +72,7 @@ export function TrackRow({
   const isCurrentPreview = playingId === track.id
 
   return (
-    <li
-      style={style}
-      className="group relative border-b border-ink-800 last:border-b-0"
-    >
+    <li style={style} className="group relative border-b border-ink-800 last:border-b-0">
       <div className="flex items-center gap-4 px-5 py-3 transition-colors group-hover:bg-ink-800/40">
         {onToggleSelect && (
           <button
@@ -132,9 +118,7 @@ export function TrackRow({
           >
             {track.title}
           </p>
-          <p className="truncate text-mini text-ink-400">
-            {track.artists.join(', ')}
-          </p>
+          <p className="truncate text-mini text-ink-400">{track.artists.join(', ')}</p>
         </div>
 
         <div className="flex shrink-0 items-center gap-3">
@@ -190,8 +174,7 @@ export function TrackRow({
               )}
             >
               {STAGE_LABEL[status!]}
-              {status === 'downloading' &&
-                ` ${Math.round((state?.progress ?? 0) * 100)}%`}
+              {status === 'downloading' && ` ${Math.round((state?.progress ?? 0) * 100)}%`}
             </span>
           ) : (
             <>

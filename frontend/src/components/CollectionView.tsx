@@ -1,14 +1,6 @@
 import { useMemo, useState, type CSSProperties } from 'react'
 import { useMutation } from '@tanstack/react-query'
-import {
-  Archive,
-  Check,
-  Download,
-  Link2,
-  LoaderCircle,
-  Music2,
-  X,
-} from 'lucide-react'
+import { Archive, Check, Download, Link2, LoaderCircle, Music2, X } from 'lucide-react'
 import clsx from 'clsx'
 import { apiError, jobZipUrl, type Collection, type JobTrack } from '../lib/api'
 import { useDownloads } from '../lib/downloads'
@@ -68,8 +60,7 @@ export function CollectionView({ url, collection }: Props) {
 
   const start = useMutation({
     mutationFn: () => downloads.start(url, collection),
-    onSuccess: () =>
-      push(`Queued ${trackWord(collection.tracks.length)} from ${collection.name}`),
+    onSuccess: () => push(`Queued ${trackWord(collection.tracks.length)} from ${collection.name}`),
     onError: (err) => push(apiError(err), 'error'),
   })
 
@@ -107,20 +98,12 @@ export function CollectionView({ url, collection }: Props) {
 
   const totalMs = collection.tracks.reduce((sum, t) => sum + t.duration_ms, 0)
   const running = entries.some((e) => !e.job?.finished)
-  const settled = entries.reduce(
-    (n, e) => n + (e.job ? e.job.done + e.job.failed : 0),
-    0,
-  )
-  const queuedTotal = entries.reduce(
-    (n, e) => n + (e.job?.total ?? e.tracks.length),
-    0,
-  )
+  const settled = entries.reduce((n, e) => n + (e.job ? e.job.done + e.job.failed : 0), 0)
+  const queuedTotal = entries.reduce((n, e) => n + (e.job?.total ?? e.tracks.length), 0)
   const doneTotal = entries.reduce((n, e) => n + (e.job?.done ?? 0), 0)
   const failedTotal = entries.reduce((n, e) => n + (e.job?.failed ?? 0), 0)
   const allFinished = entries.length > 0 && !running
-  const allTracksDone = collection.tracks.every(
-    (t) => jobTracks.get(t.id)?.state.status === 'done',
-  )
+  const allTracksDone = collection.tracks.every((t) => jobTracks.get(t.id)?.state.status === 'done')
   // ZIP covers one job — offer it for the newest job that has files.
   const zipEntry = [...entries].reverse().find((e) => (e.job?.done ?? 0) > 0)
 
@@ -151,8 +134,7 @@ export function CollectionView({ url, collection }: Props) {
           <p className="mt-1 text-mini text-ink-300">
             {collection.owner}
             <span className="mx-1.5 text-ink-600">·</span>
-            {collection.tracks.length}{' '}
-            {collection.tracks.length === 1 ? 'track' : 'tracks'}
+            {collection.tracks.length} {collection.tracks.length === 1 ? 'track' : 'tracks'}
             {totalMs > 0 && (
               <>
                 <span className="mx-1.5 text-ink-600">·</span>
@@ -268,8 +250,7 @@ export function CollectionView({ url, collection }: Props) {
       <ol className="stagger">
         {collection.tracks.map((track, index) => {
           const tj = jobTracks.get(track.id)
-          const queuing =
-            startTrack.isPending && startTrack.variables?.id === track.id
+          const queuing = startTrack.isPending && startTrack.variables?.id === track.id
           return (
             <TrackRow
               key={`${track.id}-${index}`}
@@ -293,9 +274,7 @@ export function CollectionView({ url, collection }: Props) {
         <p className="flex animate-fade-up items-center gap-2 border-t border-ink-800 px-5 py-3.5 text-mini text-ink-300">
           <Check className="size-4 shrink-0 text-lime-flash" />
           Finished — {doneTotal} of {queuedTotal} downloaded
-          {failedTotal > 0 && (
-            <span className="text-danger">· {failedTotal} failed</span>
-          )}
+          {failedTotal > 0 && <span className="text-danger">· {failedTotal} failed</span>}
         </p>
       )}
     </section>

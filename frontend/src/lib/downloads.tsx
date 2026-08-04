@@ -59,29 +59,24 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
   // (time, settled-count) samples per job, for ETA estimation.
   const samplesRef = useRef<Map<string, { t: number; settled: number }[]>>(new Map())
 
-  const start = useCallback(
-    async (url: string, collection: Collection, trackIds?: string[]) => {
-      const jobId = await startDownload(url, trackIds)
-      const wanted = trackIds ? new Set(trackIds) : null
-      setEntries((prev) => [
-        ...prev,
-        {
-          jobId,
-          url,
-          name: collection.name,
-          kind: collection.kind,
-          cover_url: collection.cover_url,
-          tracks: wanted
-            ? collection.tracks.filter((t) => wanted.has(t.id))
-            : collection.tracks,
-          job: null,
-          etaSeconds: null,
-        },
-      ])
-      setPanelOpen(true)
-    },
-    [],
-  )
+  const start = useCallback(async (url: string, collection: Collection, trackIds?: string[]) => {
+    const jobId = await startDownload(url, trackIds)
+    const wanted = trackIds ? new Set(trackIds) : null
+    setEntries((prev) => [
+      ...prev,
+      {
+        jobId,
+        url,
+        name: collection.name,
+        kind: collection.kind,
+        cover_url: collection.cover_url,
+        tracks: wanted ? collection.tracks.filter((t) => wanted.has(t.id)) : collection.tracks,
+        job: null,
+        etaSeconds: null,
+      },
+    ])
+    setPanelOpen(true)
+  }, [])
 
   const startFromResult = useCallback(
     async (result: SearchResult) => {
@@ -131,10 +126,7 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
               const dt = (now - first.t) / 1000
               const dSettled = settled - first.settled
               if (dt > 3 && dSettled > 0) {
-                etaSeconds = Math.max(
-                  1,
-                  Math.round((job.total - settled) / (dSettled / dt)),
-                )
+                etaSeconds = Math.max(1, Math.round((job.total - settled) / (dSettled / dt)))
               }
             }
             return { ...e, job, etaSeconds }
@@ -146,10 +138,7 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(timer)
   }, [])
 
-  const activeCount = useMemo(
-    () => entries.filter((e) => !isFinished(e)).length,
-    [entries],
-  )
+  const activeCount = useMemo(() => entries.filter((e) => !isFinished(e)).length, [entries])
 
   const entriesForUrl = useCallback(
     (url: string) => entriesRef.current.filter((e) => e.url === url),
@@ -158,10 +147,7 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
     [entries],
   )
 
-  const entryForUrl = useCallback(
-    (url: string) => entriesForUrl(url).at(-1),
-    [entriesForUrl],
-  )
+  const entryForUrl = useCallback((url: string) => entriesForUrl(url).at(-1), [entriesForUrl])
 
   const value = useMemo(
     () => ({

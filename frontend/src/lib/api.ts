@@ -21,13 +21,7 @@ export interface Collection {
 }
 
 export type TrackStatus =
-  | 'queued'
-  | 'searching'
-  | 'downloading'
-  | 'tagging'
-  | 'retrying'
-  | 'done'
-  | 'error'
+  'queued' | 'searching' | 'downloading' | 'tagging' | 'retrying' | 'done' | 'error'
 
 export interface JobTrack {
   id: string
@@ -95,13 +89,9 @@ const URL_PATTERNS = [
   /(www\.|m\.|on\.)?soundcloud\.com\/./,
 ]
 
-export const isCatalogUrl = (input: string) =>
-  URL_PATTERNS.some((re) => re.test(input))
+export const isCatalogUrl = (input: string) => URL_PATTERNS.some((re) => re.test(input))
 
-export async function searchCatalog(
-  query: string,
-  page = 0,
-): Promise<SearchPage> {
+export async function searchCatalog(query: string, page = 0): Promise<SearchPage> {
   const { data } = await client.get<SearchPage>('/search', {
     params: { q: query, page },
   })
@@ -109,10 +99,7 @@ export async function searchCatalog(
 }
 
 /** Append a page, dropping anything already on screen. */
-export function mergeResults(
-  current: SearchResult[],
-  incoming: SearchResult[],
-): SearchResult[] {
+export function mergeResults(current: SearchResult[], incoming: SearchResult[]): SearchResult[] {
   const seen = new Set(current.map((r) => r.dedup_key))
   const fresh: SearchResult[] = []
   for (const result of incoming) {
@@ -133,10 +120,7 @@ export async function resolveUrl(url: string): Promise<Collection> {
   return data
 }
 
-export async function startDownload(
-  url: string,
-  trackIds?: string[],
-): Promise<string> {
+export async function startDownload(url: string, trackIds?: string[]): Promise<string> {
   const { data } = await client.post<{ job_id: string }>('/download', {
     url,
     track_ids: trackIds ?? null,

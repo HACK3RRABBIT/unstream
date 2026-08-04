@@ -85,12 +85,8 @@ function TrackList({
               </div>
             )}
             <div className="min-w-0 flex-1">
-              <p className="truncate text-body font-medium text-ink-100">
-                {item.name}
-              </p>
-              {item.subtitle && (
-                <p className="truncate text-mini text-ink-400">{item.subtitle}</p>
-              )}
+              <p className="truncate text-body font-medium text-ink-100">{item.name}</p>
+              {item.subtitle && <p className="truncate text-mini text-ink-400">{item.subtitle}</p>}
             </div>
             <SourceBadge source={item.source} />
           </button>
@@ -159,12 +155,7 @@ function CardGrid({
               {item.name}
             </p>
             {item.subtitle && (
-              <p
-                className={clsx(
-                  'truncate text-xs text-ink-400',
-                  round && 'text-center',
-                )}
-              >
+              <p className={clsx('truncate text-xs text-ink-400', round && 'text-center')}>
                 {item.subtitle}
               </p>
             )}
@@ -175,14 +166,7 @@ function CardGrid({
   )
 }
 
-export function SearchResults({
-  query,
-  results,
-  hasMore,
-  loadingMore,
-  onLoadMore,
-  onPick,
-}: Props) {
+export function SearchResults({ query, results, hasMore, loadingMore, onLoadMore, onPick }: Props) {
   const [tab, setTab] = useState<Tab>('all')
 
   const grouped = useMemo(() => {
@@ -199,12 +183,9 @@ export function SearchResults({
     return (
       <section className="rounded-panel border border-ink-700 bg-ink-900 px-5 py-14 text-center">
         <SearchX className="mx-auto size-7 text-ink-600" />
-        <p className="mt-3 text-body font-medium text-ink-100">
-          Nothing found for “{query}”
-        </p>
+        <p className="mt-3 text-body font-medium text-ink-100">Nothing found for “{query}”</p>
         <p className="mx-auto mt-1.5 max-w-xs text-mini text-ink-400">
-          Try the artist name alone, check the spelling, or paste a link to the
-          album instead.
+          Try the artist name alone, check the spelling, or paste a link to the album instead.
         </p>
       </section>
     )
@@ -288,11 +269,7 @@ export function SearchResults({
               </div>
               {kind === 'track' || kind === 'playlist' ? (
                 <div className="pb-2">
-                  <TrackList
-                    items={shown}
-                    downloadable={kind === 'track'}
-                    onPick={onPick}
-                  />
+                  <TrackList items={shown} downloadable={kind === 'track'} onPick={onPick} />
                 </div>
               ) : (
                 <CardGrid items={shown} round={kind === 'artist'} onPick={onPick} />

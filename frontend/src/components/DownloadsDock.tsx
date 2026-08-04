@@ -186,9 +186,7 @@ export function DownloadsDock() {
               Downloads
             </h2>
             <span className="text-xs text-ink-400 tabular-nums">
-              {activeCount > 0
-                ? `${activeCount} in progress`
-                : `${entries.length} finished`}
+              {activeCount > 0 ? `${activeCount} in progress` : `${entries.length} finished`}
             </span>
           </header>
           <div className="max-h-[55vh] overflow-y-auto">
@@ -208,13 +206,17 @@ export function DownloadsDock() {
         {activeCount > 0 && (
           <svg viewBox="0 0 56 56" className="absolute inset-0 -rotate-90">
             <circle
-              cx="28" cy="28" r="26"
+              cx="28"
+              cy="28"
+              r="26"
               fill="none"
               className="stroke-lime-ink/20"
               strokeWidth="2.5"
             />
             <circle
-              cx="28" cy="28" r="26"
+              cx="28"
+              cy="28"
+              r="26"
               fill="none"
               className="stroke-lime-ink transition-[stroke-dashoffset] duration-500"
               strokeWidth="2.5"

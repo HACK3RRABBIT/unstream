@@ -1,167 +1,167 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 
 @theme {
-    --font-display: "Space Grotesk", system-ui, sans-serif;
-    --font-sans: "Inter", system-ui, sans-serif;
+  --font-display: 'Space Grotesk', system-ui, sans-serif;
+  --font-sans: 'Inter', system-ui, sans-serif;
 
-    /* Green-tinted dark neutrals */
-    --color-ink-950: #0b0d0a;
-    --color-ink-900: #121510;
-    --color-ink-800: #1a1e17;
-    --color-ink-700: #242a20;
-    --color-ink-600: #39412f;
-    --color-ink-400: #79816f;
-    --color-ink-300: #a3ab98;
-    --color-ink-100: #e9ece4;
+  /* Green-tinted dark neutrals */
+  --color-ink-950: #0b0d0a;
+  --color-ink-900: #121510;
+  --color-ink-800: #1a1e17;
+  --color-ink-700: #242a20;
+  --color-ink-600: #39412f;
+  --color-ink-400: #79816f;
+  --color-ink-300: #a3ab98;
+  --color-ink-100: #e9ece4;
 
-    /* Lime accent — the only chromatic colour in the UI. It marks the one
+  /* Lime accent — the only chromatic colour in the UI. It marks the one
        primary action per surface and the "this is playing / this is done"
        state. It is never used for borders, body text or decoration. */
-    --color-lime-flash: #c8f24f;
-    --color-lime-soft: #d8f97a;
-    --color-lime-ink: #171c05;
+  --color-lime-flash: #c8f24f;
+  --color-lime-soft: #d8f97a;
+  --color-lime-ink: #171c05;
 
-    --color-danger: #f0705f;
+  --color-danger: #f0705f;
 
-    /* Type ramp — meta / control / content / headings. Nothing off-scale. */
-    --text-micro: 0.6875rem; /* 11px — uppercase eyebrows */
-    --text-micro--line-height: 1.4;
-    --text-mini: 0.8125rem; /* 13px — secondary + meta */
-    --text-mini--line-height: 1.45;
-    --text-body: 0.9375rem; /* 15px — row titles, buttons, prose */
-    --text-body--line-height: 1.5;
+  /* Type ramp — meta / control / content / headings. Nothing off-scale. */
+  --text-micro: 0.6875rem; /* 11px — uppercase eyebrows */
+  --text-micro--line-height: 1.4;
+  --text-mini: 0.8125rem; /* 13px — secondary + meta */
+  --text-mini--line-height: 1.45;
+  --text-body: 0.9375rem; /* 15px — row titles, buttons, prose */
+  --text-body--line-height: 1.5;
 
-    /* Radius vocabulary — exactly three values, plus full. */
-    --radius-ctl: 8px; /* checkboxes, chips, thumbnails, icon buttons */
-    --radius-btn: 14px; /* buttons, inputs, cards, large covers */
-    --radius-panel: 20px; /* sections and floating panels */
+  /* Radius vocabulary — exactly three values, plus full. */
+  --radius-ctl: 8px; /* checkboxes, chips, thumbnails, icon buttons */
+  --radius-btn: 14px; /* buttons, inputs, cards, large covers */
+  --radius-panel: 20px; /* sections and floating panels */
 
-    --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
-    --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
 
-    --animate-fade-up: fade-up 0.45s var(--ease-out-expo) both;
-    --animate-rise: rise 0.4s var(--ease-out-expo) both;
-    --animate-pop: pop 0.3s var(--ease-spring) both;
-    --animate-eq: eq 0.9s ease-in-out infinite;
-    --animate-toast-in: toast-in 0.32s var(--ease-out-expo) both;
-    --animate-sweep: sweep 1.1s ease-in-out infinite;
-    --animate-breathe: breathe 2s ease-in-out infinite;
-    --animate-focus-pulse: focus-pulse 0.55s var(--ease-out-expo);
+  --animate-fade-up: fade-up 0.45s var(--ease-out-expo) both;
+  --animate-rise: rise 0.4s var(--ease-out-expo) both;
+  --animate-pop: pop 0.3s var(--ease-spring) both;
+  --animate-eq: eq 0.9s ease-in-out infinite;
+  --animate-toast-in: toast-in 0.32s var(--ease-out-expo) both;
+  --animate-sweep: sweep 1.1s ease-in-out infinite;
+  --animate-breathe: breathe 2s ease-in-out infinite;
+  --animate-focus-pulse: focus-pulse 0.55s var(--ease-out-expo);
 
-    /* Confirms a keyboard shortcut landed on the search box. Uses outline
+  /* Confirms a keyboard shortcut landed on the search box. Uses outline
        rather than box-shadow so it doesn't fight the focus-within ring. */
-    @keyframes focus-pulse {
-        from {
-            outline: 2px solid var(--color-lime-flash);
-            outline-offset: 0;
-        }
-        to {
-            outline: 2px solid transparent;
-            outline-offset: 14px;
-        }
+  @keyframes focus-pulse {
+    from {
+      outline: 2px solid var(--color-lime-flash);
+      outline-offset: 0;
     }
-
-    @keyframes fade-up {
-        from {
-            opacity: 0;
-            transform: translateY(10px);
-        }
-        to {
-            opacity: 1;
-            transform: translateY(0);
-        }
+    to {
+      outline: 2px solid transparent;
+      outline-offset: 14px;
     }
+  }
 
-    /* List-row entrance — shorter travel than fade-up so long lists don't
+  @keyframes fade-up {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* List-row entrance — shorter travel than fade-up so long lists don't
        look like they're sliding in from off-screen. */
-    @keyframes rise {
-        from {
-            opacity: 0;
-            transform: translateY(6px);
-        }
-        to {
-            opacity: 1;
-            transform: translateY(0);
-        }
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
     }
-
-    @keyframes pop {
-        0% {
-            opacity: 0;
-            transform: scale(0.5);
-        }
-        100% {
-            opacity: 1;
-            transform: scale(1);
-        }
+    to {
+      opacity: 1;
+      transform: translateY(0);
     }
+  }
 
-    @keyframes eq {
-        0%,
-        100% {
-            transform: scaleY(0.3);
-        }
-        50% {
-            transform: scaleY(1);
-        }
+  @keyframes pop {
+    0% {
+      opacity: 0;
+      transform: scale(0.5);
     }
-
-    @keyframes toast-in {
-        from {
-            opacity: 0;
-            transform: translateY(12px) scale(0.96);
-        }
-        to {
-            opacity: 1;
-            transform: translateY(0) scale(1);
-        }
+    100% {
+      opacity: 1;
+      transform: scale(1);
     }
+  }
 
-    /* Indeterminate progress — a band travelling across the track, used
+  @keyframes eq {
+    0%,
+    100% {
+      transform: scaleY(0.3);
+    }
+    50% {
+      transform: scaleY(1);
+    }
+  }
+
+  @keyframes toast-in {
+    from {
+      opacity: 0;
+      transform: translateY(12px) scale(0.96);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  /* Indeterminate progress — a band travelling across the track, used
        when a stage reports no percentage (searching / tagging). */
-    @keyframes sweep {
-        0% {
-            transform: translateX(-100%);
-        }
-        100% {
-            transform: translateX(400%);
-        }
+  @keyframes sweep {
+    0% {
+      transform: translateX(-100%);
     }
+    100% {
+      transform: translateX(400%);
+    }
+  }
 
-    @keyframes breathe {
-        0%,
-        100% {
-            opacity: 0.45;
-        }
-        50% {
-            opacity: 1;
-        }
+  @keyframes breathe {
+    0%,
+    100% {
+      opacity: 0.45;
     }
+    50% {
+      opacity: 1;
+    }
+  }
 }
 
 @keyframes shimmer {
-    from {
-        background-position: 200% 0;
-    }
-    to {
-        background-position: -200% 0;
-    }
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
 }
 
 html {
-    background: var(--color-ink-950);
-    color-scheme: dark;
+  background: var(--color-ink-950);
+  color-scheme: dark;
 }
 
 body {
-    font-family: var(--font-sans);
-    color: var(--color-ink-100);
-    -webkit-font-smoothing: antialiased;
+  font-family: var(--font-sans);
+  color: var(--color-ink-100);
+  -webkit-font-smoothing: antialiased;
 }
 
 ::selection {
-    background: var(--color-lime-flash);
-    color: var(--color-lime-ink);
+  background: var(--color-lime-flash);
+  color: var(--color-lime-ink);
 }
 
 /* Keyboard focus is always visible; pointer focus never draws a ring.
@@ -169,40 +169,40 @@ body {
    layered utility regardless of specificity, so an unlayered version here
    would silently beat `focus:outline-none` and friends everywhere. */
 @layer base {
-    :focus-visible {
-        outline: 2px solid var(--color-lime-flash);
-        outline-offset: 2px;
-    }
+  :focus-visible {
+    outline: 2px solid var(--color-lime-flash);
+    outline-offset: 2px;
+  }
 }
 
 /* Skeleton loading blocks */
 .shimmer {
-    background: linear-gradient(
-        100deg,
-        var(--color-ink-800) 40%,
-        var(--color-ink-700) 50%,
-        var(--color-ink-800) 60%
-    );
-    background-size: 200% 100%;
-    animation: shimmer 1.6s linear infinite;
+  background: linear-gradient(
+    100deg,
+    var(--color-ink-800) 40%,
+    var(--color-ink-700) 50%,
+    var(--color-ink-800) 60%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s linear infinite;
 }
 
 /* Staggered entrance for a list of siblings. Children read their own index
    from --i; past --stagger-cap they all share the last delay so page 5 of an
    infinite scroll doesn't animate in half a minute late. */
 .stagger > * {
-    animation: rise 0.4s var(--ease-out-expo) both;
-    animation-delay: calc(min(var(--i, 0), 14) * 28ms);
+  animation: rise 0.4s var(--ease-out-expo) both;
+  animation-delay: calc(min(var(--i, 0), 14) * 28ms);
 }
 
 @media (prefers-reduced-motion: reduce) {
-    *,
-    *::before,
-    *::after {
-        animation-duration: 0.01ms !important;
-        animation-iteration-count: 1 !important;
-        animation-delay: 0ms !important;
-        transition-duration: 0.01ms !important;
-        scroll-behavior: auto !important;
-    }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

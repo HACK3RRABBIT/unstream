@@ -13,13 +13,7 @@ interface Props {
   focusPulse?: number
 }
 
-export function UrlForm({
-  loading,
-  onSubmit,
-  className,
-  inputRef,
-  focusPulse = 0,
-}: Props) {
+export function UrlForm({ loading, onSubmit, className, inputRef, focusPulse = 0 }: Props) {
   const [input, setInput] = useState('')
   const isUrl = isCatalogUrl(input)
 

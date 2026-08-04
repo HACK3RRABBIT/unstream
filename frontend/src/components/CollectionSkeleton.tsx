@@ -18,18 +18,12 @@ export function CollectionSkeleton() {
         >
           <div className="shimmer size-10 rounded-ctl" />
           <div className="flex-1 space-y-2">
-            <div
-              className="shimmer h-3.5 rounded"
-              style={{ width: `${width}%` }}
-            />
-            <div
-              className="shimmer h-3 rounded"
-              style={{ width: `${width * 0.6}%` }}
-            />
+            <div className="shimmer h-3.5 rounded" style={{ width: `${width}%` }} />
+            <div className="shimmer h-3 rounded" style={{ width: `${width * 0.6}%` }} />
           </div>
           <div className="shimmer h-3 w-8 rounded" />
         </div>
       ))}
     </section>
-  );
+  )
 }

@@ -38,8 +38,7 @@ export function ArtistView({ artist, onPick }: Props) {
             {artist.name}
           </h2>
           <p className="mt-1 text-mini text-ink-300">
-            {artist.albums.length}{' '}
-            {artist.albums.length === 1 ? 'release' : 'releases'}
+            {artist.albums.length} {artist.albums.length === 1 ? 'release' : 'releases'}
             {artist.fan_count ? (
               <>
                 <span className="mx-1.5 text-ink-600">·</span>
@@ -83,13 +82,9 @@ export function ArtistView({ artist, onPick }: Props) {
                     </div>
                   )}
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-body font-medium text-ink-100">
-                      {track.name}
-                    </p>
+                    <p className="truncate text-body font-medium text-ink-100">{track.name}</p>
                     {track.subtitle && (
-                      <p className="truncate text-mini text-ink-400">
-                        {track.subtitle}
-                      </p>
+                      <p className="truncate text-mini text-ink-400">{track.subtitle}</p>
                     )}
                   </div>
                 </button>
