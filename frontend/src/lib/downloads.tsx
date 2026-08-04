@@ -28,6 +28,8 @@ export interface DownloadEntry {
   cover_url: string | null
   tracks: Track[] // metadata snapshot for titles/covers in the dock
   job: Job | null // latest polled backend state
+  /** Seconds until the job finishes, estimated from recent poll deltas. */
+  etaSeconds: number | null
 }
 
 interface DownloadsContextValue {
@@ -54,6 +56,8 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
   const [panelOpen, setPanelOpen] = useState(false)
   const entriesRef = useRef(entries)
   entriesRef.current = entries
+  // (time, settled-count) samples per job, for ETA estimation.
+  const samplesRef = useRef<Map<string, { t: number; settled: number }[]>>(new Map())
 
   const start = useCallback(
     async (url: string, collection: Collection, trackIds?: string[]) => {
@@ -71,6 +75,7 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
             ? collection.tracks.filter((t) => wanted.has(t.id))
             : collection.tracks,
           job: null,
+          etaSeconds: null,
         },
       ])
       setPanelOpen(true)
@@ -107,8 +112,33 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
         if (r.status === 'fulfilled') fresh.set(e.jobId, r.value)
       })
       if (fresh.size > 0) {
+        const now = Date.now()
         setEntries((prev) =>
-          prev.map((e) => (fresh.has(e.jobId) ? { ...e, job: fresh.get(e.jobId)! } : e)),
+          prev.map((e) => {
+            const job = fresh.get(e.jobId)
+            if (!job) return e
+            // ETA: settle-rate over a ~45s sliding window of polls.
+            const settled = job.done + job.failed
+            const samples = samplesRef.current.get(e.jobId) ?? []
+            samples.push({ t: now, settled })
+            while (samples.length > 2 && now - samples[0].t > 45000) samples.shift()
+            let etaSeconds: number | null = null
+            if (job.finished) {
+              samplesRef.current.delete(e.jobId)
+            } else {
+              samplesRef.current.set(e.jobId, samples)
+              const first = samples[0]
+              const dt = (now - first.t) / 1000
+              const dSettled = settled - first.settled
+              if (dt > 3 && dSettled > 0) {
+                etaSeconds = Math.max(
+                  1,
+                  Math.round((job.total - settled) / (dSettled / dt)),
+                )
+              }
+            }
+            return { ...e, job, etaSeconds }
+          }),
         )
       }
     }

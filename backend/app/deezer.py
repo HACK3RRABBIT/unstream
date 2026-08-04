@@ -99,13 +99,31 @@ def _playlist_result(item: dict) -> SearchResult:
     )
 
 
-def search(query: str) -> list[SearchResult]:
+# Per-page quota for each of the four sub-searches. Deezer pages with an
+# absolute `index`, so page N asks for index = N * quota.
+PAGE_QUOTA = {"track": 30, "album": 20, "artist": 12, "playlist": 12}
+
+
+def search(query: str, page: int = 0) -> list[SearchResult]:
     """Tracks, albums, artists and playlists — the four calls run in parallel."""
+    index = lambda kind: page * PAGE_QUOTA[kind]  # noqa: E731
     with ThreadPoolExecutor(max_workers=4) as pool:
-        tracks = pool.submit(_get, "/search/track", q=query, limit=8)
-        albums = pool.submit(_get, "/search/album", q=query, limit=8)
-        artists = pool.submit(_get, "/search/artist", q=query, limit=6)
-        playlists = pool.submit(_get, "/search/playlist", q=query, limit=6)
+        tracks = pool.submit(
+            _get, "/search/track", q=query,
+            limit=PAGE_QUOTA["track"], index=index("track"),
+        )
+        albums = pool.submit(
+            _get, "/search/album", q=query,
+            limit=PAGE_QUOTA["album"], index=index("album"),
+        )
+        artists = pool.submit(
+            _get, "/search/artist", q=query,
+            limit=PAGE_QUOTA["artist"], index=index("artist"),
+        )
+        playlists = pool.submit(
+            _get, "/search/playlist", q=query,
+            limit=PAGE_QUOTA["playlist"], index=index("playlist"),
+        )
 
     results: list[SearchResult] = []
     results += [_track_result(i) for i in tracks.result().get("data") or []]
@@ -159,6 +177,7 @@ def _track_from_api(item: dict, album_name: str = "", cover_url: str | None = No
         cover_url=album.get("cover_big") or cover_url,
         track_number=item.get("track_position", 0),
         release_date=(item.get("release_date") or "")[:4],
+        preview_url=item.get("preview") or None,
     )
 
 

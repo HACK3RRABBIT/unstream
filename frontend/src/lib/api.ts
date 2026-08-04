@@ -9,6 +9,7 @@ export interface Track {
   cover_url: string | null
   track_number: number
   release_date: string
+  preview_url: string | null
 }
 
 export interface Collection {
@@ -57,6 +58,15 @@ export interface SearchResult {
   cover_url: string | null
   url: string
   source: Source
+  /** Server-computed identity (kind + name + artist). The backend dedupes
+   *  within a page; the client reuses this key to dedupe across pages. */
+  dedup_key: string
+}
+
+export interface SearchPage {
+  results: SearchResult[]
+  page: number
+  has_more: boolean
 }
 
 export interface ArtistDetail {
@@ -88,11 +98,29 @@ const URL_PATTERNS = [
 export const isCatalogUrl = (input: string) =>
   URL_PATTERNS.some((re) => re.test(input))
 
-export async function searchCatalog(query: string): Promise<SearchResult[]> {
-  const { data } = await client.get<{ results: SearchResult[] }>('/search', {
-    params: { q: query },
+export async function searchCatalog(
+  query: string,
+  page = 0,
+): Promise<SearchPage> {
+  const { data } = await client.get<SearchPage>('/search', {
+    params: { q: query, page },
   })
-  return data.results
+  return data
+}
+
+/** Append a page, dropping anything already on screen. */
+export function mergeResults(
+  current: SearchResult[],
+  incoming: SearchResult[],
+): SearchResult[] {
+  const seen = new Set(current.map((r) => r.dedup_key))
+  const fresh: SearchResult[] = []
+  for (const result of incoming) {
+    if (seen.has(result.dedup_key)) continue
+    seen.add(result.dedup_key)
+    fresh.push(result)
+  }
+  return fresh.length > 0 ? [...current, ...fresh] : current
 }
 
 export async function getArtist(id: string): Promise<ArtistDetail> {

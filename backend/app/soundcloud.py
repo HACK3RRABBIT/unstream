@@ -305,14 +305,30 @@ def _set_result(item: dict, kind: str) -> SearchResult | None:
     )
 
 
-def search(query: str) -> list[SearchResult]:
+# Per-page quota for each of the four sub-searches. api-v2 takes a real
+# `offset`, so page N simply asks for offset = N * quota.
+PAGE_QUOTA = {"track": 30, "artist": 10, "album": 10, "playlist": 10}
+
+
+def search(query: str, page: int = 0) -> list[SearchResult]:
     """Tracks, people, albums and playlists — the four calls run in parallel."""
+    offset = lambda kind: page * PAGE_QUOTA[kind]  # noqa: E731
     with ThreadPoolExecutor(max_workers=4) as pool:
-        tracks = pool.submit(_api, "/search/tracks", q=query, limit=10)
-        users = pool.submit(_api, "/search/users", q=query, limit=5)
-        albums = pool.submit(_api, "/search/albums", q=query, limit=5)
+        tracks = pool.submit(
+            _api, "/search/tracks", q=query,
+            limit=PAGE_QUOTA["track"], offset=offset("track"),
+        )
+        users = pool.submit(
+            _api, "/search/users", q=query,
+            limit=PAGE_QUOTA["artist"], offset=offset("artist"),
+        )
+        albums = pool.submit(
+            _api, "/search/albums", q=query,
+            limit=PAGE_QUOTA["album"], offset=offset("album"),
+        )
         playlists = pool.submit(
-            _api, "/search/playlists_without_albums", q=query, limit=5
+            _api, "/search/playlists_without_albums", q=query,
+            limit=PAGE_QUOTA["playlist"], offset=offset("playlist"),
         )
 
     results: list[SearchResult] = []

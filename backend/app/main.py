@@ -9,6 +9,7 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor, wait
 from contextlib import asynccontextmanager
 from dataclasses import asdict
+from difflib import SequenceMatcher
 from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException
@@ -20,7 +21,7 @@ from . import deezer, embed, itunes, jobs, soundcloud, ytdlp
 from .models import Collection, ProviderError, SearchResult
 
 # Every provider here is keyless and free — no accounts, no API credentials.
-SEARCH_TIMEOUT_SECONDS = 15
+SEARCH_TIMEOUT_SECONDS = 20
 
 
 def resolve_any(url: str) -> Collection:
@@ -52,35 +53,80 @@ def resolve_any(url: str) -> Collection:
     )
 
 
-def _dedup_key(result: SearchResult) -> tuple[str, str, str]:
-    norm = lambda s: re.sub(r"[^a-z0-9]+", "", s.lower())  # noqa: E731
-    return result.kind, norm(result.name), norm(result.subtitle.split("·")[0])
+def _squash(text: str) -> str:
+    """Lowercase, strip punctuation, collapse whitespace — for comparing."""
+    return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
 
 
-def search_any(query: str) -> list[SearchResult]:
-    """Fan out to every free source in parallel and merge the results.
+def dedup_key(result: SearchResult) -> str:
+    """Identity of a result across providers: kind + name + lead artist.
 
-    Providers are ordered by metadata quality — catalog APIs first, then
-    raw YouTube/SoundCloud uploads — and near-duplicates (same kind, name
-    and artist) keep only the higher-quality hit. A slow or failing source
-    never blocks the others.
+    Sent to the client too, so it can drop cross-page duplicates that no
+    single page could have caught on its own.
     """
-    def soundcloud_search(q: str) -> list[SearchResult]:
+    artist = _squash(result.subtitle.split("·")[0])
+    return f"{result.kind}:{_squash(result.name).replace(' ', '')}:{artist.replace(' ', '')}"
+
+
+# Catalog APIs carry cleaner metadata than raw user uploads, so an otherwise
+# equal match from Deezer outranks the same song ripped to YouTube.
+_SOURCE_WEIGHT = {"deezer": 1.0, "itunes": 0.97, "soundcloud": 0.9, "youtube": 0.87}
+
+
+def relevance(result: SearchResult, query: str) -> float:
+    """0–1 score for how well a result answers the query.
+
+    Compared against the name alone *and* against "name + artist", because
+    people search both ways ("bohemian rhapsody" and "queen bohemian").
+    """
+    q = _squash(query)
+    name = _squash(result.name)
+    both = f"{name} {_squash(result.subtitle)}".strip()
+
+    score = max(
+        SequenceMatcher(None, q, name).ratio(),
+        SequenceMatcher(None, q, both).ratio(),
+    )
+    if name == q:
+        score = 1.0
+    elif name.startswith(q):
+        score = max(score, 0.93)
+    elif q in name:
+        score = max(score, 0.86)
+    # Every word of the query appears somewhere in the title or the artist.
+    tokens = set(q.split())
+    if tokens and tokens <= set(both.split()):
+        score = max(score, 0.8)
+
+    return score * _SOURCE_WEIGHT.get(result.source, 0.85)
+
+
+def search_any(query: str, page: int = 0) -> tuple[list[SearchResult], bool]:
+    """Fan out to every free source in parallel and merge one page of results.
+
+    Each provider pages independently (page N asks each for its own Nth
+    slice), near-duplicates keep only the higher-quality hit, and what
+    survives is ordered by relevance rather than by which provider answered
+    first. A slow or failing source never blocks the others.
+
+    Returns the page plus whether it's worth asking for another one.
+    """
+    def soundcloud_search(q: str, p: int) -> list[SearchResult]:
         try:
-            return soundcloud.search(q)  # full parity: tracks/people/albums/sets
+            return soundcloud.search(q, p)  # full parity: tracks/people/albums/sets
         except Exception:
-            return ytdlp.search_soundcloud(q)  # fallback: tracks only
+            return ytdlp.search_soundcloud(q, p)  # fallback: tracks only
 
     providers = [deezer.search, itunes.search, soundcloud_search, ytdlp.search_youtube]
 
     pool = ThreadPoolExecutor(max_workers=len(providers))
-    futures = [pool.submit(p, query) for p in providers]
+    futures = [pool.submit(p, query, page) for p in providers]
     wait(futures, timeout=SEARCH_TIMEOUT_SECONDS)
     # Don't block on stragglers — abandon anything still running.
     pool.shutdown(wait=False, cancel_futures=True)
 
     merged: list[SearchResult] = []
-    seen: set[tuple[str, str, str]] = set()
+    seen: set[str] = set()
     errors: list[Exception] = []
     for future in futures:
         if not future.done():
@@ -89,7 +135,7 @@ def search_any(query: str) -> list[SearchResult]:
             errors.append(future.exception())
             continue
         for result in future.result():
-            key = _dedup_key(result)
+            key = dedup_key(result)
             if key in seen:
                 continue
             seen.add(key)
@@ -97,7 +143,10 @@ def search_any(query: str) -> list[SearchResult]:
 
     if not merged and errors:
         raise ProviderError(f"Search failed: {errors[0]}")
-    return merged
+
+    merged.sort(key=lambda r: relevance(r, query), reverse=True)
+    # Nothing came back for this page, so there is nothing deeper either.
+    return merged, bool(merged)
 
 
 @asynccontextmanager
@@ -131,15 +180,21 @@ def health() -> dict:
 
 
 @app.get("/api/search")
-def search(q: str) -> dict:
+def search(q: str, page: int = 0) -> dict:
     q = q.strip()
     if not q:
         raise HTTPException(status_code=400, detail="Empty search query")
+    if page < 0:
+        raise HTTPException(status_code=400, detail="Bad page number")
     try:
-        results = search_any(q)
+        results, has_more = search_any(q, page)
     except ProviderError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    return {"results": [asdict(r) for r in results]}
+    return {
+        "results": [asdict(r) | {"dedup_key": dedup_key(r)} for r in results],
+        "page": page,
+        "has_more": has_more,
+    }
 
 
 @app.get("/api/artist/{artist_id}")
@@ -150,8 +205,10 @@ def artist(artist_id: str) -> dict:
         data = deezer.artist(artist_id)
     except ProviderError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    data["top_tracks"] = [asdict(r) for r in data["top_tracks"]]
-    data["albums"] = [asdict(r) for r in data["albums"]]
+    # Same shape as /api/search results, dedup_key included, so the client
+    # can render an artist's tracks and albums with the same components.
+    for key in ("top_tracks", "albums"):
+        data[key] = [asdict(r) | {"dedup_key": dedup_key(r)} for r in data[key]]
     return data
 
 
