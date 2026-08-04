@@ -89,6 +89,11 @@ def _release_year(entity: dict) -> str:
     return iso[:4]
 
 
+def _preview_url(entity: dict) -> str | None:
+    # 30-second clip Spotify ships for embed players, when available.
+    return (entity.get("audioPreview") or {}).get("url") or None
+
+
 def _tracklist_track(
     item: dict, position: int, album_name: str, cover_url: str | None, year: str
 ) -> Track:
@@ -101,6 +106,7 @@ def _tracklist_track(
         cover_url=cover_url,
         track_number=position,
         release_date=year,
+        preview_url=_preview_url(item),
     )
 
 
@@ -119,6 +125,7 @@ def resolve(kind: str, spotify_id: str) -> Collection:
             duration_ms=int(entity.get("duration") or 0),
             cover_url=cover,
             release_date=_release_year(entity),
+            preview_url=_preview_url(entity),
         )
         return Collection(
             kind="track",

@@ -1,6 +1,19 @@
-import { Check, Download, LoaderCircle, TriangleAlert } from 'lucide-react'
+import type { CSSProperties } from 'react'
+import {
+  Check,
+  Download,
+  LoaderCircle,
+  Pause,
+  Play,
+  TriangleAlert,
+} from 'lucide-react'
 import clsx from 'clsx'
 import { trackFileUrl, type JobTrack, type Track } from '../lib/api'
+import {
+  togglePreview,
+  usePlayingPreviewId,
+  usePreviewLoading,
+} from '../lib/preview'
 
 interface Props {
   index: number
@@ -11,6 +24,11 @@ interface Props {
   onDownload?: () => void
   /** True while the queue request for this row is in flight. */
   downloading?: boolean
+  /** Multi-select: render a checkbox when a toggle handler is provided. */
+  selected?: boolean
+  onToggleSelect?: () => void
+  /** Carries the `--i` stagger index from the parent list. */
+  style?: CSSProperties
 }
 
 function formatDuration(ms: number): string {
@@ -26,6 +44,21 @@ const STAGE_LABEL: Record<string, string> = {
   retrying: 'Retrying…',
 }
 
+/** Three bouncing bars shown in place of the row number while previewing. */
+function Equalizer() {
+  return (
+    <span className="flex h-4 items-end justify-end gap-[2.5px]" aria-hidden>
+      {[0, 150, 300].map((delay) => (
+        <span
+          key={delay}
+          className="w-[3px] origin-bottom animate-eq rounded-sm bg-lime-flash"
+          style={{ animationDelay: `${delay}ms` }}
+        />
+      ))}
+    </span>
+  )
+}
+
 export function TrackRow({
   index,
   track,
@@ -33,6 +66,9 @@ export function TrackRow({
   state,
   onDownload,
   downloading = false,
+  selected = false,
+  onToggleSelect,
+  style,
 }: Props) {
   const status = state?.status
   const active =
@@ -41,11 +77,36 @@ export function TrackRow({
     status === 'tagging' ||
     status === 'retrying'
 
+  const playingId = usePlayingPreviewId()
+  const previewLoading = usePreviewLoading()
+  const isPlaying = playingId === track.id && !previewLoading
+  const isCurrentPreview = playingId === track.id
+
   return (
-    <li className="group relative border-b border-ink-800 last:border-b-0">
+    <li
+      style={style}
+      className="group relative border-b border-ink-800 last:border-b-0"
+    >
       <div className="flex items-center gap-4 px-5 py-3 transition-colors group-hover:bg-ink-800/40">
-        <span className="w-6 shrink-0 text-right font-display text-sm tabular-nums text-ink-600">
-          {index}
+        {onToggleSelect && (
+          <button
+            onClick={onToggleSelect}
+            role="checkbox"
+            aria-checked={selected}
+            aria-label={`Select ${track.title}`}
+            className={clsx(
+              'grid size-5 shrink-0 place-items-center rounded-[6px] border transition-all duration-150 active:scale-90',
+              selected
+                ? 'border-lime-flash bg-lime-flash text-lime-ink'
+                : 'border-ink-600 text-transparent opacity-40 group-hover:opacity-100 hover:border-ink-400',
+            )}
+          >
+            {selected && <Check className="size-3 animate-pop" strokeWidth={3.5} />}
+          </button>
+        )}
+
+        <span className="w-6 shrink-0 text-right font-display text-mini tabular-nums text-ink-600">
+          {isCurrentPreview ? <Equalizer /> : index}
         </span>
 
         {track.cover_url ? (
@@ -53,25 +114,59 @@ export function TrackRow({
             src={track.cover_url}
             alt=""
             loading="lazy"
-            className="size-10 shrink-0 rounded-md object-cover"
+            className={clsx(
+              'size-10 shrink-0 rounded-ctl object-cover transition duration-300',
+              isCurrentPreview && 'ring-2 ring-lime-flash/70',
+            )}
           />
         ) : (
-          <div className="size-10 shrink-0 rounded-md bg-ink-800" />
+          <div className="size-10 shrink-0 rounded-ctl bg-ink-800" />
         )}
 
         <div className="min-w-0 flex-1">
-          <p className="truncate text-[15px] font-medium text-ink-100">
+          <p
+            className={clsx(
+              'truncate text-body font-medium transition-colors',
+              isCurrentPreview ? 'text-lime-flash' : 'text-ink-100',
+            )}
+          >
             {track.title}
           </p>
-          <p className="truncate text-[13px] text-ink-400">
+          <p className="truncate text-mini text-ink-400">
             {track.artists.join(', ')}
           </p>
         </div>
 
         <div className="flex shrink-0 items-center gap-3">
+          {track.preview_url && (
+            <button
+              onClick={() => togglePreview(track.id, track.preview_url!)}
+              title={isCurrentPreview ? 'Stop preview' : 'Play 30s preview'}
+              aria-label={
+                isCurrentPreview
+                  ? `Stop preview of ${track.title}`
+                  : `Play 30 second preview of ${track.title}`
+              }
+              className={clsx(
+                'grid size-8 shrink-0 place-items-center rounded-ctl border transition duration-200 active:scale-90',
+                isCurrentPreview
+                  ? 'border-lime-flash/50 bg-lime-flash/10 text-lime-flash'
+                  : 'border-ink-700 text-ink-400 hover:border-lime-flash/50 hover:text-lime-flash',
+              )}
+            >
+              {isCurrentPreview && previewLoading ? (
+                <LoaderCircle className="size-3.5 animate-spin" />
+              ) : isPlaying ? (
+                <Pause className="size-3.5" />
+              ) : (
+                <Play className="size-3.5 translate-x-px" />
+              )}
+            </button>
+          )}
+
           {status === 'error' ? (
             <span
-              className="flex items-center gap-1.5 text-[13px] text-danger"
+              className="flex animate-pop items-center gap-1.5 text-mini text-danger"
               title={state?.error ?? undefined}
             >
               <TriangleAlert className="size-3.5" />
@@ -80,21 +175,27 @@ export function TrackRow({
           ) : status === 'done' && jobId ? (
             <a
               href={trackFileUrl(jobId, track.id)}
-              className="flex items-center gap-1.5 rounded-lg border border-ink-600 px-2.5 py-1.5 text-[13px] font-medium text-lime-flash transition hover:border-lime-flash/50"
+              download
+              className="flex animate-pop items-center gap-1.5 rounded-ctl border border-ink-600 px-2.5 py-1.5 text-mini font-medium text-lime-flash transition duration-200 hover:border-lime-flash/50 hover:bg-lime-flash/10 active:scale-95"
             >
               <Check className="size-3.5" />
               mp3
               <Download className="size-3.5" />
             </a>
           ) : active || status === 'queued' ? (
-            <span className="text-[13px] text-ink-300 tabular-nums">
+            <span
+              className={clsx(
+                'text-mini text-ink-300 tabular-nums',
+                status !== 'downloading' && 'animate-breathe',
+              )}
+            >
               {STAGE_LABEL[status!]}
               {status === 'downloading' &&
                 ` ${Math.round((state?.progress ?? 0) * 100)}%`}
             </span>
           ) : (
             <>
-              <span className="text-[13px] text-ink-400 tabular-nums">
+              <span className="text-mini text-ink-400 tabular-nums">
                 {track.duration_ms > 0 ? formatDuration(track.duration_ms) : '—'}
               </span>
               {onDownload && (
@@ -105,11 +206,10 @@ export function TrackRow({
                   aria-label={`Download ${track.title}`}
                   aria-busy={downloading}
                   className={clsx(
-                    'grid size-8 shrink-0 place-items-center rounded-lg border transition',
-                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-flash',
+                    'grid size-8 shrink-0 place-items-center rounded-ctl border transition duration-200 active:scale-90',
                     downloading
                       ? 'cursor-not-allowed border-lime-flash/40 text-lime-flash opacity-70'
-                      : 'border-ink-700 text-ink-400 hover:border-lime-flash/50 hover:text-lime-flash',
+                      : 'border-ink-700 text-ink-400 opacity-60 group-hover:opacity-100 hover:border-lime-flash/50 hover:text-lime-flash',
                   )}
                 >
                   {downloading ? (
@@ -125,19 +225,17 @@ export function TrackRow({
       </div>
 
       {active && (
-        <div className="absolute inset-x-0 bottom-0 h-px bg-ink-700">
-          <div
-            className={clsx(
-              'h-full bg-lime-flash transition-[width] duration-300',
-              status !== 'downloading' && 'animate-pulse',
-            )}
-            style={{
-              width:
-                status === 'downloading'
-                  ? `${Math.max(3, (state?.progress ?? 0) * 100)}%`
-                  : '100%',
-            }}
-          />
+        <div className="absolute inset-x-0 bottom-0 h-0.5 overflow-hidden bg-ink-800">
+          {status === 'downloading' ? (
+            <div
+              className="h-full bg-lime-flash transition-[width] duration-500 ease-out"
+              style={{ width: `${Math.max(3, (state?.progress ?? 0) * 100)}%` }}
+            />
+          ) : (
+            // Searching / tagging / retrying report no percentage — a
+            // travelling band says "working" without faking a number.
+            <div className="h-full w-1/4 animate-sweep bg-lime-flash/70" />
+          )}
         </div>
       )}
     </li>

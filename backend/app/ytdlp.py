@@ -180,13 +180,18 @@ def resolve(url: str) -> Collection:
     )
 
 
-def _search(prefix: str, source: str, query: str, limit: int) -> list[SearchResult]:
+def _search(
+    prefix: str, source: str, query: str, limit: int, offset: int = 0
+) -> list[SearchResult]:
+    # `ytsearchN:` / `scsearchN:` only take a count, never a start position —
+    # paging means asking for everything through the end of the page and
+    # dropping the head. Flat extraction keeps that cheap.
     try:
-        info = _extract(f"{prefix}{limit}:{query}")
+        info = _extract(f"{prefix}{offset + limit}:{query}")
     except ProviderError:
         return []  # search is aggregated; one silent source is fine
     results = []
-    for entry in info.get("entries") or []:
+    for entry in (info.get("entries") or [])[offset:]:
         if not entry:
             continue
         # Skip obvious non-songs (mixes, full concerts) and unplayable rows.
@@ -208,17 +213,30 @@ def _search(prefix: str, source: str, query: str, limit: int) -> list[SearchResu
     return results
 
 
-def search_youtube(query: str, limit: int = 6) -> list[SearchResult]:
-    return _search("ytsearch", "youtube", query, limit)
+# Per-page quota. Every page re-extracts from the top (see _search), so the
+# cost grows linearly with depth — past this point yt-dlp would eat the whole
+# search budget and starve the catalog APIs, so it bows out and they page on.
+PAGE_QUOTA = 12
+MAX_DEPTH = 36
 
 
-def search_soundcloud(query: str, limit: int = 6) -> list[SearchResult]:
-    return _search("scsearch", "soundcloud", query, limit)
+def search_youtube(query: str, page: int = 0) -> list[SearchResult]:
+    offset = page * PAGE_QUOTA
+    if offset >= MAX_DEPTH:
+        return []
+    return _search("ytsearch", "youtube", query, PAGE_QUOTA, offset)
 
 
-def search(query: str, limit: int = 6) -> list[SearchResult]:
+def search_soundcloud(query: str, page: int = 0) -> list[SearchResult]:
+    offset = page * PAGE_QUOTA
+    if offset >= MAX_DEPTH:
+        return []
+    return _search("scsearch", "soundcloud", query, PAGE_QUOTA, offset)
+
+
+def search(query: str, page: int = 0) -> list[SearchResult]:
     """YouTube and SoundCloud searched concurrently."""
     with ThreadPoolExecutor(max_workers=2) as pool:
-        yt = pool.submit(search_youtube, query, limit)
-        sc = pool.submit(search_soundcloud, query, limit)
+        yt = pool.submit(search_youtube, query, page)
+        sc = pool.submit(search_soundcloud, query, page)
     return yt.result() + sc.result()

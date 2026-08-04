@@ -1,11 +1,23 @@
-import { useMemo, useState } from 'react'
-import { ChevronRight, Disc3, ListMusic, MicVocal, Music2 } from 'lucide-react'
+import { useMemo, useState, type CSSProperties } from 'react'
+import {
+  ChevronRight,
+  Disc3,
+  ListMusic,
+  LoaderCircle,
+  MicVocal,
+  Music2,
+  SearchX,
+} from 'lucide-react'
 import clsx from 'clsx'
 import type { ResultKind, SearchResult, Source } from '../lib/api'
 import { QuickDownload } from './QuickDownload'
 
 interface Props {
+  query: string
   results: SearchResult[]
+  hasMore: boolean
+  loadingMore: boolean
+  onLoadMore: () => void
   onPick: (result: SearchResult) => void
 }
 
@@ -17,19 +29,22 @@ const SOURCE_META: Record<Source, { label: string; dot: string }> = {
 }
 
 const KINDS = [
-  { kind: 'track', label: 'Songs', icon: Music2, preview: 5 },
+  { kind: 'track', label: 'Songs', icon: Music2, preview: 6 },
   { kind: 'artist', label: 'Artists', icon: MicVocal, preview: 6 },
-  { kind: 'album', label: 'Albums', icon: Disc3, preview: 4 },
+  { kind: 'album', label: 'Albums', icon: Disc3, preview: 8 },
   { kind: 'playlist', label: 'Playlists', icon: ListMusic, preview: 4 },
 ] as const
 
 type Tab = 'all' | ResultKind
 
+/** Index handed to the CSS stagger (`.stagger > *` reads --i). */
+const stagger = (i: number) => ({ '--i': i }) as CSSProperties
+
 export function SourceBadge({ source }: { source: Source }) {
   const meta = SOURCE_META[source]
   if (!meta) return null
   return (
-    <span className="flex shrink-0 items-center gap-1.5 rounded-full border border-ink-700 px-2 py-0.5 text-[10px] font-medium tracking-wide text-ink-400">
+    <span className="flex shrink-0 items-center gap-1.5 rounded-full border border-ink-700 px-2 py-0.5 text-micro font-medium tracking-wide text-ink-400">
       <span className={clsx('size-1.5 rounded-full', meta.dot)} />
       {meta.label}
     </span>
@@ -46,11 +61,12 @@ function TrackList({
   onPick: Props['onPick']
 }) {
   return (
-    <ul>
-      {items.map((item) => (
+    <ul className="stagger">
+      {items.map((item, i) => (
         <li
-          key={`${item.source}-${item.id}`}
-          className="flex items-center gap-3 pr-5 transition-colors hover:bg-ink-800/60 focus-within:bg-ink-800/60"
+          key={item.dedup_key}
+          style={stagger(i)}
+          className="group flex items-center gap-3 pr-5 transition-colors hover:bg-ink-800/60 focus-within:bg-ink-800/60"
         >
           <button
             onClick={() => onPick(item)}
@@ -61,19 +77,19 @@ function TrackList({
                 src={item.cover_url}
                 alt=""
                 loading="lazy"
-                className="size-10 shrink-0 rounded-md object-cover"
+                className="size-10 shrink-0 rounded-ctl object-cover transition-transform duration-300 group-hover:scale-105"
               />
             ) : (
-              <div className="grid size-10 shrink-0 place-items-center rounded-md bg-ink-800">
+              <div className="grid size-10 shrink-0 place-items-center rounded-ctl bg-ink-800">
                 <Music2 className="size-4 text-ink-400" />
               </div>
             )}
             <div className="min-w-0 flex-1">
-              <p className="truncate text-[15px] font-medium text-ink-100">
+              <p className="truncate text-body font-medium text-ink-100">
                 {item.name}
               </p>
               {item.subtitle && (
-                <p className="truncate text-[13px] text-ink-400">{item.subtitle}</p>
+                <p className="truncate text-mini text-ink-400">{item.subtitle}</p>
               )}
             </div>
             <SourceBadge source={item.source} />
@@ -97,22 +113,24 @@ function CardGrid({
   return (
     <ul
       className={clsx(
-        'grid gap-x-4 gap-y-5 px-5 pb-4',
+        'stagger grid gap-x-4 gap-y-5 px-5 pb-4',
         round
           ? 'grid-cols-3 sm:grid-cols-4 md:grid-cols-6'
           : 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4',
       )}
     >
-      {items.map((item) => (
-        <li key={`${item.source}-${item.id}`}>
+      {items.map((item, i) => (
+        <li key={item.dedup_key} style={stagger(i)}>
           <button
             onClick={() => onPick(item)}
             className="group w-full text-left focus-visible:outline-none"
           >
             <div
               className={clsx(
-                'relative overflow-hidden bg-ink-800 transition group-hover:brightness-110 group-focus-visible:ring-2 group-focus-visible:ring-lime-flash',
-                round ? 'aspect-square rounded-full' : 'aspect-square rounded-xl',
+                'relative overflow-hidden bg-ink-800 ring-1 ring-ink-700/60 transition duration-300',
+                'group-hover:-translate-y-1 group-hover:ring-ink-600',
+                'group-focus-visible:ring-2 group-focus-visible:ring-lime-flash',
+                round ? 'aspect-square rounded-full' : 'aspect-square rounded-btn',
               )}
             >
               {item.cover_url ? (
@@ -120,7 +138,7 @@ function CardGrid({
                   src={item.cover_url}
                   alt=""
                   loading="lazy"
-                  className="size-full object-cover"
+                  className="size-full object-cover transition-transform duration-500 group-hover:scale-110"
                 />
               ) : (
                 <div className="grid size-full place-items-center">
@@ -134,7 +152,7 @@ function CardGrid({
             </div>
             <p
               className={clsx(
-                'mt-2 truncate text-[13.5px] font-medium text-ink-100',
+                'mt-2 truncate text-mini font-medium text-ink-100 transition-colors group-hover:text-lime-flash',
                 round && 'text-center',
               )}
             >
@@ -157,7 +175,14 @@ function CardGrid({
   )
 }
 
-export function SearchResults({ results, onPick }: Props) {
+export function SearchResults({
+  query,
+  results,
+  hasMore,
+  loadingMore,
+  onLoadMore,
+  onPick,
+}: Props) {
   const [tab, setTab] = useState<Tab>('all')
 
   const grouped = useMemo(() => {
@@ -172,16 +197,34 @@ export function SearchResults({ results, onPick }: Props) {
 
   if (results.length === 0) {
     return (
-      <section className="rounded-2xl border border-ink-700 bg-ink-900 px-5 py-10 text-center">
-        <p className="text-sm text-ink-300">No results — try different keywords.</p>
+      <section className="rounded-panel border border-ink-700 bg-ink-900 px-5 py-14 text-center">
+        <SearchX className="mx-auto size-7 text-ink-600" />
+        <p className="mt-3 text-body font-medium text-ink-100">
+          Nothing found for “{query}”
+        </p>
+        <p className="mx-auto mt-1.5 max-w-xs text-mini text-ink-400">
+          Try the artist name alone, check the spelling, or paste a link to the
+          album instead.
+        </p>
       </section>
     )
   }
 
   const sections = KINDS.filter(({ kind }) => (grouped.get(kind) ?? []).length > 0)
+  // Null on the "All" tab — that view doesn't page.
+  const activeKind = KINDS.find(({ kind }) => kind === tab) ?? null
 
   return (
-    <section className="overflow-hidden rounded-2xl border border-ink-700 bg-ink-900">
+    <section className="overflow-hidden rounded-panel border border-ink-700 bg-ink-900">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 px-5 pt-4">
+        <h2 className="truncate text-body font-medium text-ink-100">
+          Results for <span className="text-lime-flash">{query}</span>
+        </h2>
+        <p aria-live="polite" className="text-mini text-ink-400 tabular-nums">
+          {results.length} found{hasMore && ' so far'}
+        </p>
+      </div>
+
       <nav
         aria-label="Result filters"
         className="flex flex-wrap items-center gap-1.5 border-b border-ink-800 px-4 py-3"
@@ -199,8 +242,9 @@ export function SearchResults({ results, onPick }: Props) {
           <button
             key={kind}
             onClick={() => setTab(kind)}
+            aria-pressed={tab === kind}
             className={clsx(
-              'flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[13px] font-medium transition',
+              'flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-mini font-medium transition duration-200 active:scale-[0.97]',
               tab === kind
                 ? 'bg-lime-flash text-lime-ink'
                 : 'text-ink-300 hover:bg-ink-800 hover:text-ink-100',
@@ -209,7 +253,7 @@ export function SearchResults({ results, onPick }: Props) {
             {label}
             <span
               className={clsx(
-                'text-[11px] tabular-nums',
+                'text-micro tabular-nums',
                 tab === kind ? 'text-lime-ink/70' : 'text-ink-400',
               )}
             >
@@ -228,17 +272,17 @@ export function SearchResults({ results, onPick }: Props) {
           return (
             <div key={kind} className="border-b border-ink-800 last:border-b-0">
               <div className="flex items-baseline justify-between px-5 pt-4 pb-2">
-                <h3 className="flex items-center gap-2 text-[11px] font-semibold tracking-[0.14em] text-ink-400 uppercase">
+                <h3 className="flex items-center gap-2 text-micro font-semibold tracking-[0.14em] text-ink-400 uppercase">
                   <Icon className="size-3.5" />
                   {label}
                 </h3>
                 {hidden > 0 && (
                   <button
                     onClick={() => setTab(kind)}
-                    className="flex items-center gap-0.5 text-xs font-medium text-lime-flash transition hover:text-lime-soft"
+                    className="group flex items-center gap-0.5 text-xs font-medium text-lime-flash transition hover:text-lime-soft"
                   >
                     Show all {items.length}
-                    <ChevronRight className="size-3.5" />
+                    <ChevronRight className="size-3.5 transition-transform duration-200 group-hover:translate-x-0.5" />
                   </button>
                 )}
               </div>
@@ -256,6 +300,32 @@ export function SearchResults({ results, onPick }: Props) {
             </div>
           )
         })}
+
+      {/* Paging is deliberately manual: one page is a fan-out across four
+          providers, so it only runs when the user asks. "All" is a summary of
+          what's already loaded — you go deeper from inside a category. */}
+      {activeKind && (
+        <div className="flex items-center justify-center px-5 py-4">
+          {loadingMore ? (
+            <span className="flex items-center gap-2 text-mini text-ink-400">
+              <LoaderCircle className="size-3.5 animate-spin text-lime-flash" />
+              Searching deeper…
+            </span>
+          ) : hasMore ? (
+            <button
+              onClick={onLoadMore}
+              className="rounded-full border border-ink-700 px-4 py-1.5 text-mini font-medium text-ink-300 transition duration-200 hover:border-ink-600 hover:text-ink-100 active:scale-[0.97]"
+            >
+              Load more {activeKind.label.toLowerCase()}
+            </button>
+          ) : (
+            <span className="text-mini text-ink-400">
+              That’s everything — {grouped.get(activeKind.kind)?.length ?? 0}{' '}
+              {activeKind.label.toLowerCase()} across all sources.
+            </span>
+          )}
+        </div>
+      )}
     </section>
   )
 }

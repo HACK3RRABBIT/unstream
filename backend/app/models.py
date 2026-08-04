@@ -25,6 +25,9 @@ class Track:
     # Set when the track already lives on a downloadable page (YouTube or
     # SoundCloud URL) — the downloader then skips the search step.
     source_url: str | None = None
+    # 30-second audio preview (Deezer / iTunes / Spotify embed), if the
+    # provider exposes one — lets the UI play a clip before downloading.
+    preview_url: str | None = None
 
     @property
     def query(self) -> str:

@@ -50,12 +50,26 @@ def _track_from_api(item: dict) -> Track:
         cover_url=_artwork(item),
         track_number=item.get("trackNumber", 0),
         release_date=(item.get("releaseDate") or "")[:4],
+        preview_url=item.get("previewUrl") or None,
     )
 
 
-def search(query: str, limit: int = 6) -> list[SearchResult]:
+# iTunes has no offset parameter — only `limit`, capped at 200. Paging means
+# asking for everything up to the end of the requested page and slicing the
+# tail, so the deepest page we can serve is API_MAX / PAGE_QUOTA.
+PAGE_QUOTA = 25
+API_MAX = 200
+
+
+def search(query: str, page: int = 0) -> list[SearchResult]:
+    offset = page * PAGE_QUOTA
+    if offset >= API_MAX:
+        return []
+    limit = min(API_MAX, offset + PAGE_QUOTA)
+
     results: list[SearchResult] = []
-    for item in _get("/search", term=query, media="music", entity="song", limit=limit):
+    songs = _get("/search", term=query, media="music", entity="song", limit=limit)
+    for item in songs[offset:]:
         if not item.get("trackViewUrl"):
             continue
         results.append(
@@ -69,7 +83,8 @@ def search(query: str, limit: int = 6) -> list[SearchResult]:
                 source="itunes",
             )
         )
-    for item in _get("/search", term=query, media="music", entity="album", limit=limit):
+    albums = _get("/search", term=query, media="music", entity="album", limit=limit)
+    for item in albums[offset:]:
         if not item.get("collectionViewUrl"):
             continue
         year = (item.get("releaseDate") or "")[:4]
