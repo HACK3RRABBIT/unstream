@@ -62,7 +62,7 @@ export function UrlForm({ loading, onSubmit, className, inputRef, focusPulse = 0
         placeholder="آهنگ، آلبوم یا آرتیست جستجو کن — یا لینک اسپاتیفای / دیزر / یوتیوب / ساندکلاد رو پیست کن"
         spellCheck={false}
         autoFocus
-        className="min-w-0 flex-1 bg-transparent text-body text-ink-100 placeholder:text-ink-600 focus:outline-none"
+        className="min-w-0 flex-1 bg-transparent text-body text-ink-100 placeholder:text-ink-600 placeholder-shown:[direction:rtl] focus:outline-none"
       />
       <button
         type="submit"

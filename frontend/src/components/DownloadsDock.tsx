@@ -102,7 +102,11 @@ function JobCard({ entry }: { entry: DownloadEntry }) {
           <div className="size-9 shrink-0 rounded-ctl bg-ink-800" />
         )}
         <div className="min-w-0 flex-1">
-          <p className="truncate text-mini font-medium text-ink-100" dir="auto">
+          {/* dir="auto" keeps a Latin name's punctuation ordered correctly,
+              but the progress line under it is always Persian — physical
+              right (not text-end, which would follow the name's own
+              direction) keeps the two lines on the same edge. */}
+          <p className="truncate text-right text-mini font-medium text-ink-100" dir="auto">
             {entry.name}
           </p>
           <p className="text-xs text-ink-400 tabular-nums">

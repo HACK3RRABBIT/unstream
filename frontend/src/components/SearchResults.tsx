@@ -86,15 +86,12 @@ function TrackList({
                 <Music2 className="size-4 text-ink-400" />
               </div>
             )}
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-body font-medium text-ink-100" dir="auto">
-                {item.name}
-              </p>
-              {item.subtitle && (
-                <p className="truncate text-mini text-ink-400" dir="auto">
-                  {item.subtitle}
-                </p>
-              )}
+            {/* dir on the wrapper, not the lines: the title picks the
+                direction and the subtitle follows it, so a Persian track
+                doesn't sit right-aligned above a left-aligned artist. */}
+            <div className="min-w-0 flex-1" dir="auto">
+              <p className="truncate text-body font-medium text-ink-100">{item.name}</p>
+              {item.subtitle && <p className="truncate text-mini text-ink-400">{item.subtitle}</p>}
             </div>
             <SourceBadge source={item.source} />
           </button>
@@ -128,6 +125,7 @@ function CardGrid({
           <button
             onClick={() => onPick(item)}
             className="group w-full text-start focus-visible:outline-none"
+            dir="auto"
           >
             <div
               className={clsx(
@@ -159,15 +157,11 @@ function CardGrid({
                 'mt-2 truncate text-mini font-medium text-ink-100 transition-colors group-hover:text-lime-flash',
                 round && 'text-center',
               )}
-              dir="auto"
             >
               {item.name}
             </p>
             {item.subtitle && (
-              <p
-                className={clsx('truncate text-xs text-ink-400', round && 'text-center')}
-                dir="auto"
-              >
+              <p className={clsx('truncate text-xs text-ink-400', round && 'text-center')}>
                 {item.subtitle}
               </p>
             )}

@@ -4,9 +4,13 @@ A web app for searching songs, albums and playlists — or pasting a Spotify/Dee
 
 ## Language
 
+**آنستریم** (Unstream):
+The product's name as written in all user-facing copy.
+_Avoid_: Unstream (in UI copy), آن‌استریم
+
 **آهنگ** (Track):
 A single downloadable song.
-_Avoid_: ترک، قطعه، موزیک
+_Avoid_: ترک، قطعه، موزیک — with one exception: «موزیک» is permitted in the hero headline and `<head>` metadata (title, meta description, OG, JSON-LD, manifest), where it carries search intent («دانلود موزیک»). In-app copy — counts, labels, tabs, toasts — always uses آهنگ.
 
 **آلبوم** (Album):
 A release-grouped collection of tracks fetched from a source link or search.

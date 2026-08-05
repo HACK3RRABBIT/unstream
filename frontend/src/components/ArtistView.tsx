@@ -79,14 +79,10 @@ export function ArtistView({ artist, onPick }: Props) {
                       <Music2 className="size-4 text-ink-400" />
                     </div>
                   )}
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-body font-medium text-ink-100" dir="auto">
-                      {track.name}
-                    </p>
+                  <div className="min-w-0 flex-1" dir="auto">
+                    <p className="truncate text-body font-medium text-ink-100">{track.name}</p>
                     {track.subtitle && (
-                      <p className="truncate text-mini text-ink-400" dir="auto">
-                        {track.subtitle}
-                      </p>
+                      <p className="truncate text-mini text-ink-400">{track.subtitle}</p>
                     )}
                   </div>
                 </button>
@@ -109,6 +105,7 @@ export function ArtistView({ artist, onPick }: Props) {
                 <button
                   onClick={() => onPick(album)}
                   className="group w-full text-start focus-visible:outline-none"
+                  dir="auto"
                 >
                   <div className="relative aspect-square overflow-hidden rounded-btn bg-ink-800 ring-1 ring-ink-700/60 transition duration-300 group-hover:-translate-y-1 group-hover:ring-ink-600 group-focus-visible:ring-2 group-focus-visible:ring-lime-flash">
                     {album.cover_url ? (
@@ -124,10 +121,7 @@ export function ArtistView({ artist, onPick }: Props) {
                       </div>
                     )}
                   </div>
-                  <p
-                    className="mt-2 truncate text-mini font-medium text-ink-100 transition-colors group-hover:text-lime-flash"
-                    dir="auto"
-                  >
+                  <p className="mt-2 truncate text-mini font-medium text-ink-100 transition-colors group-hover:text-lime-flash">
                     {album.name}
                   </p>
                   {album.subtitle && (

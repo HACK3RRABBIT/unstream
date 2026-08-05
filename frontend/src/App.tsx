@@ -267,7 +267,7 @@ function Shell() {
   // already reload themselves; see main.tsx.)
   useEffect(() => {
     const onUpdate = () =>
-      pushRef.current('نسخه‌ی جدید Unstream اومده', 'info', {
+      pushRef.current('نسخه‌ی جدید آنستریم اومده', 'info', {
         label: 'رفرش',
         onClick: () => window.location.reload(),
       })
@@ -341,18 +341,16 @@ function Shell() {
         : `search:${view.query}`
 
   return (
-    <div className="min-h-screen bg-ink-950">
-      <header className="mx-auto flex max-w-3xl items-center gap-2.5 px-5 pt-8">
+    <div className="flex min-h-screen flex-col bg-ink-950">
+      <header className="mx-auto flex w-full max-w-3xl items-center gap-2.5 px-5 pt-8">
         <span className="grid size-8 place-items-center rounded-ctl bg-lime-flash text-lime-ink">
           <AudioLines className="size-4.5" strokeWidth={2.25} />
         </span>
-        <span className="font-display text-lg font-semibold tracking-tight" dir="ltr">
-          Unstream
-        </span>
+        <span className="font-display text-lg font-semibold">آنستریم</span>
         <QualityPicker className="ms-auto" />
       </header>
 
-      <main className="mx-auto max-w-3xl px-5 pb-24">
+      <main className="mx-auto w-full max-w-3xl flex-1 px-5 pb-24">
         {sharedArrival ? (
           <section className="pt-10 pb-8">
             <div className="animate-fade-up rounded-panel border border-lime-flash/25 bg-lime-flash/[0.06] p-4 sm:p-5">
@@ -371,7 +369,7 @@ function Shell() {
               </h1>
               <p className="mt-2 text-mini text-ink-300">
                 {error ? (
-                  'شاید لینک خراب یا خصوصی باشه، یا از منبعی باشه که Unstream نمی‌تونه بخونتش.'
+                  'شاید لینک خراب یا خصوصی باشه، یا از منبعی باشه که آنستریم نمی‌تونه بخونتش.'
                 ) : sharedArrival.kind === 'q' ? (
                   <>
                     نتایج برای{' '}
@@ -381,7 +379,7 @@ function Shell() {
                     — خودکار از لینکی که دنبال کردی باز شد.
                   </>
                 ) : (
-                  'Unstream این رو خودکار از روی لینکت باز کرد. آهنگ‌هایی که می‌خوای رو انتخاب کن، یا از اول شروع کن.'
+                  'آنستریم این رو خودکار از روی لینکت باز کرد. آهنگ‌هایی که می‌خوای رو انتخاب کن، یا از اول شروع کن.'
                 )}
               </p>
               <button
@@ -405,14 +403,14 @@ function Shell() {
         ) : (
           <section className="pt-14 pb-10 sm:pt-16 sm:pb-12">
             <h1 className="animate-fade-up font-display text-[clamp(2.5rem,7.5vw,4.5rem)] leading-[1.15] font-bold text-balance">
-              کتابخونه‌ی موزیکت،
+              دانلود موزیک،
               <br />
-              <span className="text-lime-flash">به‌شکل فایل.</span>
+              <span className="text-lime-flash">آلبوم و پلی‌لیست</span>
             </h1>
             <p className="mt-5 max-w-md animate-fade-up text-body leading-relaxed text-ink-300 [animation-delay:80ms]">
-              لینک اسپاتیفای، دیزر، اپل موسیک، یوتیوب یا ساندکلاد رو بذار — یا همه‌ی کاتالوگ‌ها رو
-              یکجا جستجو کن. Unstream صدا رو پیدا می‌کنه، با کیفیتی که خودت انتخاب می‌کنی انکود
-              می‌کنه و تگ همه‌ی فایل‌ها رو هم مرتب می‌نویسه. نه اکانتی لازمه، نه کلیدی.
+              لینک اسپاتیفای، یوتیوب، ساندکلاد، دیزر یا اپل موزیک رو بذار — یا همه‌ی کاتالوگ‌ها رو
+              یکجا جستجو کن. فایل MP3 تگ‌خورده با کاور و کیفیت دلخواهت رو بگیر؛ نه اکانت می‌خواد، نه
+              ثبت‌نام.
             </p>
             <UrlForm
               className="mt-8 animate-fade-up [animation-delay:160ms]"
@@ -469,22 +467,40 @@ function Shell() {
         )}
       </main>
 
-      <footer className="mx-auto max-w-3xl space-y-1.5 px-5 pb-10 text-xs text-ink-400">
-        <p>
-          پروژه‌ی آموزشیه — صداها از آپلودهای عمومی یوتیوب و ساندکلاد میان، نه از سرویس‌های استریم.
-          فقط چیزی رو دانلود کن که حق استفاده‌ش رو داری.
-        </p>
-        <p className="text-sm">
-          ساخته‌ی{' '}
-          <a
-            href="https://github.com/amiralibg"
-            target="_blank"
-            rel="noreferrer"
-            className="font-medium text-ink-300 underline decoration-ink-600 underline-offset-2 transition hover:text-lime-flash hover:decoration-lime-flash/60"
-          >
-            امیرعلی بیگی
-          </a>
-        </p>
+      <footer
+        dir="ltr"
+        className="mx-auto flex w-full max-w-3xl flex-wrap items-center justify-center gap-x-1.5 gap-y-2 px-5 pb-10 text-sm text-ink-400"
+      >
+        <span>Built by</span>
+        <a
+          href="https://x.com/_amiralibgi"
+          target="_blank"
+          rel="noreferrer"
+          className="flex items-center gap-1.5 font-medium text-ink-300 underline decoration-ink-600 underline-offset-2 transition hover:text-lime-flash hover:decoration-lime-flash/60"
+        >
+          <img
+            src="/amirali.jpg"
+            alt=""
+            loading="lazy"
+            className="size-5 rounded-full object-cover"
+          />
+          amiralibgi
+        </a>
+        <span>and</span>
+        <a
+          href="https://x.com/yazdanctx"
+          target="_blank"
+          rel="noreferrer"
+          className="flex items-center gap-1.5 font-medium text-ink-300 underline decoration-ink-600 underline-offset-2 transition hover:text-lime-flash hover:decoration-lime-flash/60"
+        >
+          <img
+            src="/yazdan.jpg"
+            alt=""
+            loading="lazy"
+            className="size-5 rounded-full object-cover"
+          />
+          yazdanctx
+        </a>
       </footer>
 
       <DownloadNotifier />

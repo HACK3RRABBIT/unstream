@@ -109,19 +109,16 @@ export function TrackRow({
           <div className="size-10 shrink-0 rounded-ctl bg-ink-800" />
         )}
 
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1" dir="auto">
           <p
             className={clsx(
               'truncate text-body font-medium transition-colors',
               isCurrentPreview ? 'text-lime-flash' : 'text-ink-100',
             )}
-            dir="auto"
           >
             {track.title}
           </p>
-          <p className="truncate text-mini text-ink-400" dir="auto">
-            {track.artists.join(', ')}
-          </p>
+          <p className="truncate text-mini text-ink-400">{track.artists.join(', ')}</p>
         </div>
 
         <div className="flex shrink-0 items-center gap-3">
