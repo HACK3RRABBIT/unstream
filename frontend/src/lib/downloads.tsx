@@ -9,11 +9,14 @@ import {
   type ReactNode,
 } from 'react'
 import {
+  DEFAULT_QUALITY,
   getJob,
+  isQuality,
   resolveUrl,
   startDownload,
   type Collection,
   type Job,
+  type Quality,
   type SearchResult,
   type Track,
 } from './api'
@@ -30,6 +33,9 @@ export interface DownloadEntry {
   job: Job | null // latest polled backend state
   /** Seconds until the job finishes, estimated from recent poll deltas. */
   etaSeconds: number | null
+  /** Quality this job was started at — changing the preference later must
+   *  not relabel jobs that are already encoding at the old one. */
+  quality: Quality
 }
 
 interface DownloadsContextValue {
@@ -37,6 +43,9 @@ interface DownloadsContextValue {
   activeCount: number
   panelOpen: boolean
   setPanelOpen: (open: boolean) => void
+  /** Audio quality every new job is started at; persisted across sessions. */
+  quality: Quality
+  setQuality: (quality: Quality) => void
   start: (url: string, collection: Collection, trackIds?: string[]) => Promise<void>
   /** One-click download of a single search result: resolve, then queue. */
   startFromResult: (result: SearchResult) => Promise<void>
@@ -51,16 +60,42 @@ const DownloadsContext = createContext<DownloadsContextValue | null>(null)
 
 const isFinished = (e: DownloadEntry) => e.job?.finished ?? false
 
+const QUALITY_KEY = 'unstream:quality'
+
+function storedQuality(): Quality {
+  try {
+    const saved = localStorage.getItem(QUALITY_KEY)
+    return isQuality(saved) ? saved : DEFAULT_QUALITY
+  } catch {
+    return DEFAULT_QUALITY // private mode / storage disabled
+  }
+}
+
 export function DownloadsProvider({ children }: { children: ReactNode }) {
   const [entries, setEntries] = useState<DownloadEntry[]>([])
   const [panelOpen, setPanelOpen] = useState(false)
+  const [quality, setQualityState] = useState<Quality>(storedQuality)
   const entriesRef = useRef(entries)
   entriesRef.current = entries
+  // Read through a ref so `start` stays referentially stable — every
+  // download button downstream depends on it.
+  const qualityRef = useRef(quality)
+  qualityRef.current = quality
   // (time, settled-count) samples per job, for ETA estimation.
   const samplesRef = useRef<Map<string, { t: number; settled: number }[]>>(new Map())
 
+  const setQuality = useCallback((next: Quality) => {
+    setQualityState(next)
+    try {
+      localStorage.setItem(QUALITY_KEY, next)
+    } catch {
+      // Not persisting is survivable; the session still honours the choice.
+    }
+  }, [])
+
   const start = useCallback(async (url: string, collection: Collection, trackIds?: string[]) => {
-    const jobId = await startDownload(url, trackIds)
+    const chosen = qualityRef.current
+    const jobId = await startDownload(url, trackIds, chosen)
     const wanted = trackIds ? new Set(trackIds) : null
     setEntries((prev) => [
       ...prev,
@@ -73,6 +108,7 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
         tracks: wanted ? collection.tracks.filter((t) => wanted.has(t.id)) : collection.tracks,
         job: null,
         etaSeconds: null,
+        quality: chosen,
       },
     ])
     setPanelOpen(true)
@@ -81,8 +117,10 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
   const startFromResult = useCallback(
     async (result: SearchResult) => {
       const existing = entriesRef.current.filter((e) => e.url === result.url).at(-1)
-      if (existing && !isFinished(existing)) {
-        setPanelOpen(true) // already queued — just show it
+      // Already running at the quality being asked for — just show it. At a
+      // different quality it's a different file, so let it queue again.
+      if (existing && !isFinished(existing) && existing.quality === qualityRef.current) {
+        setPanelOpen(true)
         return
       }
       const collection = await resolveUrl(result.url)
@@ -155,13 +193,26 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
       activeCount,
       panelOpen,
       setPanelOpen,
+      quality,
+      setQuality,
       start,
       startFromResult,
       dismiss,
       entryForUrl,
       entriesForUrl,
     }),
-    [entries, activeCount, panelOpen, start, startFromResult, dismiss, entryForUrl, entriesForUrl],
+    [
+      entries,
+      activeCount,
+      panelOpen,
+      quality,
+      setQuality,
+      start,
+      startFromResult,
+      dismiss,
+      entryForUrl,
+      entriesForUrl,
+    ],
   )
 
   return <DownloadsContext.Provider value={value}>{children}</DownloadsContext.Provider>

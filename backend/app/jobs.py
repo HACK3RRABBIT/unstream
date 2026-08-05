@@ -46,6 +46,8 @@ class TrackState:
             "status": self.status,
             "progress": round(self.progress, 3),
             "error": self.error,
+            # "mp3" / "m4a" / "opus" — the UI labels its save link with it.
+            "ext": self.file_path.suffix.lstrip(".") if self.file_path else None,
         }
 
 
@@ -53,6 +55,7 @@ class TrackState:
 class Job:
     id: str
     name: str
+    quality: str = downloader.DEFAULT_QUALITY
     tracks: dict[str, TrackState] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -73,6 +76,7 @@ class Job:
         return {
             "id": self.id,
             "name": self.name,
+            "quality": self.quality,
             "tracks": states,
             "done": done,
             "failed": failed,
@@ -96,7 +100,11 @@ def _run_track(job: Job, state: TrackState) -> None:
 
     try:
         path = downloader.download_track(
-            state.track, job.dir, on_progress, filename=state.filename
+            state.track,
+            job.dir,
+            on_progress,
+            filename=state.filename,
+            quality=job.quality,
         )
         with job.lock:
             state.status = "done"
@@ -108,8 +116,10 @@ def _run_track(job: Job, state: TrackState) -> None:
             state.error = str(exc)
 
 
-def start(name: str, tracks: list[Track]) -> Job:
-    job = Job(id=uuid.uuid4().hex[:12], name=name)
+def start(
+    name: str, tracks: list[Track], quality: str = downloader.DEFAULT_QUALITY
+) -> Job:
+    job = Job(id=uuid.uuid4().hex[:12], name=name, quality=quality)
     # Two different tracks can share "Artist - Title" (playlist duplicates,
     # remastered copies). Concurrent downloads to one filename truncate each
     # other mid-conversion, so make every stem unique up front.

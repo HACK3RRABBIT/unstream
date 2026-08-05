@@ -28,17 +28,45 @@ export interface JobTrack {
   status: TrackStatus
   progress: number
   error: string | null
+  /** Format the finished file actually came out as ('mp3' | 'm4a' | 'opus'). */
+  ext: string | null
 }
 
 export interface Job {
   id: string
   name: string
+  quality: Quality
   tracks: JobTrack[]
   done: number
   failed: number
   total: number
   finished: boolean
 }
+
+/** Audio the user can ask for: an mp3 bitrate in kbps, or the upload's own
+ *  stream untouched. Mirrors QUALITIES in backend/app/downloader.py. */
+export const QUALITIES = ['128', '192', '320', 'original'] as const
+
+export type Quality = (typeof QUALITIES)[number]
+
+export const DEFAULT_QUALITY: Quality = '192'
+
+export const QUALITY_LABEL: Record<Quality, string> = {
+  '128': '128',
+  '192': '192',
+  '320': '320',
+  original: 'Original',
+}
+
+export const QUALITY_HINT: Record<Quality, string> = {
+  '128': 'Smallest files — fine for spoken word or a phone with no room left.',
+  '192': 'The default. Good quality at about half the size of 320.',
+  '320': 'The best mp3 gets. Plays everywhere.',
+  original:
+    'No re-encode — the upload’s own m4a or opus. Best sound, biggest files, and not every old device plays it.',
+}
+
+export const isQuality = (value: unknown): value is Quality => QUALITIES.includes(value as Quality)
 
 export type Source = 'deezer' | 'itunes' | 'youtube' | 'soundcloud'
 
@@ -120,10 +148,15 @@ export async function resolveUrl(url: string): Promise<Collection> {
   return data
 }
 
-export async function startDownload(url: string, trackIds?: string[]): Promise<string> {
+export async function startDownload(
+  url: string,
+  trackIds?: string[],
+  quality: Quality = DEFAULT_QUALITY,
+): Promise<string> {
   const { data } = await client.post<{ job_id: string }>('/download', {
     url,
     track_ids: trackIds ?? null,
+    quality,
   })
   return data.job_id
 }

@@ -6,7 +6,7 @@ import { useToast } from '../lib/toast'
 
 /** One-click "add to download list" button for a track row in any list. */
 export function QuickDownload({ result }: { result: SearchResult }) {
-  const { startFromResult, entryForUrl } = useDownloads()
+  const { startFromResult, entryForUrl, quality } = useDownloads()
   const { push } = useToast()
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -35,7 +35,14 @@ export function QuickDownload({ result }: { result: SearchResult }) {
     <button
       onClick={handleClick}
       title={
-        error ?? (done ? 'Downloaded — in your list' : queued ? 'Downloading…' : 'Download mp3')
+        error ??
+        (done
+          ? 'Downloaded — in your list'
+          : queued
+            ? 'Downloading…'
+            : quality === 'original'
+              ? 'Download without re-encoding'
+              : `Download at ${quality} kbps`)
       }
       aria-label={`Download ${result.name}`}
       className="grid size-8 shrink-0 place-items-center rounded-ctl border border-ink-700 text-ink-400 opacity-60 transition duration-200 group-hover:opacity-100 hover:border-lime-flash/50 hover:text-lime-flash active:scale-90"

@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
-from . import deezer, embed, itunes, jobs, soundcloud, ytdlp
+from . import deezer, downloader, embed, itunes, jobs, soundcloud, ytdlp
 from .models import Collection, ProviderError, SearchResult
 
 # Every provider here is keyless and free — no accounts, no API credentials.
@@ -172,6 +172,23 @@ class ResolveRequest(BaseModel):
 class DownloadRequest(BaseModel):
     url: str
     track_ids: list[str] | None = None  # None = everything
+    quality: str = downloader.DEFAULT_QUALITY  # mp3 bitrate, or "original"
+
+
+# Served files are no longer always mp3 — "original" keeps the upload's own
+# container, and the browser needs to be told which one it is getting.
+_MEDIA_TYPES = {
+    ".mp3": "audio/mpeg",
+    ".m4a": "audio/mp4",
+    ".mp4": "audio/mp4",
+    ".opus": "audio/ogg",
+    ".ogg": "audio/ogg",
+    ".oga": "audio/ogg",
+    ".webm": "audio/webm",
+    ".aac": "audio/aac",
+    ".wav": "audio/wav",
+    ".flac": "audio/flac",
+}
 
 
 @app.get("/health")
@@ -223,6 +240,11 @@ def resolve(body: ResolveRequest) -> dict:
 
 @app.post("/api/download")
 def download(body: DownloadRequest) -> dict:
+    if body.quality not in downloader.QUALITIES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Quality must be one of: {', '.join(downloader.QUALITIES)}",
+        )
     try:
         collection = resolve_any(body.url)
     except ProviderError as exc:
@@ -235,7 +257,7 @@ def download(body: DownloadRequest) -> dict:
     if not tracks:
         raise HTTPException(status_code=400, detail="No tracks to download")
 
-    job = jobs.start(collection.name, tracks)
+    job = jobs.start(collection.name, tracks, body.quality)
     return {"job_id": job.id}
 
 
@@ -257,7 +279,9 @@ def track_file(job_id: str, track_id: str) -> FileResponse:
         raise HTTPException(status_code=404, detail="Track not ready")
     return FileResponse(
         state.file_path,
-        media_type="audio/mpeg",
+        media_type=_MEDIA_TYPES.get(
+            state.file_path.suffix.lower(), "application/octet-stream"
+        ),
         filename=state.file_path.name,
     )
 

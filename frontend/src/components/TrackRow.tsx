@@ -163,7 +163,7 @@ export function TrackRow({
               className="flex animate-pop items-center gap-1.5 rounded-ctl border border-ink-600 px-2.5 py-1.5 text-mini font-medium text-lime-flash transition duration-200 hover:border-lime-flash/50 hover:bg-lime-flash/10 active:scale-95"
             >
               <Check className="size-3.5" />
-              mp3
+              {state?.ext ?? 'mp3'}
               <Download className="size-3.5" />
             </a>
           ) : active || status === 'queued' ? (
