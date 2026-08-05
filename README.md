@@ -8,7 +8,7 @@
   <img src="docs/media/hero.png" alt="Unstream — your music library, as files" />
 </p>
 
-Educational project: paste a **Spotify / Deezer / Apple Music / YouTube / SoundCloud** track, album or playlist URL — or search every catalog at once — and get tagged mp3 files. No accounts, no API keys, nothing paid.
+Educational project: paste a **Spotify / Deezer / Apple Music / YouTube / SoundCloud** track, album or playlist URL — or search every catalog at once — and get tagged audio files at the quality you pick (128 / 192 / 320 kbps mp3, or the original stream untouched). No accounts, no API keys, nothing paid.
 
 <table>
   <tr>
@@ -29,8 +29,8 @@ Streaming services are DRM-protected, so nothing is downloaded from them directl
    - **yt-dlp** — reads public YouTube and SoundCloud pages; resolves their URLs (videos, playlists, sets, profiles) and contributes YouTube search results.
    Search fans out to all of these in parallel and merges the results, deduped by name + artist. There is deliberately no Spotify Web API integration — since 2025 it requires the app owner to hold an active Premium subscription, and this project stays 100% free and keyless.
 2. **yt-dlp** finds the audio: tracks that already point at a YouTube/SoundCloud page download directly; everything else is searched (`ytsearch8:` on "artists - title") picking the result whose duration is closest to the catalog's (rejects live versions and hour-long mixes). Retries exclude broken uploads, and the last attempt searches SoundCloud instead of YouTube.
-3. The best audio stream is downloaded and **ffmpeg** converts it to mp3 (192 kbps); if the converter leaves raw audio behind, a direct ffmpeg pass salvages it.
-4. **mutagen** embeds ID3 tags + cover art into the file.
+3. The best audio stream is downloaded at the **quality** picked in the header — **ffmpeg** encodes mp3 at 128, 192 (default) or 320 kbps; if the converter leaves raw audio behind, a direct ffmpeg pass salvages it. **Original** skips the encode and keeps the upload's own stream (m4a, or opus remuxed out of webm so it can carry tags) — best fidelity, since re-encoding an already-lossy source can only lose more.
+4. **mutagen** embeds tags + cover art into the file, as ID3, MP4 atoms or Vorbis comments depending on what came out.
 
 The FastAPI backend runs downloads on a small thread pool (3 concurrent) and exposes job progress; the React frontend polls it and shows per-track status. A background sweeper deletes job folders older than `DOWNLOADS_TTL_HOURS` (default 24) every hour.
 
@@ -40,7 +40,7 @@ frontend (Vite + React + Tailwind)  ──proxy /api──▶  backend (FastAPI)
                                                       ├─ deezer.py               search, artists, Deezer URLs
                                                       ├─ itunes.py               search, Apple Music URLs
                                                       ├─ ytdlp.py                YouTube/SoundCloud URLs + search
-                                                      ├─ downloader.py           find audio → mp3 → tags
+                                                      ├─ downloader.py           find audio → encode → tags
                                                       └─ jobs.py                 thread pool + progress + sweeper
 ```
 
@@ -75,9 +75,9 @@ Open <http://localhost:5173>, paste any supported URL (or search by name), hit *
 | `GET /api/search?q=` | Multi-source search → tracks, albums, artists, playlists |
 | `GET /api/artist/{id}` | Artist page: top tracks + complete discography (Deezer) |
 | `POST /api/resolve` `{url}` | Spotify/Deezer/Apple Music/YouTube/SoundCloud URL → track list |
-| `POST /api/download` `{url, track_ids?}` | Start a download job, returns `job_id` |
+| `POST /api/download` `{url, track_ids?, quality?}` | Start a download job, returns `job_id`. `quality` is `128` \| `192` (default) \| `320` \| `original` |
 | `GET /api/jobs/{id}` | Per-track status/progress (polled by the UI) |
-| `GET /api/jobs/{id}/tracks/{tid}/file` | Download one finished mp3 |
+| `GET /api/jobs/{id}/tracks/{tid}/file` | Download one finished track (mp3/m4a/opus) |
 | `GET /api/jobs/{id}/zip` | ZIP of all finished tracks |
 
 ## Deploying (Dokploy)

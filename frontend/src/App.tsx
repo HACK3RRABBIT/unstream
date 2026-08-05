@@ -18,6 +18,7 @@ import { CollectionSkeleton } from './components/CollectionSkeleton'
 import { SearchResults } from './components/SearchResults'
 import { ArtistView } from './components/ArtistView'
 import { DownloadsDock } from './components/DownloadsDock'
+import { QualityPicker } from './components/QualityPicker'
 import { DownloadsProvider, useDownloads } from './lib/downloads'
 import { ToastProvider, useToast } from './lib/toast'
 
@@ -349,6 +350,7 @@ function Shell() {
           <AudioLines className="size-4.5" strokeWidth={2.25} />
         </span>
         <span className="font-display text-lg font-semibold tracking-tight">Unstream</span>
+        <QualityPicker className="ml-auto" />
       </header>
 
       <main className="mx-auto max-w-3xl px-5 pb-24">
@@ -407,8 +409,8 @@ function Shell() {
             </h1>
             <p className="mt-5 max-w-md animate-fade-up text-body leading-relaxed text-ink-300 [animation-delay:80ms]">
               Paste a Spotify, Deezer, Apple Music, YouTube or SoundCloud link — or search every
-              catalog at once. Unstream finds the audio and tags every mp3 for you. No accounts, no
-              keys.
+              catalog at once. Unstream finds the audio, encodes it at the quality you pick and tags
+              every file for you. No accounts, no keys.
             </p>
             <UrlForm
               className="mt-8 animate-fade-up [animation-delay:160ms]"

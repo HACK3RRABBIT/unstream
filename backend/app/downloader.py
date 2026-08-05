@@ -1,20 +1,23 @@
-"""Find a track's audio, download it, convert to mp3 and tag it.
+"""Find a track's audio, download it, encode it and tag it.
 
 Pipeline per track:
   1. If the track already points at a YouTube/SoundCloud page (source_url),
      download that directly. Otherwise yt-dlp `ytsearch8:` for
      "<artists> - <title>" and pick the result whose duration is closest to
      the catalog duration (rejects live versions, hour-long mixes, etc.).
-  2. Download bestaudio and let yt-dlp's ffmpeg postprocessor produce mp3.
-     If the postprocessor leaves a non-mp3 audio file behind, convert it
-     ourselves rather than failing.
-  3. Embed ID3 tags + album art from the catalog metadata with mutagen.
+  2. Download bestaudio. For an mp3 quality, yt-dlp's ffmpeg postprocessor
+     encodes at the requested bitrate (and if it leaves a non-mp3 audio
+     file behind, we convert it ourselves rather than failing). For
+     "original", the upload's own stream is kept as-is — no re-encode.
+  3. Embed tags + album art from the catalog metadata with mutagen, in
+     whatever tag format the resulting container speaks.
 
 Retries exclude the exact video that just failed, and the final attempt
 searches SoundCloud instead of YouTube, so one broken upload never sinks
 the track.
 """
 
+import base64
 import re
 import shutil
 import subprocess
@@ -23,13 +26,26 @@ from pathlib import Path
 from typing import Callable
 from urllib.request import urlopen
 
+from mutagen import File as MutagenFile
+from mutagen.flac import Picture
 from mutagen.id3 import APIC, ID3, TALB, TDRC, TIT2, TPE1, TPE2, TRCK
+from mutagen.mp4 import MP4, MP4Cover
 from yt_dlp import YoutubeDL
 
 from .models import Track
 
 # A candidate must be within this many seconds of the catalog duration.
 MAX_DURATION_DRIFT = 20
+
+# What the user can ask for. The mp3 values are lame bitrates in kbps; the
+# source upload is already lossy, so 320 adds no detail — it just stops the
+# re-encode from throwing more away. "original" skips the encode entirely
+# and keeps the upload's own m4a/opus stream: the best fidelity available,
+# at the cost of a format not every device plays.
+BITRATES = ("128", "192", "320")
+ORIGINAL = "original"
+QUALITIES = (*BITRATES, ORIGINAL)
+DEFAULT_QUALITY = "192"
 
 # Extensions the manual ffmpeg fallback will happily convert.
 _AUDIO_EXTS = {".webm", ".m4a", ".opus", ".ogg", ".aac", ".wav", ".flac", ".mp4"}
@@ -41,6 +57,12 @@ class DownloadError(Exception):
 
 def safe_filename(name: str) -> str:
     return re.sub(r'[\\/:*?"<>|]', "_", name).strip().rstrip(".") or "track"
+
+
+def _with_ext(dest: Path, ext: str) -> Path:
+    """`dest` + ".ext". Not `with_suffix`: that treats a dot inside the
+    title as an extension ("Still D.R.E" would become "Still D.mp3")."""
+    return dest.with_name(f"{dest.name}.{ext}")
 
 
 def _sibling_outputs(dest: Path) -> list[Path]:
@@ -108,24 +130,67 @@ def search_source(
     return chosen["url"]
 
 
-def _ffmpeg_convert(source: Path, mp3: Path) -> None:
+def _run_ffmpeg(args: list[str], produced: Path, what: str) -> None:
     proc = subprocess.run(
-        ["ffmpeg", "-y", "-i", str(source), "-vn", "-codec:a", "libmp3lame",
-         "-q:a", "2", str(mp3)],
-        capture_output=True,
-        timeout=300,
+        ["ffmpeg", "-y", *args, str(produced)], capture_output=True, timeout=300
     )
-    if proc.returncode != 0 or not mp3.exists():
+    if proc.returncode != 0 or not produced.exists():
+        produced.unlink(missing_ok=True)  # ffmpeg may leave an empty shell
         tail = proc.stderr.decode(errors="replace").strip().splitlines()[-1:]
-        raise DownloadError(f"ffmpeg conversion failed: {' '.join(tail)}")
+        raise DownloadError(f"ffmpeg {what} failed: {' '.join(tail)}")
+
+
+def _ffmpeg_convert(source: Path, mp3: Path, bitrate: str = DEFAULT_QUALITY) -> None:
+    _run_ffmpeg(
+        ["-i", str(source), "-vn", "-codec:a", "libmp3lame", "-b:a", f"{bitrate}k"],
+        mp3,
+        "conversion",
+    )
+
+
+def _downloaded_audio(dest: Path) -> Path | None:
+    """The largest raw audio file yt-dlp left behind for this stem."""
+    files = [p for p in _sibling_outputs(dest) if p.suffix.lower() in _AUDIO_EXTS]
+    return max(files, key=lambda p: p.stat().st_size) if files else None
+
+
+def _keep_original(dest: Path) -> Path:
+    """Return the untouched stream, moving webm audio into an Ogg container.
+
+    Nothing is re-encoded — the webm case is a copy-codec container swap,
+    done only because mutagen (and plenty of players) cannot handle audio
+    in webm, so the file would otherwise arrive untagged.
+    """
+    source = _downloaded_audio(dest)
+    if source is None:
+        raise DownloadError("no audio file was produced")
+    if source.suffix.lower() != ".webm":
+        return source
+
+    remux = ["-i", str(source), "-vn", "-codec:a", "copy"]
+    try:
+        # YouTube's webm audio is Opus in practice; .opus is the honest name.
+        out = _with_ext(dest, "opus")
+        _run_ffmpeg(remux, out, "remux")
+    except DownloadError:
+        # Vorbis (or anything else the Opus muxer rejects) still fits in Ogg.
+        out = _with_ext(dest, "ogg")
+        _run_ffmpeg(remux, out, "remux")
+    source.unlink(missing_ok=True)
+    return out
 
 
 def download_audio(
     url: str,
     dest: Path,
     on_progress: Callable[[float], None] | None = None,
+    quality: str = DEFAULT_QUALITY,
 ) -> Path:
-    """Download `url` as mp3 into `dest` (a path without extension)."""
+    """Download `url` into `dest` (a path without extension) at `quality`.
+
+    Returns the audio file actually produced — an mp3 for a bitrate, or the
+    upload's own m4a/opus for "original".
+    """
 
     def hook(status: dict) -> None:
         if on_progress and status.get("status") == "downloading":
@@ -145,34 +210,48 @@ def download_audio(
         "nopart": False,
         "overwrites": True,
         "progress_hooks": [hook],
-        "postprocessors": [
+    }
+    if quality != ORIGINAL:
+        opts["postprocessors"] = [
             {
                 "key": "FFmpegExtractAudio",
                 "preferredcodec": "mp3",
-                "preferredquality": "192",
+                "preferredquality": quality,
             }
-        ],
-    }
+        ]
+
     with YoutubeDL(opts) as ydl:
         ydl.download([url])
 
-    mp3 = dest.with_suffix(".mp3")
+    if quality == ORIGINAL:
+        return _keep_original(dest)
+
+    mp3 = _with_ext(dest, "mp3")
     if mp3.exists():
         return mp3
 
     # The postprocessor sometimes leaves the raw audio behind (odd container,
     # interrupted convert). Salvage it with a direct ffmpeg pass instead of
     # declaring the track failed.
-    leftovers = [p for p in _sibling_outputs(dest) if p.suffix.lower() in _AUDIO_EXTS]
-    if leftovers:
-        source = max(leftovers, key=lambda p: p.stat().st_size)
-        _ffmpeg_convert(source, mp3)
+    source = _downloaded_audio(dest)
+    if source:
+        _ffmpeg_convert(source, mp3, quality)
         source.unlink(missing_ok=True)
         return mp3
     raise DownloadError("no audio file was produced")
 
 
-def embed_tags(mp3_path: Path, track: Track) -> None:
+def _cover_bytes(track: Track) -> bytes | None:
+    if not track.cover_url:
+        return None
+    try:
+        with urlopen(track.cover_url, timeout=10) as resp:
+            return resp.read()
+    except OSError:
+        return None  # cover art is nice-to-have
+
+
+def _tag_mp3(path: Path, track: Track, cover: bytes | None) -> None:
     tags = ID3()
     tags.add(TIT2(encoding=3, text=track.title))
     tags.add(TPE1(encoding=3, text=", ".join(track.artists)))
@@ -182,21 +261,82 @@ def embed_tags(mp3_path: Path, track: Track) -> None:
         tags.add(TRCK(encoding=3, text=str(track.track_number)))
     if track.release_date:
         tags.add(TDRC(encoding=3, text=track.release_date[:4]))
-    if track.cover_url:
-        try:
-            with urlopen(track.cover_url, timeout=10) as resp:
-                tags.add(
-                    APIC(
-                        encoding=3,
-                        mime="image/jpeg",
-                        type=3,  # front cover
-                        desc="Cover",
-                        data=resp.read(),
-                    )
-                )
-        except OSError:
-            pass  # cover art is nice-to-have
-    tags.save(mp3_path)
+    if cover:
+        tags.add(
+            APIC(
+                encoding=3,
+                mime="image/jpeg",
+                type=3,  # front cover
+                desc="Cover",
+                data=cover,
+            )
+        )
+    tags.save(path)
+
+
+def _tag_mp4(path: Path, track: Track, cover: bytes | None) -> None:
+    """iTunes-style atoms, for the m4a an "original" download usually is."""
+    audio = MP4(path)
+    if audio.tags is None:
+        audio.add_tags()
+    tags = audio.tags
+    tags["\xa9nam"] = [track.title]
+    tags["\xa9ART"] = [", ".join(track.artists)]
+    tags["aART"] = [track.artists[0] if track.artists else ""]
+    tags["\xa9alb"] = [track.album]
+    if track.track_number:
+        tags["trkn"] = [(track.track_number, 0)]
+    if track.release_date:
+        tags["\xa9day"] = [track.release_date[:4]]
+    if cover:
+        tags["covr"] = [MP4Cover(cover, imageformat=MP4Cover.FORMAT_JPEG)]
+    audio.save()
+
+
+def _tag_ogg(path: Path, track: Track, cover: bytes | None) -> None:
+    """Vorbis comments — mutagen picks Opus vs Vorbis from the file itself."""
+    audio = MutagenFile(path)
+    if audio is None:
+        return
+    audio["title"] = [track.title]
+    audio["artist"] = [", ".join(track.artists)]
+    audio["albumartist"] = [track.artists[0] if track.artists else ""]
+    audio["album"] = [track.album]
+    if track.track_number:
+        audio["tracknumber"] = [str(track.track_number)]
+    if track.release_date:
+        audio["date"] = [track.release_date[:4]]
+    if cover:
+        picture = Picture()
+        picture.data = cover
+        picture.type = 3  # front cover
+        picture.mime = "image/jpeg"
+        # Ogg carries art as a base64 FLAC picture block in a comment.
+        audio["metadata_block_picture"] = [
+            base64.b64encode(picture.write()).decode("ascii")
+        ]
+    audio.save()
+
+
+_TAGGERS = {
+    ".mp3": _tag_mp3,
+    ".m4a": _tag_mp4,
+    ".mp4": _tag_mp4,
+    ".opus": _tag_ogg,
+    ".ogg": _tag_ogg,
+    ".oga": _tag_ogg,
+}
+
+
+def embed_tags(path: Path, track: Track) -> None:
+    """Write catalog metadata + art in whatever format the file speaks.
+
+    A container with no tag support (raw aac, wav) is left alone — the
+    audio is still perfectly good, it just arrives unlabelled.
+    """
+    tagger = _TAGGERS.get(path.suffix.lower())
+    if tagger:
+        tagger(path, track, _cover_bytes(track))
 
 
 def download_track(
@@ -205,16 +345,20 @@ def download_track(
     on_progress: Callable[[str, float], None],
     attempts: int = 4,
     filename: str | None = None,
+    quality: str = DEFAULT_QUALITY,
 ) -> Path:
     """Full pipeline for one track. Reports (stage, fraction) via callback.
 
     `filename` (no extension) lets the caller guarantee a unique name —
     two tracks sharing one stem would otherwise clobber each other's files
-    mid-download when they run concurrently.
+    mid-download when they run concurrently. `quality` is an mp3 bitrate in
+    kbps or "original"; see QUALITIES.
 
     Attempt order: the track's own source page if it has one, then YouTube
     search (excluding failed uploads), then SoundCloud as the last resort.
     """
+    if quality not in QUALITIES:
+        raise DownloadError(f"Unsupported quality: {quality}")
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = safe_filename(filename or f"{', '.join(track.artists)} - {track.title}")
     dest = out_dir / stem
@@ -240,13 +384,13 @@ def download_track(
 
             _clean_partials(dest)
             on_progress("downloading", 0.0)
-            mp3 = download_audio(
-                url, dest, lambda frac: on_progress("downloading", frac)
+            audio = download_audio(
+                url, dest, lambda frac: on_progress("downloading", frac), quality
             )
 
             on_progress("tagging", 1.0)
-            embed_tags(mp3, track)
-            return mp3
+            embed_tags(audio, track)
+            return audio
         except Exception as exc:
             last_error = exc
             if url:

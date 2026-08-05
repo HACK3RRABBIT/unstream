@@ -9,7 +9,7 @@ import {
   X,
 } from 'lucide-react'
 import clsx from 'clsx'
-import { jobZipUrl, trackFileUrl, type JobTrack } from '../lib/api'
+import { jobZipUrl, trackFileUrl, QUALITY_LABEL, type JobTrack } from '../lib/api'
 import { useDownloads, type DownloadEntry } from '../lib/downloads'
 
 const STAGE_LABEL: Record<string, string> = {
@@ -29,6 +29,9 @@ function formatEta(seconds: number): string {
 function TrackLine({ entry, state }: { entry: DownloadEntry; state: JobTrack }) {
   const track = entry.tracks.find((t) => t.id === state.id)
   const title = track ? track.title : state.id
+  // "original" can land as m4a or opus depending on the upload, so the file
+  // itself is the only honest source for this label.
+  const ext = state.ext ?? 'mp3'
   return (
     <li className="flex items-center gap-2.5 px-4 py-1.5">
       {state.status === 'done' ? (
@@ -55,12 +58,12 @@ function TrackLine({ entry, state }: { entry: DownloadEntry; state: JobTrack }) 
         <a
           href={trackFileUrl(entry.jobId, state.id)}
           download
-          title={`Download ${title}.mp3`}
-          aria-label={`Download ${title} as mp3`}
+          title={`Download ${title}.${ext}`}
+          aria-label={`Download ${title} as ${ext}`}
           className="flex shrink-0 items-center gap-1 rounded-ctl border border-ink-600 px-2 py-0.5 text-micro font-medium text-lime-flash transition hover:border-lime-flash/50 hover:bg-ink-800"
         >
           <Download className="size-3" />
-          mp3
+          {ext}
         </a>
       ) : state.status === 'error' ? (
         <span className="text-xs text-danger">failed</span>
@@ -116,6 +119,16 @@ function JobCard({ entry }: { entry: DownloadEntry }) {
             )}
           </p>
         </div>
+        <span
+          title={
+            entry.quality === 'original'
+              ? 'Downloaded without re-encoding'
+              : `Encoded at ${entry.quality} kbps`
+          }
+          className="shrink-0 rounded-ctl border border-ink-700 px-1.5 py-0.5 text-micro font-medium text-ink-400 tabular-nums"
+        >
+          {QUALITY_LABEL[entry.quality]}
+        </span>
         {showZip && (
           <a
             href={jobZipUrl(entry.jobId)}
