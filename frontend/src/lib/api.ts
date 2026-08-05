@@ -55,15 +55,15 @@ export const QUALITY_LABEL: Record<Quality, string> = {
   '128': '128',
   '192': '192',
   '320': '320',
-  original: 'Original',
+  original: 'اورجینال',
 }
 
 export const QUALITY_HINT: Record<Quality, string> = {
-  '128': 'Smallest files — fine for spoken word or a phone with no room left.',
-  '192': 'The default. Good quality at about half the size of 320.',
-  '320': 'The best mp3 gets. Plays everywhere.',
+  '128': 'کم‌حجم‌ترین حالت — برای پادکست یا گوشی‌ای که جاش پره کافیه.',
+  '192': 'پیش‌فرض. کیفیت خوب با تقریباً نصف حجم ۳۲۰.',
+  '320': 'بهترین حالتی که mp3 داره. همه‌جا هم پخش میشه.',
   original:
-    'No re-encode — the upload’s own m4a or opus. Best sound, biggest files, and not every old device plays it.',
+    'بدون انکود دوباره — همون m4a یا opus خود آپلود. بهترین صدا، بیشترین حجم، و روی بعضی دستگاه‌های قدیمی پخش نمیشه.',
 }
 
 export const isQuality = (value: unknown): value is Quality => QUALITIES.includes(value as Quality)
@@ -102,11 +102,37 @@ export interface ArtistDetail {
 
 const client = axios.create({ baseURL: '/api' })
 
+/** The backend composes result subtitles in English ("5 releases",
+ *  "by X · 40 tracks"); the UI is Farsi-only (docs/adr/0001), so the known
+ *  phrases are rewritten here at the API seam rather than forking the
+ *  backend's response for one client. Unmatched parts (artist names, years)
+ *  pass through untouched. */
+function localizeSubtitle(subtitle: string): string {
+  return subtitle
+    .split(' · ')
+    .map((part) =>
+      part
+        .replace(/^(\d+) releases?$/, '$1 اثر')
+        .replace(/^(\d+) tracks?$/, '$1 آهنگ')
+        .replace(/^(\d+) followers?$/, '$1 فالوور')
+        .replace(/^by (.+)$/, 'از $1')
+        .replace(/^Artist$/, 'آرتیست')
+        .replace(/^On SoundCloud$/, 'تو ساندکلاد')
+        .replace(/^SINGLE$/, 'تک‌آهنگ'),
+    )
+    .join(' · ')
+}
+
+const localizeResult = (result: SearchResult): SearchResult => ({
+  ...result,
+  subtitle: localizeSubtitle(result.subtitle),
+})
+
 export function apiError(err: unknown): string {
   if (axios.isAxiosError(err)) {
     return err.response?.data?.detail ?? err.message
   }
-  return err instanceof Error ? err.message : 'Something went wrong'
+  return err instanceof Error ? err.message : 'یه مشکلی پیش اومد'
 }
 
 const URL_PATTERNS = [
@@ -123,7 +149,7 @@ export async function searchCatalog(query: string, page = 0): Promise<SearchPage
   const { data } = await client.get<SearchPage>('/search', {
     params: { q: query, page },
   })
-  return data
+  return { ...data, results: data.results.map(localizeResult) }
 }
 
 /** Append a page, dropping anything already on screen. */
@@ -140,7 +166,11 @@ export function mergeResults(current: SearchResult[], incoming: SearchResult[]):
 
 export async function getArtist(id: string): Promise<ArtistDetail> {
   const { data } = await client.get<ArtistDetail>(`/artist/${id}`)
-  return data
+  return {
+    ...data,
+    top_tracks: data.top_tracks.map(localizeResult),
+    albums: data.albums.map(localizeResult),
+  }
 }
 
 export async function resolveUrl(url: string): Promise<Collection> {

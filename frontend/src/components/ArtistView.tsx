@@ -10,10 +10,10 @@ interface Props {
 
 const formatFans = (n: number) =>
   n >= 1_000_000
-    ? `${(n / 1_000_000).toFixed(1)}M fans`
+    ? `${(n / 1_000_000).toFixed(1)} میلیون فالوور`
     : n >= 1_000
-      ? `${Math.round(n / 1_000)}K fans`
-      : `${n} fans`
+      ? `${Math.round(n / 1_000)} هزار فالوور`
+      : `${n} فالوور`
 
 export function ArtistView({ artist, onPick }: Props) {
   return (
@@ -31,14 +31,12 @@ export function ArtistView({ artist, onPick }: Props) {
           </div>
         )}
         <div className="min-w-0 flex-1">
-          <span className="text-micro font-semibold tracking-[0.14em] text-lime-flash uppercase">
-            Artist
-          </span>
-          <h2 className="mt-1 truncate font-display text-2xl font-bold tracking-[-0.02em]">
+          <span className="text-micro font-semibold text-lime-flash">آرتیست</span>
+          <h2 className="mt-1 truncate font-display text-2xl font-bold" dir="auto">
             {artist.name}
           </h2>
           <p className="mt-1 text-mini text-ink-300">
-            {artist.albums.length} {artist.albums.length === 1 ? 'release' : 'releases'}
+            {artist.albums.length} اثر
             {artist.fan_count ? (
               <>
                 <span className="mx-1.5 text-ink-600">·</span>
@@ -51,22 +49,22 @@ export function ArtistView({ artist, onPick }: Props) {
 
       {artist.top_tracks.length > 0 && (
         <div className="border-b border-ink-800">
-          <h3 className="flex items-center gap-2 px-5 pt-4 pb-1 text-micro font-semibold tracking-[0.14em] text-ink-400 uppercase">
+          <h3 className="flex items-center gap-2 px-5 pt-4 pb-1 text-micro font-semibold text-ink-400">
             <Music2 className="size-3.5" />
-            Top songs
+            آهنگ‌های برتر
           </h3>
           <ol className="stagger pb-2">
             {artist.top_tracks.map((track, i) => (
               <li
                 key={track.id}
                 style={{ '--i': i } as CSSProperties}
-                className="group flex items-center gap-3 pr-5 transition-colors hover:bg-ink-800/60 focus-within:bg-ink-800/60"
+                className="group flex items-center gap-3 pe-5 transition-colors hover:bg-ink-800/60 focus-within:bg-ink-800/60"
               >
                 <button
                   onClick={() => onPick(track)}
-                  className="flex min-w-0 flex-1 items-center gap-4 py-2.5 pl-5 text-left focus-visible:outline-none"
+                  className="flex min-w-0 flex-1 items-center gap-4 py-2.5 ps-5 text-start focus-visible:outline-none"
                 >
-                  <span className="w-5 shrink-0 text-right text-mini tabular-nums text-ink-600">
+                  <span className="w-5 shrink-0 text-end text-mini tabular-nums text-ink-600">
                     {i + 1}
                   </span>
                   {track.cover_url ? (
@@ -82,9 +80,13 @@ export function ArtistView({ artist, onPick }: Props) {
                     </div>
                   )}
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-body font-medium text-ink-100">{track.name}</p>
+                    <p className="truncate text-body font-medium text-ink-100" dir="auto">
+                      {track.name}
+                    </p>
                     {track.subtitle && (
-                      <p className="truncate text-mini text-ink-400">{track.subtitle}</p>
+                      <p className="truncate text-mini text-ink-400" dir="auto">
+                        {track.subtitle}
+                      </p>
                     )}
                   </div>
                 </button>
@@ -97,16 +99,16 @@ export function ArtistView({ artist, onPick }: Props) {
 
       {artist.albums.length > 0 && (
         <div>
-          <h3 className="flex items-center gap-2 px-5 pt-4 pb-3 text-micro font-semibold tracking-[0.14em] text-ink-400 uppercase">
+          <h3 className="flex items-center gap-2 px-5 pt-4 pb-3 text-micro font-semibold text-ink-400">
             <Disc3 className="size-3.5" />
-            Discography
+            دیسکوگرافی
           </h3>
           <ul className="stagger grid grid-cols-2 gap-x-4 gap-y-5 px-5 pb-5 sm:grid-cols-3 md:grid-cols-4">
             {artist.albums.map((album, i) => (
               <li key={album.id} style={{ '--i': i } as CSSProperties}>
                 <button
                   onClick={() => onPick(album)}
-                  className="group w-full text-left focus-visible:outline-none"
+                  className="group w-full text-start focus-visible:outline-none"
                 >
                   <div className="relative aspect-square overflow-hidden rounded-btn bg-ink-800 ring-1 ring-ink-700/60 transition duration-300 group-hover:-translate-y-1 group-hover:ring-ink-600 group-focus-visible:ring-2 group-focus-visible:ring-lime-flash">
                     {album.cover_url ? (
@@ -122,11 +124,16 @@ export function ArtistView({ artist, onPick }: Props) {
                       </div>
                     )}
                   </div>
-                  <p className="mt-2 truncate text-mini font-medium text-ink-100 transition-colors group-hover:text-lime-flash">
+                  <p
+                    className="mt-2 truncate text-mini font-medium text-ink-100 transition-colors group-hover:text-lime-flash"
+                    dir="auto"
+                  >
                     {album.name}
                   </p>
                   {album.subtitle && (
-                    <p className="truncate text-xs text-ink-400">{album.subtitle}</p>
+                    <p className="truncate text-xs text-ink-400" dir="auto">
+                      {album.subtitle}
+                    </p>
                   )}
                 </button>
               </li>

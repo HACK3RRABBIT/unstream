@@ -26,11 +26,11 @@ function formatDuration(ms: number): string {
 }
 
 const STAGE_LABEL: Record<string, string> = {
-  queued: 'Queued',
-  searching: 'Searching…',
-  downloading: 'Downloading',
-  tagging: 'Tagging…',
-  retrying: 'Retrying…',
+  queued: 'تو صف',
+  searching: 'در حال جستجو…',
+  downloading: 'در حال دانلود',
+  tagging: 'در حال تگ زدن…',
+  retrying: 'تلاش دوباره…',
 }
 
 /** Three bouncing bars shown in place of the row number while previewing. */
@@ -79,7 +79,7 @@ export function TrackRow({
             onClick={onToggleSelect}
             role="checkbox"
             aria-checked={selected}
-            aria-label={`Select ${track.title}`}
+            aria-label={`انتخاب ${track.title}`}
             className={clsx(
               'grid size-5 shrink-0 place-items-center rounded-[6px] border transition-all duration-150 active:scale-90',
               selected
@@ -91,7 +91,7 @@ export function TrackRow({
           </button>
         )}
 
-        <span className="w-6 shrink-0 text-right font-display text-mini tabular-nums text-ink-600">
+        <span className="w-6 shrink-0 text-end font-display text-mini tabular-nums text-ink-600">
           {isCurrentPreview ? <Equalizer /> : index}
         </span>
 
@@ -115,21 +115,24 @@ export function TrackRow({
               'truncate text-body font-medium transition-colors',
               isCurrentPreview ? 'text-lime-flash' : 'text-ink-100',
             )}
+            dir="auto"
           >
             {track.title}
           </p>
-          <p className="truncate text-mini text-ink-400">{track.artists.join(', ')}</p>
+          <p className="truncate text-mini text-ink-400" dir="auto">
+            {track.artists.join(', ')}
+          </p>
         </div>
 
         <div className="flex shrink-0 items-center gap-3">
           {track.preview_url && (
             <button
               onClick={() => togglePreview(track.id, track.preview_url!)}
-              title={isCurrentPreview ? 'Stop preview' : 'Play 30s preview'}
+              title={isCurrentPreview ? 'توقف پیش‌نمایش' : 'پخش ۳۰ ثانیه پیش‌نمایش'}
               aria-label={
                 isCurrentPreview
-                  ? `Stop preview of ${track.title}`
-                  : `Play 30 second preview of ${track.title}`
+                  ? `توقف پیش‌نمایش ${track.title}`
+                  : `پخش ۳۰ ثانیه از ${track.title}`
               }
               className={clsx(
                 'grid size-8 shrink-0 place-items-center rounded-ctl border transition duration-200 active:scale-90',
@@ -154,7 +157,7 @@ export function TrackRow({
               title={state?.error ?? undefined}
             >
               <TriangleAlert className="size-3.5" />
-              Failed
+              ناموفق
             </span>
           ) : status === 'done' && jobId ? (
             <a
@@ -185,8 +188,8 @@ export function TrackRow({
                 <button
                   onClick={onDownload}
                   disabled={downloading}
-                  title={downloading ? 'Starting download…' : 'Download this track'}
-                  aria-label={`Download ${track.title}`}
+                  title={downloading ? 'در حال شروع دانلود…' : 'دانلود این آهنگ'}
+                  aria-label={`دانلود ${track.title}`}
                   aria-busy={downloading}
                   className={clsx(
                     'grid size-8 shrink-0 place-items-center rounded-ctl border transition duration-200 active:scale-90',

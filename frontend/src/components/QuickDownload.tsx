@@ -21,7 +21,7 @@ export function QuickDownload({ result }: { result: SearchResult }) {
     setPending(true)
     try {
       await startFromResult(result)
-      push(`Queued “${result.name}”`)
+      push(`«${result.name}» رفت تو صف`)
     } catch (err) {
       const message = apiError(err)
       setError(message)
@@ -37,14 +37,14 @@ export function QuickDownload({ result }: { result: SearchResult }) {
       title={
         error ??
         (done
-          ? 'Downloaded — in your list'
+          ? 'دانلود شده — تو لیستته'
           : queued
-            ? 'Downloading…'
+            ? 'در حال دانلود…'
             : quality === 'original'
-              ? 'Download without re-encoding'
-              : `Download at ${quality} kbps`)
+              ? 'دانلود بدون انکود دوباره'
+              : `دانلود با ${quality} kbps`)
       }
-      aria-label={`Download ${result.name}`}
+      aria-label={`دانلود ${result.name}`}
       className="grid size-8 shrink-0 place-items-center rounded-ctl border border-ink-700 text-ink-400 opacity-60 transition duration-200 group-hover:opacity-100 hover:border-lime-flash/50 hover:text-lime-flash active:scale-90"
     >
       {error ? (

@@ -1,8 +1,10 @@
 {
   "id": "/",
+  "lang": "fa",
+  "dir": "rtl",
   "name": "Unstream",
   "short_name": "Unstream",
-  "description": "Search songs, albums and playlists — or paste a Spotify / Deezer link — and download them as tagged mp3 files.",
+  "description": "آهنگ، آلبوم و پلی‌لیست جستجو کن — یا لینک اسپاتیفای / دیزر رو پیست کن — و به‌صورت MP3 تگ‌خورده دانلود کن.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0b0d0a",
