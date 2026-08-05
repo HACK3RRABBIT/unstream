@@ -8,7 +8,18 @@
  */
 
 const CACHE = `unstream-__UNSTREAM_BUILD__`
-const SHELL = ['/', '/index.html', '/manifest.webmanifest']
+const SHELL = [
+  '/',
+  '/index.html',
+  '/manifest.webmanifest',
+  // The four preloaded Peyda weights — cached so the app-shell works
+  // offline in the right typeface. Served immutable by nginx, so these
+  // re-installs hit the HTTP cache, not the network.
+  '/fonts/PeydaFaNumWeb-Regular.woff2',
+  '/fonts/PeydaFaNumWeb-Medium.woff2',
+  '/fonts/PeydaFaNumWeb-SemiBold.woff2',
+  '/fonts/PeydaFaNumWeb-Bold.woff2',
+]
 
 self.addEventListener('install', (event) => {
   self.skipWaiting()

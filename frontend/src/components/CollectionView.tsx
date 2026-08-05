@@ -12,12 +12,12 @@ interface Props {
   collection: Collection
 }
 
-const KIND_LABEL = { track: 'Track', album: 'Album', playlist: 'Playlist' }
+const KIND_LABEL = { track: 'آهنگ', album: 'آلبوم', playlist: 'پلی‌لیست' }
 
 function formatTotal(ms: number): string {
   const minutes = Math.round(ms / 60000)
-  if (minutes < 60) return `${minutes} min`
-  return `${Math.floor(minutes / 60)} hr ${minutes % 60} min`
+  if (minutes < 60) return `${minutes} دقیقه`
+  return `${Math.floor(minutes / 60)} ساعت و ${minutes % 60} دقیقه`
 }
 
 export function CollectionView({ url, collection }: Props) {
@@ -39,9 +39,9 @@ export function CollectionView({ url, collection }: Props) {
       await navigator.clipboard.writeText(share)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
-      push('Shareable link copied', 'success')
+      push('لینک اشتراکی کپی شد', 'success')
     } catch {
-      push('Could not copy the link', 'error')
+      push('کپی لینک انجام نشد', 'error')
     }
   }
 
@@ -56,11 +56,9 @@ export function CollectionView({ url, collection }: Props) {
   const selectAll = () => setSelected(new Set(collection.tracks.map((t) => t.id)))
   const clearSelection = () => setSelected(new Set())
 
-  const trackWord = (n: number) => `${n} ${n === 1 ? 'track' : 'tracks'}`
-
   const start = useMutation({
     mutationFn: () => downloads.start(url, collection),
-    onSuccess: () => push(`Queued ${trackWord(collection.tracks.length)} from ${collection.name}`),
+    onSuccess: () => push(`${collection.tracks.length} آهنگ از ${collection.name} رفت تو صف`),
     onError: (err) => push(apiError(err), 'error'),
   })
 
@@ -68,7 +66,7 @@ export function CollectionView({ url, collection }: Props) {
     mutationFn: (ids: string[]) => downloads.start(url, collection, ids),
     onSuccess: (_data, ids) => {
       clearSelection()
-      push(`Queued ${trackWord(ids.length)}`)
+      push(`${ids.length} آهنگ رفت تو صف`)
     },
     onError: (err) => push(apiError(err), 'error'),
   })
@@ -80,7 +78,7 @@ export function CollectionView({ url, collection }: Props) {
         { ...collection, name: track.title, cover_url: track.cover_url ?? collection.cover_url },
         [track.id],
       ),
-    onSuccess: (_data, track) => push(`Queued “${track.title}”`),
+    onSuccess: (_data, track) => push(`«${track.title}» رفت تو صف`),
     onError: (err) => push(apiError(err), 'error'),
   })
 
@@ -125,16 +123,16 @@ export function CollectionView({ url, collection }: Props) {
         {/* basis keeps the title from being crushed on phones — the buttons
             wrap to their own row instead of truncating the name */}
         <div className="min-w-0 grow basis-40">
-          <span className="text-micro font-semibold tracking-[0.14em] text-lime-flash uppercase">
+          <span className="text-micro font-semibold text-lime-flash">
             {KIND_LABEL[collection.kind]}
           </span>
-          <h2 className="mt-1 truncate font-display text-2xl font-bold tracking-[-0.02em]">
+          <h2 className="mt-1 truncate font-display text-2xl font-bold" dir="auto">
             {collection.name}
           </h2>
           <p className="mt-1 text-mini text-ink-300">
-            {collection.owner}
+            <span dir="auto">{collection.owner}</span>
             <span className="mx-1.5 text-ink-600">·</span>
-            {collection.tracks.length} {collection.tracks.length === 1 ? 'track' : 'tracks'}
+            {collection.tracks.length} آهنگ
             {totalMs > 0 && (
               <>
                 <span className="mx-1.5 text-ink-600">·</span>
@@ -147,8 +145,8 @@ export function CollectionView({ url, collection }: Props) {
         <div className="flex items-center gap-2">
           <button
             onClick={copyLink}
-            title="Copy a shareable link to this page"
-            aria-label="Copy shareable link"
+            title="کپی لینک اشتراکی این صفحه"
+            aria-label="کپی لینک اشتراکی"
             className="grid size-10 place-items-center rounded-btn border border-ink-600 text-ink-300 transition duration-200 hover:border-ink-400 hover:text-ink-100 active:scale-95"
           >
             {copied ? (
@@ -171,8 +169,8 @@ export function CollectionView({ url, collection }: Props) {
             <>
               <button
                 onClick={clearSelection}
-                title="Clear selection"
-                aria-label="Clear selection"
+                title="لغو انتخاب"
+                aria-label="لغو انتخاب"
                 className="grid size-10 place-items-center rounded-btn border border-ink-600 text-ink-300 transition duration-200 hover:border-ink-400 hover:text-ink-100 active:scale-95"
               >
                 <X className="size-4" />
@@ -191,7 +189,7 @@ export function CollectionView({ url, collection }: Props) {
                 ) : (
                   <Download className="size-4" />
                 )}
-                Download {selected.size} selected
+                دانلود {selected.size} انتخاب‌شده
               </button>
             </>
           ) : (
@@ -208,12 +206,12 @@ export function CollectionView({ url, collection }: Props) {
                 {running || start.isPending ? (
                   <>
                     <LoaderCircle className="size-4 animate-spin" />
-                    {entries.length > 0 ? `${settled}/${queuedTotal}` : 'Starting…'}
+                    {entries.length > 0 ? `${settled}/${queuedTotal}` : 'در حال شروع…'}
                   </>
                 ) : (
                   <>
                     <Download className="size-4" />
-                    Download all
+                    دانلود همه
                   </>
                 )}
               </button>
@@ -235,14 +233,14 @@ export function CollectionView({ url, collection }: Props) {
         <div className="flex items-center justify-between border-b border-ink-800 bg-ink-950/50 px-5 py-2">
           <span className="text-xs text-ink-400 tabular-nums">
             {selected.size > 0
-              ? `${selected.size} of ${collection.tracks.length} selected`
-              : `${collection.tracks.length} tracks — tick any to download just those`}
+              ? `${selected.size} از ${collection.tracks.length} انتخاب شده`
+              : `${collection.tracks.length} آهنگ — هرکدوم رو تیک بزنی فقط همون‌ها دانلود میشن`}
           </span>
           <button
             onClick={selected.size === collection.tracks.length ? clearSelection : selectAll}
             className="text-xs font-medium text-lime-flash transition hover:text-lime-soft"
           >
-            {selected.size === collection.tracks.length ? 'Clear all' : 'Select all'}
+            {selected.size === collection.tracks.length ? 'لغو همه' : 'انتخاب همه'}
           </button>
         </div>
       )}
@@ -273,8 +271,8 @@ export function CollectionView({ url, collection }: Props) {
       {allFinished && (
         <p className="flex animate-fade-up items-center gap-2 border-t border-ink-800 px-5 py-3.5 text-mini text-ink-300">
           <Check className="size-4 shrink-0 text-lime-flash" />
-          Finished — {doneTotal} of {queuedTotal} downloaded
-          {failedTotal > 0 && <span className="text-danger">· {failedTotal} failed</span>}
+          تموم شد — {doneTotal} از {queuedTotal} دانلود شد
+          {failedTotal > 0 && <span className="text-danger">· {failedTotal} تا نشد</span>}
         </p>
       )}
     </section>

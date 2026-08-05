@@ -1,5 +1,5 @@
 import { useEffect, useState, type RefObject } from 'react'
-import { ArrowRight, LoaderCircle, Search } from 'lucide-react'
+import { ArrowLeft, LoaderCircle, Search } from 'lucide-react'
 import clsx from 'clsx'
 import { isCatalogUrl } from '../lib/api'
 
@@ -28,7 +28,7 @@ export function UrlForm({ loading, onSubmit, className, inputRef, focusPulse = 0
   return (
     <form
       className={clsx(
-        'relative flex items-center gap-2 rounded-panel border border-ink-700 bg-ink-900 p-2 pl-4',
+        'relative flex items-center gap-2 rounded-panel border border-ink-700 bg-ink-900 p-2 ps-4',
         'transition duration-200 focus-within:border-lime-flash/60',
         'focus-within:ring-4 focus-within:ring-lime-flash/10',
         className,
@@ -58,10 +58,11 @@ export function UrlForm({ loading, onSubmit, className, inputRef, focusPulse = 0
         type="text"
         value={input}
         onChange={(e) => setInput(e.target.value)}
-        placeholder="Search songs, albums, artists — or paste a Spotify / Deezer / YouTube / SoundCloud link"
+        dir="auto"
+        placeholder="آهنگ، آلبوم یا آرتیست جستجو کن — یا لینک اسپاتیفای / دیزر / یوتیوب / ساندکلاد رو پیست کن"
         spellCheck={false}
         autoFocus
-        className="min-w-0 flex-1 bg-transparent text-body text-ink-100 placeholder:text-ink-600 focus:outline-none"
+        className="min-w-0 flex-1 bg-transparent text-body text-ink-100 placeholder:text-ink-600 placeholder-shown:[direction:rtl] focus:outline-none"
       />
       <button
         type="submit"
@@ -76,12 +77,12 @@ export function UrlForm({ loading, onSubmit, className, inputRef, focusPulse = 0
         {loading ? (
           <>
             <LoaderCircle className="size-4 animate-spin" />
-            {isUrl ? 'Fetching…' : 'Searching…'}
+            {isUrl ? 'در حال باز کردن…' : 'در حال جستجو…'}
           </>
         ) : (
           <>
-            {isUrl ? 'Fetch' : 'Search'}
-            <ArrowRight className="size-4 transition-transform duration-200 group-hover:translate-x-0.5" />
+            {isUrl ? 'باز کن' : 'جستجو'}
+            <ArrowLeft className="size-4 transition-transform duration-200 group-hover:-translate-x-0.5" />
           </>
         )}
       </button>

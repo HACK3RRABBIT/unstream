@@ -36,9 +36,9 @@ type View =
   | { type: 'collection'; url: string; collection: Collection }
 
 const BACK_LABEL: Record<View['type'], string> = {
-  search: 'Back to results',
-  artist: 'Back to artist',
-  collection: 'Back',
+  search: 'برگشت به نتایج',
+  artist: 'برگشت به آرتیست',
+  collection: 'برگشت',
 }
 
 const isTypingTarget = (target: EventTarget | null) => {
@@ -60,14 +60,11 @@ function DownloadNotifier() {
         const done = entry.job!.done
         const failed = entry.job!.failed
         if (done > 0 && failed === 0) {
-          push(
-            `${entry.name} — ${done} ${done === 1 ? 'track' : 'tracks'} ready to save`,
-            'success',
-          )
+          push(`${entry.name} — ${done} آهنگ آماده‌ی ذخیره‌ست`, 'success')
         } else if (done > 0) {
-          push(`${entry.name} — ${done} ready, ${failed} failed`, 'info')
+          push(`${entry.name} — ${done} آهنگ آماده شد، ${failed} تا دانلود نشد`, 'info')
         } else {
-          push(`${entry.name} — download failed`, 'error')
+          push(`${entry.name} — دانلود انجام نشد`, 'error')
         }
       }
       finishedState.current.set(entry.jobId, finished)
@@ -270,8 +267,8 @@ function Shell() {
   // already reload themselves; see main.tsx.)
   useEffect(() => {
     const onUpdate = () =>
-      pushRef.current('A new version of Unstream is available', 'info', {
-        label: 'Reload',
+      pushRef.current('نسخه‌ی جدید آنستریم اومده', 'info', {
+        label: 'رفرش',
         onClick: () => window.location.reload(),
       })
     window.addEventListener('unstream:update', onUpdate)
@@ -299,7 +296,7 @@ function Shell() {
       if (text && isCatalogUrl(text)) {
         e.preventDefault()
         setSharedArrival(null)
-        pushRef.current('Link detected — fetching…', 'info')
+        pushRef.current('لینک پیدا شد — در حال باز کردن…', 'info')
         openCollectionRef.current(text, false)
       }
     }
@@ -344,42 +341,45 @@ function Shell() {
         : `search:${view.query}`
 
   return (
-    <div className="min-h-screen bg-ink-950">
-      <header className="mx-auto flex max-w-3xl items-center gap-2.5 px-5 pt-8">
+    <div className="flex min-h-screen flex-col bg-ink-950">
+      <header className="mx-auto flex w-full max-w-3xl items-center gap-2.5 px-5 pt-8">
         <span className="grid size-8 place-items-center rounded-ctl bg-lime-flash text-lime-ink">
           <AudioLines className="size-4.5" strokeWidth={2.25} />
         </span>
-        <span className="font-display text-lg font-semibold tracking-tight">Unstream</span>
-        <QualityPicker className="ml-auto" />
+        <span className="font-display text-lg font-semibold">آنستریم</span>
+        <QualityPicker className="ms-auto" />
       </header>
 
-      <main className="mx-auto max-w-3xl px-5 pb-24">
+      <main className="mx-auto w-full max-w-3xl flex-1 px-5 pb-24">
         {sharedArrival ? (
           <section className="pt-10 pb-8">
             <div className="animate-fade-up rounded-panel border border-lime-flash/25 bg-lime-flash/[0.06] p-4 sm:p-5">
-              <p className="flex items-center gap-2 text-micro font-semibold tracking-[0.14em] text-lime-flash uppercase">
+              <p className="flex items-center gap-2 text-micro font-semibold text-lime-flash">
                 <LinkIcon className="size-3.5" />
-                Shared link
+                لینک اشتراکی
               </p>
-              <h1 className="mt-2 font-display text-2xl font-bold tracking-[-0.02em] text-balance">
+              <h1 className="mt-2 font-display text-2xl font-bold text-balance">
                 {error
-                  ? 'That shared link didn’t open'
+                  ? 'این لینک اشتراکی باز نشد'
                   : sharedArrival.kind === 'q'
-                    ? 'Someone shared a search with you'
+                    ? 'یکی یه جستجو برات فرستاده'
                     : busy
-                      ? 'Opening what someone shared with you…'
-                      : 'Here’s what someone shared with you'}
+                      ? 'در حال باز کردن چیزی که برات فرستادن…'
+                      : 'این رو یکی برات فرستاده'}
               </h1>
               <p className="mt-2 text-mini text-ink-300">
                 {error ? (
-                  'The link may be broken, private, or from a source Unstream can’t read.'
+                  'شاید لینک خراب یا خصوصی باشه، یا از منبعی باشه که آنستریم نمی‌تونه بخونتش.'
                 ) : sharedArrival.kind === 'q' ? (
                   <>
-                    Results for <span className="text-lime-flash">“{sharedArrival.query}”</span> —
-                    loaded automatically from the link you followed.
+                    نتایج برای{' '}
+                    <span className="text-lime-flash" dir="auto">
+                      «{sharedArrival.query}»
+                    </span>{' '}
+                    — خودکار از لینکی که دنبال کردی باز شد.
                   </>
                 ) : (
-                  'Unstream loaded this automatically from the link you followed. Pick the tracks you want, or start fresh.'
+                  'آنستریم این رو خودکار از روی لینکت باز کرد. آهنگ‌هایی که می‌خوای رو انتخاب کن، یا از اول شروع کن.'
                 )}
               </p>
               <button
@@ -387,8 +387,8 @@ function Shell() {
                 className="group mt-4 flex items-center gap-1.5 rounded-btn border border-ink-600 px-3.5 py-2 text-mini font-medium text-ink-100 transition duration-200 hover:border-ink-400 active:scale-[0.98]"
               >
                 <Search className="size-3.5" />
-                Search for something else
-                <ArrowRight className="size-3.5 transition-transform duration-200 group-hover:translate-x-0.5" />
+                جستجوی یه چیز دیگه
+                <ArrowLeft className="size-3.5 transition-transform duration-200 group-hover:-translate-x-0.5" />
               </button>
             </div>
             {error && (
@@ -402,15 +402,15 @@ function Shell() {
           </section>
         ) : (
           <section className="pt-14 pb-10 sm:pt-16 sm:pb-12">
-            <h1 className="animate-fade-up font-display text-[clamp(2.5rem,7.5vw,4.5rem)] leading-[0.98] font-bold tracking-[-0.035em] text-balance">
-              Your music library,
+            <h1 className="animate-fade-up font-display text-[clamp(2.5rem,7.5vw,4.5rem)] leading-[1.15] font-bold text-balance">
+              دانلود موزیک،
               <br />
-              <span className="text-lime-flash">as files.</span>
+              <span className="text-lime-flash">آلبوم و پلی‌لیست</span>
             </h1>
             <p className="mt-5 max-w-md animate-fade-up text-body leading-relaxed text-ink-300 [animation-delay:80ms]">
-              Paste a Spotify, Deezer, Apple Music, YouTube or SoundCloud link — or search every
-              catalog at once. Unstream finds the audio, encodes it at the quality you pick and tags
-              every file for you. No accounts, no keys.
+              لینک اسپاتیفای، یوتیوب، ساندکلاد، دیزر یا اپل موزیک رو بذار — یا همه‌ی کاتالوگ‌ها رو
+              یکجا جستجو کن. فایل MP3 تگ‌خورده با کاور و کیفیت دلخواهت رو بگیر؛ نه اکانت می‌خواد، نه
+              ثبت‌نام.
             </p>
             <UrlForm
               className="mt-8 animate-fade-up [animation-delay:160ms]"
@@ -420,11 +420,11 @@ function Shell() {
               focusPulse={focusPulse}
             />
             <p className="mt-3 animate-fade-up text-mini text-ink-400 [animation-delay:220ms]">
-              Press{' '}
+              برای جستجو{' '}
               <kbd className="rounded-[5px] border border-ink-700 bg-ink-900 px-1.5 py-0.5 font-sans text-micro text-ink-300">
                 /
               </kbd>{' '}
-              to search, or just paste a link anywhere on the page.
+              رو بزن، یا هر جای صفحه یه لینک پیست کن.
             </p>
             {error && (
               <p
@@ -445,7 +445,7 @@ function Shell() {
                 onClick={goBack}
                 className="group mb-3 flex items-center gap-1.5 rounded-ctl px-2 py-1.5 text-mini font-medium text-ink-300 transition hover:bg-ink-800 hover:text-ink-100 active:scale-[0.98]"
               >
-                <ArrowLeft className="size-4 transition-transform duration-200 group-hover:-translate-x-0.5" />
+                <ArrowRight className="size-4 transition-transform duration-200 group-hover:translate-x-0.5" />
                 {BACK_LABEL[previous.type]}
               </button>
             )}
@@ -467,22 +467,40 @@ function Shell() {
         )}
       </main>
 
-      <footer className="mx-auto max-w-3xl space-y-1.5 px-5 pb-10 text-xs text-ink-400">
-        <p>
-          Educational project — audio is sourced from public YouTube and SoundCloud uploads, not
-          streaming services. Only download what you have the rights to.
-        </p>
-        <p className="text-sm">
-          Built by{' '}
-          <a
-            href="https://github.com/amiralibg"
-            target="_blank"
-            rel="noreferrer"
-            className="font-medium text-ink-300 underline decoration-ink-600 underline-offset-2 transition hover:text-lime-flash hover:decoration-lime-flash/60"
-          >
-            Amirali Beigi
-          </a>
-        </p>
+      <footer
+        dir="ltr"
+        className="mx-auto flex w-full max-w-3xl flex-wrap items-center justify-center gap-x-1.5 gap-y-2 px-5 pb-10 text-sm text-ink-400"
+      >
+        <span>Built by</span>
+        <a
+          href="https://x.com/_amiralibgi"
+          target="_blank"
+          rel="noreferrer"
+          className="flex items-center gap-1.5 font-medium text-ink-300 underline decoration-ink-600 underline-offset-2 transition hover:text-lime-flash hover:decoration-lime-flash/60"
+        >
+          <img
+            src="/amirali.jpg"
+            alt=""
+            loading="lazy"
+            className="size-5 rounded-full object-cover"
+          />
+          amiralibgi
+        </a>
+        <span>and</span>
+        <a
+          href="https://x.com/yazdanctx"
+          target="_blank"
+          rel="noreferrer"
+          className="flex items-center gap-1.5 font-medium text-ink-300 underline decoration-ink-600 underline-offset-2 transition hover:text-lime-flash hover:decoration-lime-flash/60"
+        >
+          <img
+            src="/yazdan.jpg"
+            alt=""
+            loading="lazy"
+            className="size-5 rounded-full object-cover"
+          />
+          yazdanctx
+        </a>
       </footer>
 
       <DownloadNotifier />

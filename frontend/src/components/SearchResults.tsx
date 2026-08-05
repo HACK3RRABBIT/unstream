@@ -1,6 +1,6 @@
 import { useMemo, useState, type CSSProperties } from 'react'
 import {
-  ChevronRight,
+  ChevronLeft,
   Disc3,
   ListMusic,
   LoaderCircle,
@@ -28,11 +28,13 @@ const SOURCE_META: Record<Source, { label: string; dot: string }> = {
   soundcloud: { label: 'SoundCloud', dot: 'bg-[#ff7700]' },
 }
 
+/** `noun` is the singular — Persian counts and «…های بیشتر» need it, and it
+ *  can't be derived from the plural label. */
 const KINDS = [
-  { kind: 'track', label: 'Songs', icon: Music2, preview: 6 },
-  { kind: 'artist', label: 'Artists', icon: MicVocal, preview: 6 },
-  { kind: 'album', label: 'Albums', icon: Disc3, preview: 8 },
-  { kind: 'playlist', label: 'Playlists', icon: ListMusic, preview: 4 },
+  { kind: 'track', label: 'آهنگ‌ها', noun: 'آهنگ', icon: Music2, preview: 6 },
+  { kind: 'artist', label: 'آرتیست‌ها', noun: 'آرتیست', icon: MicVocal, preview: 6 },
+  { kind: 'album', label: 'آلبوم‌ها', noun: 'آلبوم', icon: Disc3, preview: 8 },
+  { kind: 'playlist', label: 'پلی‌لیست‌ها', noun: 'پلی‌لیست', icon: ListMusic, preview: 4 },
 ] as const
 
 type Tab = 'all' | ResultKind
@@ -66,11 +68,11 @@ function TrackList({
         <li
           key={item.dedup_key}
           style={stagger(i)}
-          className="group flex items-center gap-3 pr-5 transition-colors hover:bg-ink-800/60 focus-within:bg-ink-800/60"
+          className="group flex items-center gap-3 pe-5 transition-colors hover:bg-ink-800/60 focus-within:bg-ink-800/60"
         >
           <button
             onClick={() => onPick(item)}
-            className="flex min-w-0 flex-1 items-center gap-4 py-2.5 pl-5 text-left focus-visible:outline-none"
+            className="flex min-w-0 flex-1 items-center gap-4 py-2.5 ps-5 text-start focus-visible:outline-none"
           >
             {item.cover_url ? (
               <img
@@ -84,7 +86,10 @@ function TrackList({
                 <Music2 className="size-4 text-ink-400" />
               </div>
             )}
-            <div className="min-w-0 flex-1">
+            {/* dir on the wrapper, not the lines: the title picks the
+                direction and the subtitle follows it, so a Persian track
+                doesn't sit right-aligned above a left-aligned artist. */}
+            <div className="min-w-0 flex-1" dir="auto">
               <p className="truncate text-body font-medium text-ink-100">{item.name}</p>
               {item.subtitle && <p className="truncate text-mini text-ink-400">{item.subtitle}</p>}
             </div>
@@ -119,7 +124,8 @@ function CardGrid({
         <li key={item.dedup_key} style={stagger(i)}>
           <button
             onClick={() => onPick(item)}
-            className="group w-full text-left focus-visible:outline-none"
+            className="group w-full text-start focus-visible:outline-none"
+            dir="auto"
           >
             <div
               className={clsx(
@@ -183,9 +189,11 @@ export function SearchResults({ query, results, hasMore, loadingMore, onLoadMore
     return (
       <section className="rounded-panel border border-ink-700 bg-ink-900 px-5 py-14 text-center">
         <SearchX className="mx-auto size-7 text-ink-600" />
-        <p className="mt-3 text-body font-medium text-ink-100">Nothing found for “{query}”</p>
+        <p className="mt-3 text-body font-medium text-ink-100">
+          چیزی برای <span dir="auto">«{query}»</span> پیدا نشد
+        </p>
         <p className="mx-auto mt-1.5 max-w-xs text-mini text-ink-400">
-          Try the artist name alone, check the spelling, or paste a link to the album instead.
+          فقط اسم آرتیست رو امتحان کن، املا رو یه چک بکن، یا به‌جاش لینک آلبوم رو پیست کن.
         </p>
       </section>
     )
@@ -199,20 +207,23 @@ export function SearchResults({ query, results, hasMore, loadingMore, onLoadMore
     <section className="overflow-hidden rounded-panel border border-ink-700 bg-ink-900">
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 px-5 pt-4">
         <h2 className="truncate text-body font-medium text-ink-100">
-          Results for <span className="text-lime-flash">{query}</span>
+          نتایج برای{' '}
+          <span className="text-lime-flash" dir="auto">
+            {query}
+          </span>
         </h2>
         <p aria-live="polite" className="text-mini text-ink-400 tabular-nums">
-          {results.length} found{hasMore && ' so far'}
+          {results.length} نتیجه{hasMore && ' تا الان'}
         </p>
       </div>
 
       <nav
-        aria-label="Result filters"
+        aria-label="فیلتر نتایج"
         className="flex flex-wrap items-center gap-1.5 border-b border-ink-800 px-4 py-3"
       >
         {(
           [
-            { kind: 'all', label: 'All', count: results.length },
+            { kind: 'all', label: 'همه', count: results.length },
             ...sections.map(({ kind, label }) => ({
               kind,
               label,
@@ -253,7 +264,7 @@ export function SearchResults({ query, results, hasMore, loadingMore, onLoadMore
           return (
             <div key={kind} className="border-b border-ink-800 last:border-b-0">
               <div className="flex items-baseline justify-between px-5 pt-4 pb-2">
-                <h3 className="flex items-center gap-2 text-micro font-semibold tracking-[0.14em] text-ink-400 uppercase">
+                <h3 className="flex items-center gap-2 text-micro font-semibold text-ink-400">
                   <Icon className="size-3.5" />
                   {label}
                 </h3>
@@ -262,8 +273,8 @@ export function SearchResults({ query, results, hasMore, loadingMore, onLoadMore
                     onClick={() => setTab(kind)}
                     className="group flex items-center gap-0.5 text-xs font-medium text-lime-flash transition hover:text-lime-soft"
                   >
-                    Show all {items.length}
-                    <ChevronRight className="size-3.5 transition-transform duration-200 group-hover:translate-x-0.5" />
+                    نمایش همه‌ی {items.length} تا
+                    <ChevronLeft className="size-3.5 transition-transform duration-200 group-hover:-translate-x-0.5" />
                   </button>
                 )}
               </div>
@@ -286,19 +297,19 @@ export function SearchResults({ query, results, hasMore, loadingMore, onLoadMore
           {loadingMore ? (
             <span className="flex items-center gap-2 text-mini text-ink-400">
               <LoaderCircle className="size-3.5 animate-spin text-lime-flash" />
-              Searching deeper…
+              در حال جستجوی عمیق‌تر…
             </span>
           ) : hasMore ? (
             <button
               onClick={onLoadMore}
               className="rounded-full border border-ink-700 px-4 py-1.5 text-mini font-medium text-ink-300 transition duration-200 hover:border-ink-600 hover:text-ink-100 active:scale-[0.97]"
             >
-              Load more {activeKind.label.toLowerCase()}
+              {activeKind.noun}‌های بیشتر
             </button>
           ) : (
             <span className="text-mini text-ink-400">
-              That’s everything — {grouped.get(activeKind.kind)?.length ?? 0}{' '}
-              {activeKind.label.toLowerCase()} across all sources.
+              همین بود — {grouped.get(activeKind.kind)?.length ?? 0} {activeKind.noun} از همه‌ی
+              منبع‌ها.
             </span>
           )}
         </div>

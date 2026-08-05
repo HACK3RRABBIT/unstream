@@ -17,12 +17,10 @@ export function QualityPicker({ className }: { className?: string }) {
 
   return (
     <div className={clsx('flex items-center gap-2', className)}>
-      <span className="hidden text-micro font-semibold tracking-[0.14em] text-ink-400 uppercase sm:inline">
-        Quality
-      </span>
+      <span className="hidden text-micro font-semibold text-ink-400 sm:inline">کیفیت</span>
       <div
         role="radiogroup"
-        aria-label="Audio quality"
+        aria-label="کیفیت صدا"
         className="flex items-center gap-0.5 rounded-ctl border border-ink-800 bg-ink-900 p-0.5"
       >
         {QUALITIES.map((option) => {

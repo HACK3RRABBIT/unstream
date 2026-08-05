@@ -53,7 +53,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       {children}
       <div
         aria-live="polite"
-        className="pointer-events-none fixed bottom-5 left-5 z-50 flex w-[min(20rem,calc(100vw-2.5rem))] flex-col gap-2"
+        className="pointer-events-none fixed bottom-5 start-5 z-50 flex w-[min(20rem,calc(100vw-2.5rem))] flex-col gap-2"
       >
         {toasts.map((toast) => (
           <div
@@ -70,7 +70,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             )}
           >
             {KIND_ICON[toast.kind]}
-            <span className="min-w-0 flex-1">{toast.message}</span>
+            <span className="min-w-0 flex-1" dir="auto">
+              {toast.message}
+            </span>
             {toast.action && (
               <button
                 onClick={() => {
@@ -84,7 +86,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             )}
             <button
               onClick={() => dismiss(toast.id)}
-              aria-label="Dismiss notification"
+              aria-label="بستن اعلان"
               className="grid size-5 shrink-0 place-items-center rounded text-ink-400 transition hover:text-ink-100"
             >
               <X className="size-3.5" />

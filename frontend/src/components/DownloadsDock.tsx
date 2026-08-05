@@ -13,17 +13,17 @@ import { jobZipUrl, trackFileUrl, QUALITY_LABEL, type JobTrack } from '../lib/ap
 import { useDownloads, type DownloadEntry } from '../lib/downloads'
 
 const STAGE_LABEL: Record<string, string> = {
-  queued: 'Queued',
-  searching: 'Searching…',
-  downloading: 'Downloading',
-  tagging: 'Tagging…',
-  retrying: 'Retrying…',
+  queued: 'تو صف',
+  searching: 'در حال جستجو…',
+  downloading: 'در حال دانلود',
+  tagging: 'در حال تگ زدن…',
+  retrying: 'تلاش دوباره…',
 }
 
 function formatEta(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`
+  if (seconds < 60) return `${seconds} ثانیه`
   const minutes = Math.round(seconds / 60)
-  return `${minutes} min`
+  return `${minutes} دقیقه`
 }
 
 function TrackLine({ entry, state }: { entry: DownloadEntry; state: JobTrack }) {
@@ -51,6 +51,7 @@ function TrackLine({ entry, state }: { entry: DownloadEntry; state: JobTrack }) 
           state.status === 'error' ? 'text-ink-400' : 'text-ink-100',
         )}
         title={state.error ?? title}
+        dir="auto"
       >
         {title}
       </p>
@@ -58,15 +59,15 @@ function TrackLine({ entry, state }: { entry: DownloadEntry; state: JobTrack }) 
         <a
           href={trackFileUrl(entry.jobId, state.id)}
           download
-          title={`Download ${title}.${ext}`}
-          aria-label={`Download ${title} as ${ext}`}
+          title={`دانلود ${title}.${ext}`}
+          aria-label={`دانلود ${title} با فرمت ${ext}`}
           className="flex shrink-0 items-center gap-1 rounded-ctl border border-ink-600 px-2 py-0.5 text-micro font-medium text-lime-flash transition hover:border-lime-flash/50 hover:bg-ink-800"
         >
           <Download className="size-3" />
           {ext}
         </a>
       ) : state.status === 'error' ? (
-        <span className="text-xs text-danger">failed</span>
+        <span className="text-xs text-danger">ناموفق</span>
       ) : (
         <span
           className={clsx(
@@ -101,19 +102,25 @@ function JobCard({ entry }: { entry: DownloadEntry }) {
           <div className="size-9 shrink-0 rounded-ctl bg-ink-800" />
         )}
         <div className="min-w-0 flex-1">
-          <p className="truncate text-mini font-medium text-ink-100">{entry.name}</p>
+          {/* dir="auto" keeps a Latin name's punctuation ordered correctly,
+              but the progress line under it is always Persian — physical
+              right (not text-end, which would follow the name's own
+              direction) keeps the two lines on the same edge. */}
+          <p className="truncate text-right text-mini font-medium text-ink-100" dir="auto">
+            {entry.name}
+          </p>
           <p className="text-xs text-ink-400 tabular-nums">
             {finished ? (
               <>
-                {done} of {total} downloaded
-                {failed > 0 && <span className="text-danger"> · {failed} failed</span>}
+                {done} از {total} دانلود شد
+                {failed > 0 && <span className="text-danger"> · {failed} ناموفق</span>}
               </>
             ) : (
               <>
                 {done + failed}/{total}
-                {failed > 0 && <span className="text-danger"> · {failed} failed</span>}
+                {failed > 0 && <span className="text-danger"> · {failed} ناموفق</span>}
                 {entry.etaSeconds != null && (
-                  <span className="text-ink-300"> · ~{formatEta(entry.etaSeconds)} left</span>
+                  <span className="text-ink-300"> · حدود {formatEta(entry.etaSeconds)} مونده</span>
                 )}
               </>
             )}
@@ -122,8 +129,8 @@ function JobCard({ entry }: { entry: DownloadEntry }) {
         <span
           title={
             entry.quality === 'original'
-              ? 'Downloaded without re-encoding'
-              : `Encoded at ${entry.quality} kbps`
+              ? 'بدون انکود دوباره دانلود شده'
+              : `انکود شده با ${entry.quality} kbps`
           }
           className="shrink-0 rounded-ctl border border-ink-700 px-1.5 py-0.5 text-micro font-medium text-ink-400 tabular-nums"
         >
@@ -133,8 +140,8 @@ function JobCard({ entry }: { entry: DownloadEntry }) {
           <a
             href={jobZipUrl(entry.jobId)}
             download
-            title="Download all as ZIP"
-            aria-label="Download all tracks as ZIP"
+            title="دانلود همه به‌صورت ZIP"
+            aria-label="دانلود همه‌ی آهنگ‌ها به‌صورت ZIP"
             className="grid size-7 shrink-0 place-items-center rounded-ctl border border-ink-600 text-ink-100 transition hover:border-lime-flash/50 hover:text-lime-flash"
           >
             <Archive className="size-3.5" />
@@ -143,7 +150,7 @@ function JobCard({ entry }: { entry: DownloadEntry }) {
         {finished && (
           <button
             onClick={() => dismiss(entry.jobId)}
-            title="Remove from list"
+            title="حذف از لیست"
             className="grid size-7 shrink-0 place-items-center rounded-ctl text-ink-400 transition hover:bg-ink-800 hover:text-ink-100"
           >
             <X className="size-3.5" />
@@ -166,7 +173,7 @@ function JobCard({ entry }: { entry: DownloadEntry }) {
         {!job && (
           <li className="flex items-center gap-2.5 px-4 py-1.5 text-mini text-ink-400">
             <LoaderCircle className="size-3.5 animate-spin" />
-            Starting…
+            در حال شروع…
           </li>
         )}
       </ul>
@@ -188,18 +195,16 @@ export function DownloadsDock() {
   const fraction = totals.total ? totals.settled / totals.total : 0
 
   return (
-    <div className="fixed right-5 bottom-5 z-50 flex flex-col items-end gap-3">
+    <div className="fixed end-5 bottom-5 z-50 flex flex-col items-end gap-3">
       {panelOpen && (
         <section
-          aria-label="Downloads"
+          aria-label="دانلودها"
           className="flex w-[min(24rem,calc(100vw-2.5rem))] animate-fade-up flex-col overflow-hidden rounded-panel border border-ink-700 bg-ink-900 shadow-2xl shadow-black/60"
         >
           <header className="flex items-center justify-between border-b border-ink-800 px-4 py-3">
-            <h2 className="text-micro font-semibold tracking-[0.14em] text-ink-400 uppercase">
-              Downloads
-            </h2>
+            <h2 className="text-micro font-semibold text-ink-400">دانلودها</h2>
             <span className="text-xs text-ink-400 tabular-nums">
-              {activeCount > 0 ? `${activeCount} in progress` : `${entries.length} finished`}
+              {activeCount > 0 ? `${activeCount} در جریان` : `${entries.length} تمام‌شده`}
             </span>
           </header>
           <div className="max-h-[55vh] overflow-y-auto">
@@ -212,7 +217,7 @@ export function DownloadsDock() {
 
       <button
         onClick={() => setPanelOpen(!panelOpen)}
-        aria-label={panelOpen ? 'Hide downloads' : 'Show downloads'}
+        aria-label={panelOpen ? 'بستن پنل دانلود' : 'نمایش دانلودها'}
         className="relative grid size-14 place-items-center rounded-full bg-lime-flash text-lime-ink shadow-lg shadow-black/40 transition duration-200 hover:bg-lime-soft hover:scale-105 active:scale-95"
       >
         {/* progress ring around the button while anything is downloading */}
@@ -245,7 +250,7 @@ export function DownloadsDock() {
           <ArrowDownToLine className="size-5" strokeWidth={2.25} />
         )}
         {activeCount > 0 && !panelOpen && (
-          <span className="absolute -top-0.5 -right-0.5 grid min-w-5 animate-pop place-items-center rounded-full border border-lime-flash bg-ink-950 px-1 text-micro font-semibold text-lime-flash tabular-nums">
+          <span className="absolute -top-0.5 -end-0.5 grid min-w-5 animate-pop place-items-center rounded-full border border-lime-flash bg-ink-950 px-1 text-micro font-semibold text-lime-flash tabular-nums">
             {activeCount}
           </span>
         )}
