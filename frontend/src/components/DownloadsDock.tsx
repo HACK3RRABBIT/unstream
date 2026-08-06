@@ -30,6 +30,7 @@ function formatEta(seconds: number): string {
 function TrackLine({ entry, state }: { entry: DownloadEntry; state: JobTrack }) {
   const track = entry.tracks.find((t) => t.id === state.id)
   const title = track ? track.title : state.id
+  const available = state.status === 'done' && !entry.expired
   // "original" can land as m4a or opus depending on the upload, so the file
   // itself is the only honest source for this label.
   const ext = state.ext ?? 'mp3'
@@ -56,7 +57,7 @@ function TrackLine({ entry, state }: { entry: DownloadEntry; state: JobTrack }) 
       >
         {title}
       </p>
-      {state.status === 'done' ? (
+      {available ? (
         <a
           href={trackFileUrl(entry.jobId, state.id)}
           download
@@ -69,6 +70,8 @@ function TrackLine({ entry, state }: { entry: DownloadEntry; state: JobTrack }) 
         </a>
       ) : state.status === 'error' ? (
         <span className="text-xs text-danger">ناموفق</span>
+      ) : entry.expired ? (
+        <span className="text-xs text-ink-400">پاک شده</span>
       ) : (
         <span
           className={clsx(
@@ -90,9 +93,10 @@ function JobCard({ entry }: { entry: DownloadEntry }) {
   const done = job?.done ?? 0
   const failed = job?.failed ?? 0
   const total = job?.total ?? entry.tracks.length
-  const finished = job?.finished ?? false
+  const expired = entry.expired === true
+  const finished = expired || (job?.finished ?? false)
   // ZIP is for batches — a single song is just the mp3 link on its row.
-  const showZip = total > 1 && done > 0
+  const showZip = total > 1 && done > 0 && !expired
 
   return (
     <div className="border-b border-ink-800 last:border-b-0">
@@ -111,7 +115,12 @@ function JobCard({ entry }: { entry: DownloadEntry }) {
             {entry.name}
           </p>
           <p className="text-xs text-ink-400 tabular-nums">
-            {finished ? (
+            {expired ? (
+              // The backend keeps files for 24h and then sweeps them; a
+              // restart clears the job table outright. Either way the links
+              // are dead, and saying so beats a row that silently 404s.
+              'فایل‌ها دیگه روی سرور نیستن — دوباره دانلودش کن'
+            ) : finished ? (
               <>
                 {done} از {total} دانلود شد
                 {failed > 0 && <span className="text-danger"> · {failed} ناموفق</span>}

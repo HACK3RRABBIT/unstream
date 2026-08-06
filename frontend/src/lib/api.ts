@@ -196,6 +196,19 @@ export async function getJob(jobId: string): Promise<Job> {
   return data
 }
 
+/** Poll every unfinished job in one request.
+ *
+ *  Jobs the server no longer knows — swept after their TTL, or lost to a
+ *  restart — are simply absent from the response. Callers use that gap to
+ *  retire restored entries that have nothing behind them any more. */
+export async function getJobs(jobIds: string[]): Promise<Job[]> {
+  if (jobIds.length === 0) return []
+  const { data } = await client.get<{ jobs: Job[] }>('/jobs', {
+    params: { ids: jobIds.join(',') },
+  })
+  return data.jobs
+}
+
 export const trackFileUrl = (jobId: string, trackId: string) =>
   `/api/jobs/${jobId}/tracks/${trackId}/file`
 

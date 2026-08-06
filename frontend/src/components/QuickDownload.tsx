@@ -12,8 +12,11 @@ export function QuickDownload({ result }: { result: SearchResult }) {
   const [error, setError] = useState<string | null>(null)
 
   const entry = entryForUrl(result.url)
-  const queued = entry != null && !entry.job?.finished
-  const done = entry?.job?.finished ?? false
+  // An expired entry (files swept, or the server restarted) is neither
+  // running nor available — the row goes back to offering the download.
+  const live = entry && !entry.expired ? entry : null
+  const queued = live != null && !live.job?.finished
+  const done = live?.job?.finished ?? false
 
   const handleClick = async () => {
     if (pending) return

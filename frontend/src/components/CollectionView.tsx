@@ -27,7 +27,10 @@ export function CollectionView({ url, collection }: Props) {
   // all" plus any number of single-track ones — so merge them all here.
   const downloads = useDownloads()
   const { push } = useToast()
-  const entries = downloads.entriesForUrl(url)
+  // Expired jobs (files swept, or the server restarted) are dropped rather
+  // than merged: their per-track links 404, and the honest thing for this
+  // view to show is an album that is simply ready to download again.
+  const entries = downloads.entriesForUrl(url).filter((e) => !e.expired)
 
   // Tracks the user ticked to download as one batch.
   const [selected, setSelected] = useState<Set<string>>(new Set())

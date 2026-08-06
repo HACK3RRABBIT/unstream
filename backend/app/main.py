@@ -261,6 +261,21 @@ def download(body: DownloadRequest) -> dict:
     return {"job_id": job.id}
 
 
+# A client tracking N unfinished jobs used to poll N times a second. Declared
+# before /api/jobs/{job_id} for readability — the paths differ in segment
+# count, so the router would tell them apart either way.
+@app.get("/api/jobs")
+def job_statuses(ids: str) -> dict:
+    """Poll several jobs at once: ?ids=a,b,c
+
+    Unknown ids are omitted rather than raising, so a client that restored a
+    job list from a previous session learns which of them the server has
+    already swept without failing the whole poll.
+    """
+    wanted = [i for i in (part.strip() for part in ids.split(",")) if i][:50]
+    return {"jobs": [job.as_dict() for i in wanted if (job := jobs.get(i))]}
+
+
 @app.get("/api/jobs/{job_id}")
 def job_status(job_id: str) -> dict:
     job = jobs.get(job_id)

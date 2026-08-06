@@ -55,8 +55,12 @@ function DownloadNotifier() {
   useEffect(() => {
     for (const entry of entries) {
       const finished = entry.job?.finished ?? false
-      const was = finishedState.current.get(entry.jobId) ?? false
-      if (finished && !was) {
+      // First sighting only records — never announces. A job started in this
+      // session is always first seen unfinished (it is added before any poll),
+      // so this costs nothing there; a job restored from a previous session is
+      // first seen already finished, and must not be toasted a second time.
+      const was = finishedState.current.get(entry.jobId)
+      if (finished && was === false) {
         const done = entry.job!.done
         const failed = entry.job!.failed
         if (done > 0 && failed === 0) {
