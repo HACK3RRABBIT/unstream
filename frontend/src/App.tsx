@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { ArrowLeft, ArrowRight, AudioLines, Link2 as LinkIcon, Search } from 'lucide-react'
+import clsx from 'clsx'
 import {
   apiError,
   getArtist,
@@ -41,6 +42,32 @@ const BACK_LABEL: Record<View['type'], string> = {
   search: 'برگشت به نتایج',
   artist: 'برگشت به آرتیست',
   collection: 'برگشت',
+}
+
+/** Animates its children to and from zero height. `grid-template-rows`
+ *  1fr→0fr is the only way to transition to `height: auto`; the inner div does
+ *  the clipping. `visibility` is in the transition list on purpose — it keeps
+ *  collapsed copy out of the tab order and away from screen readers, but flips
+ *  only at the end of the duration, so the content fades rather than vanishing
+ *  the instant the collapse starts. */
+function Collapsible({ open, children }: { open: boolean; children: ReactNode }) {
+  return (
+    <div
+      className={clsx(
+        'grid transition-[grid-template-rows] duration-300 ease-out-expo',
+        open ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]',
+      )}
+    >
+      <div
+        className={clsx(
+          'overflow-hidden transition-[opacity,visibility] duration-300 ease-out-expo',
+          open ? 'opacity-100' : 'invisible opacity-0',
+        )}
+      >
+        {children}
+      </div>
+    </div>
+  )
 }
 
 const isTypingTarget = (target: EventTarget | null) => {
@@ -340,6 +367,18 @@ function Shell() {
   const error = resolve.error ?? search.error ?? artist.error
   const view = stack.at(-1)
   const previous = stack.at(-2)
+  // Nothing asked for yet: the only time the hero earns its screen space.
+  // `busy` counts as landed — the skeleton is already below, and holding the
+  // hero up through the first search then dropping it reads as a jump. An
+  // error counts too: re-expanding would push the message the user needs to
+  // read down below a screen of copy they don't.
+  const landing = stack.length === 0 && !busy && !error
+
+  const goHome = () => {
+    setStack([])
+    setSharedArrival(null)
+    resetErrors()
+  }
 
   const viewKey = !view
     ? 'home'
@@ -352,10 +391,21 @@ function Shell() {
   return (
     <div className="safe-x flex min-h-screen flex-col bg-ink-950">
       <header className="mx-auto flex w-full max-w-3xl items-center gap-2.5 px-5 pt-[calc(2rem+var(--safe-top))]">
-        <span className="grid size-8 place-items-center rounded-ctl bg-lime-flash text-lime-ink">
-          <AudioLines className="size-4.5" strokeWidth={2.25} />
-        </span>
-        <span className="font-display text-lg font-semibold">آنستریم</span>
+        {/* With the hero collapsed, the wordmark is the only way back to it —
+            and the first thing anyone tries. */}
+        <button
+          onClick={goHome}
+          disabled={landing}
+          aria-label="خانه"
+          className="group flex items-center gap-2.5 rounded-ctl transition disabled:cursor-default"
+        >
+          <span className="grid size-8 place-items-center rounded-ctl bg-lime-flash text-lime-ink transition duration-200 group-enabled:group-active:scale-95">
+            <AudioLines className="size-4.5" strokeWidth={2.25} />
+          </span>
+          <span className="font-display text-lg font-semibold transition-colors duration-200 group-enabled:group-hover:text-lime-flash">
+            آنستریم
+          </span>
+        </button>
         <QualityPicker className="ms-auto" />
       </header>
 
@@ -410,39 +460,59 @@ function Shell() {
             )}
           </section>
         ) : (
-          <section className="pt-14 pb-10 sm:pt-16 sm:pb-12">
-            <h1 className="animate-fade-up font-display text-[clamp(2.5rem,7.5vw,4.5rem)] leading-[1.15] font-bold text-balance">
-              دانلود موزیک،
-              <br />
-              <span className="text-lime-flash">آلبوم و پلی‌لیست</span>
-            </h1>
-            <p className="mt-5 max-w-md animate-fade-up text-body leading-relaxed text-ink-300 [animation-delay:80ms]">
-              لینک اسپاتیفای، یوتیوب، ساندکلاد، دیزر یا اپل موزیک رو بذار — یا همه‌ی کاتالوگ‌ها رو
-              یکجا جستجو کن. فایل MP3 تگ‌خورده با کاور و کیفیت دلخواهت رو بگیر؛ نه اکانت می‌خواد، نه
-              ثبت‌نام.
-            </p>
+          // The hero is a landing state. Its copy answers questions someone has
+          // *before* they try the app ("no account needed"), so once they have
+          // searched it is a screen of read-once marketing between them and
+          // every result. It collapses; the form stays and rises to the top.
+          <section
+            className={clsx(
+              'transition-[padding] duration-300 ease-out-expo',
+              landing ? 'pt-14 pb-10 sm:pt-16 sm:pb-12' : 'pt-6 pb-5',
+            )}
+          >
+            {/* grid-rows 1fr→0fr is the one way to transition to height:auto;
+                the inner wrapper does the clipping. */}
+            <Collapsible open={landing}>
+              <h1 className="animate-fade-up font-display text-[clamp(2.5rem,7.5vw,4.5rem)] leading-[1.15] font-bold text-balance">
+                دانلود موزیک،
+                <br />
+                <span className="text-lime-flash">آلبوم و پلی‌لیست</span>
+              </h1>
+              <p className="mt-5 max-w-md animate-fade-up text-body leading-relaxed text-ink-300 [animation-delay:80ms]">
+                لینک اسپاتیفای، یوتیوب، ساندکلاد، دیزر یا اپل موزیک رو بذار — یا همه‌ی کاتالوگ‌ها رو
+                یکجا جستجو کن. فایل MP3 تگ‌خورده با کاور و کیفیت دلخواهت رو بگیر؛ نه اکانت می‌خواد،
+                نه ثبت‌نام.
+              </p>
+            </Collapsible>
+
             <UrlForm
-              className="mt-8 animate-fade-up [animation-delay:160ms]"
+              className={clsx(
+                'animate-fade-up transition-[margin] duration-300 ease-out-expo [animation-delay:160ms]',
+                landing && 'mt-8',
+              )}
               loading={busy}
               onSubmit={handleSubmit}
               inputRef={inputRef}
               focusPulse={focusPulse}
             />
-            <p className="mt-3 animate-fade-up text-mini text-ink-400 [animation-delay:220ms]">
-              برای جستجو{' '}
-              <kbd className="rounded-[5px] border border-ink-700 bg-ink-900 px-1.5 py-0.5 font-sans text-micro text-ink-300">
-                /
-              </kbd>{' '}
-              رو بزن، یا هر جای صفحه یه لینک پیست کن.
-            </p>
-            {/* Homepage only — above results they compete for the same eye. */}
-            {stack.length === 0 && (
+
+            {/* The shortcut hint is a discovery aid and the chips are a
+                cold-start affordance — both belong to the empty page only. */}
+            <Collapsible open={landing}>
+              <p className="mt-3 animate-fade-up text-mini text-ink-400 [animation-delay:220ms]">
+                برای جستجو{' '}
+                <kbd className="rounded-[5px] border border-ink-700 bg-ink-900 px-1.5 py-0.5 font-sans text-micro text-ink-300">
+                  /
+                </kbd>{' '}
+                رو بزن، یا هر جای صفحه یه لینک پیست کن.
+              </p>
               <RecentSearches
                 items={recent}
                 onPick={handleSubmit}
                 onClear={() => setRecent(clearRecentSearches())}
               />
-            )}
+            </Collapsible>
+
             {error && (
               <p
                 role="alert"
