@@ -1,20 +1,17 @@
 import { isCatalogUrl } from './api'
 
-/** What the user last asked for, so an empty homepage has something to offer.
- *
- *  Deliberately only the input they typed — not results, not covers. Replaying
- *  it runs the same code path as typing it again, so a stale entry costs a
- *  fresh search rather than showing a cached page that no longer exists. */
+/** Something the user submitted before: a query, or a catalog URL. Only the
+ *  input is kept — replaying a chip runs the same code path as typing it, so a
+ *  stale one costs a fresh search rather than showing a page that has since
+ *  disappeared. */
 export interface RecentSearch {
-  /** Exactly what was submitted: a query, or a catalog URL. */
   input: string
-  /** True when the input was a link — the chip labels itself differently. */
   isLink: boolean
   at: number
 }
 
 const KEY = 'unstream:recent'
-/** Six fits two rows of chips under the hero without crowding it. */
+/** Two rows of chips under the hero without crowding it. */
 const MAX = 6
 
 export function recentSearches(): RecentSearch[] {
@@ -31,8 +28,6 @@ export function recentSearches(): RecentSearch[] {
   }
 }
 
-/** Record a submission, most recent first, without duplicating an entry the
- *  user is simply repeating. */
 export function rememberSearch(input: string): RecentSearch[] {
   const trimmed = input.trim()
   if (!trimmed) return recentSearches()
@@ -41,7 +36,7 @@ export function rememberSearch(input: string): RecentSearch[] {
   try {
     localStorage.setItem(KEY, JSON.stringify(next))
   } catch {
-    // Nothing to recover from — the chips are a convenience, not state.
+    // The chips are a convenience, not state — nothing to recover.
   }
   return next
 }

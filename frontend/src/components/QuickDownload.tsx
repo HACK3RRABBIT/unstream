@@ -12,8 +12,7 @@ export function QuickDownload({ result }: { result: SearchResult }) {
   const [error, setError] = useState<string | null>(null)
 
   const entry = entryForUrl(result.url)
-  // An expired entry (files swept, or the server restarted) is neither
-  // running nor available — the row goes back to offering the download.
+  // Expired is neither running nor available — offer the download again.
   const live = entry && !entry.expired ? entry : null
   const queued = live != null && !live.job?.finished
   const done = live?.job?.finished ?? false
@@ -34,10 +33,8 @@ export function QuickDownload({ result }: { result: SearchResult }) {
     }
   }
 
-  // Dimming until hover is a mouse idiom: it keeps a dense list quiet and lets
-  // the row's action light up under the cursor. A phone has no hover, so the
-  // button would sit dimmed forever — `pointer-fine` keeps the effect where it
-  // works and leaves the button at full strength everywhere else.
+  // `pointer-fine` on the dimming: a phone has no hover, so without it the
+  // button would sit at 60% forever.
   return (
     <button
       onClick={handleClick}

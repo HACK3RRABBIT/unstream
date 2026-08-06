@@ -56,10 +56,9 @@ class Job:
     id: str
     name: str
     quality: str = downloader.DEFAULT_QUALITY
-    # Opaque client key (an IP, from app.limits) used only to count how many
-    # jobs one caller has in flight. Never leaves the process — as_dict()
-    # doesn't include it, and job ids stay unguessable so anyone holding one
-    # can still fetch it.
+    # Opaque client key (an IP, from app.limits), only for counting a caller's
+    # jobs in flight. Never leaves the process — as_dict() omits it, and job
+    # ids stay unguessable so anyone holding one can still fetch it.
     owner: str = ""
     tracks: dict[str, TrackState] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
@@ -99,7 +98,7 @@ def get(job_id: str) -> Job | None:
 
 def active_count(owner: str) -> int:
     """How many of this client's jobs are still running."""
-    # list() so a concurrent start() resizing the dict can't blow up iteration.
+    # list() so a concurrent start() resizing the dict can't break iteration.
     return sum(1 for job in list(_jobs.values()) if job.owner == owner and not job.finished)
 
 

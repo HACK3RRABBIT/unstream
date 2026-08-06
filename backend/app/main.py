@@ -250,8 +250,8 @@ def download(body: DownloadRequest, request: Request) -> dict:
             detail=f"Quality must be one of: {', '.join(downloader.QUALITIES)}",
         )
     client = limits.enforce("download", request)
-    # Checked before resolving: a caller who is already at their limit should
-    # not get a provider fetch out of the request that turns them away.
+    # Before resolving: a caller at their limit shouldn't get a provider fetch
+    # out of the request that turns them away.
     if jobs.active_count(client) >= limits.MAX_ACTIVE_JOBS:
         raise HTTPException(
             status_code=429,
@@ -279,16 +279,13 @@ def download(body: DownloadRequest, request: Request) -> dict:
     return {"job_id": job.id}
 
 
-# A client tracking N unfinished jobs used to poll N times a second. Declared
-# before /api/jobs/{job_id} for readability — the paths differ in segment
-# count, so the router would tell them apart either way.
 @app.get("/api/jobs")
 def job_statuses(ids: str) -> dict:
     """Poll several jobs at once: ?ids=a,b,c
 
-    Unknown ids are omitted rather than raising, so a client that restored a
-    job list from a previous session learns which of them the server has
-    already swept without failing the whole poll.
+    Unknown ids are omitted rather than raising, so a client restoring a job
+    list from a previous session learns which the server has already swept
+    without failing the whole poll.
     """
     wanted = [i for i in (part.strip() for part in ids.split(",")) if i][:50]
     return {"jobs": [job.as_dict() for i in wanted if (job := jobs.get(i))]}

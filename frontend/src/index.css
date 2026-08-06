@@ -129,8 +129,7 @@
   --animate-sheet-in: sheet-in 0.34s var(--ease-out-expo) both;
   --animate-scrim-in: scrim-in 0.25s ease-out both;
 
-  /* The mobile downloads sheet rises from the edge it is anchored to, so the
-     gesture that opens it and the motion that follows are the same shape. */
+  /* The sheet rises from the edge it is anchored to. */
   @keyframes sheet-in {
     from {
       transform: translateY(100%);
@@ -249,17 +248,15 @@
   }
 }
 
-/* Display-cutout insets, named once. index.html asks for viewport-fit=cover,
-   so on an installed iOS PWA these report the notch and the home indicator;
-   everywhere else they are 0 and the calc()s collapse to the plain value. */
+/* Display-cutout insets, named once. Zero everywhere but an installed PWA,
+   where the calc()s pick up the notch and the home indicator. */
 :root {
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
 
-/* Landscape on a notched phone eats into one side of the page. The content
-   column keeps its own px-5 gutter; this only adds whatever the cutout
-   demands on top of it. */
+/* Landscape on a notched phone eats one side of the page. Adds only what the
+   cutout demands; the content column keeps its own px-5 gutter. */
 @utility safe-x {
   padding-inline: max(env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px));
 }
@@ -291,11 +288,9 @@ body {
   }
 }
 
-/* Icon buttons are drawn at 32px (or 20px for the row checkbox) because that
-   is what the density of a track row wants. A finger needs ~44px. Rather than
-   inflate the visuals on phones, grow an invisible centred hit area — the
-   pseudo-element belongs to the button, so a tap anywhere inside it still
-   activates it. Coarse pointers only: on a mouse an oversized invisible box
+/* Icon buttons are 32px (20px for the row checkbox) because that is what a
+   track row's density wants; a finger needs ~44. Rather than inflate them,
+   grow an invisible centred hit area. Coarse pointers only — on a mouse it
    would steal clicks meant for the row underneath. */
 @utility tap-target {
   @media (pointer: coarse) {
@@ -304,8 +299,7 @@ body {
     &::after {
       content: '';
       position: absolute;
-      /* Physical, not logical: this only centres, so it reads the same in
-         both directions and needs no RTL flip. */
+      /* Physical, not logical — centring needs no RTL flip. */
       top: 50%;
       left: 50%;
       translate: -50% -50%;

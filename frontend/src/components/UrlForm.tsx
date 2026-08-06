@@ -17,10 +17,9 @@ export function UrlForm({ loading, onSubmit, className, inputRef, focusPulse = 0
   const [input, setInput] = useState('')
   const isUrl = isCatalogUrl(input)
 
-  // Focus on arrival is a desktop courtesy — the box is ready to type into.
-  // On a phone it summons the keyboard over the hero before anyone has read
-  // a word of it, so it's gated on a real pointer rather than set with the
-  // `autoFocus` attribute, which has no way to ask.
+  // Focus on arrival is a desktop courtesy and a mobile ambush — on a phone it
+  // summons the keyboard over the hero. `autoFocus` has no way to ask, so it's
+  // done here instead.
   const ownInputRef = useRef<HTMLInputElement | null>(null)
   const inputEl = inputRef ?? ownInputRef
   useEffect(() => {
@@ -75,12 +74,9 @@ export function UrlForm({ loading, onSubmit, className, inputRef, focusPulse = 0
         dir="auto"
         placeholder="آهنگ، آلبوم یا آرتیست جستجو کن — یا لینک اسپاتیفای / دیزر / یوتیوب / ساندکلاد رو پیست کن"
         spellCheck={false}
-        // `dir="auto"` is about how the text is *shaped* — a Latin query has
-        // to render left-to-right internally or "fadaei" comes out reversed.
-        // It also flips where the line starts, which drags a Latin query to
-        // the far side of an otherwise RTL form. `text-right` pins the line to
-        // the same edge everything else in the UI starts from, so the caret is
-        // where the eye already is, whichever script is being typed.
+        // `dir="auto"` shapes a Latin query left-to-right (or "fadaei" comes
+        // out reversed) but also flips where the line starts, dragging it to
+        // the far side of an RTL form. `text-right` keeps the alignment.
         className="min-w-0 flex-1 bg-transparent text-right text-body text-ink-100 placeholder:text-ink-600 placeholder-shown:[direction:rtl] focus:outline-none"
       />
       <button

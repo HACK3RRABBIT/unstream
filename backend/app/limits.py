@@ -1,14 +1,11 @@
 """Per-client limits for a public deployment.
 
-Unstream has no accounts, so the only handle on a caller is their IP. Every
-endpoint that costs real resources — a provider fan-out, a yt-dlp run, disk —
-is capped here, in memory, per process. That is enough for the single-container
-deployment this project ships (see docker-compose.yml); anything horizontally
-scaled would need a shared store instead.
+No accounts, so the only handle on a caller is their IP. Counters are in
+memory, per process — enough for the single-container stack this project ships
+(docker-compose.yml); anything scaled out would need a shared store.
 
-Messages are English on purpose: the wire format stays English and the Farsi
-UI translates at the API seam, the same way it does for search subtitles
-(see `localizeError` in frontend/src/lib/api.ts).
+Messages stay English so the Telegram bot can share them; the Farsi UI
+translates at the API seam (`localizeError` in frontend/src/lib/api.ts).
 """
 
 import ipaddress
@@ -19,20 +16,16 @@ from collections import defaultdict, deque
 
 from fastapi import HTTPException, Request
 
-# Search fans out to four providers for up to 20s a call — by far the most
-# expensive read. Resolve is a single provider fetch, so it can be looser.
+# Search fans out to four providers for up to 20s — by far the most expensive
+# read. Resolve is a single fetch, so it can be looser.
 SEARCH_PER_MINUTE = int(os.getenv("RATE_SEARCH_PER_MINUTE", "15"))
 RESOLVE_PER_MINUTE = int(os.getenv("RATE_RESOLVE_PER_MINUTE", "30"))
 DOWNLOADS_PER_HOUR = int(os.getenv("RATE_DOWNLOADS_PER_HOUR", "20"))
 
 # The 100-track cap is the Telegram bot's, unchanged (docs/telegram-bot-spec.md).
-#
-# The bot's *one active job per user* does not port over as-is: its unit of
-# work is a chat message, while the web UI hands out a download button on every
-# row, so a strict 1 would 429 the second song someone taps. Three keeps the
-# spirit (a client cannot monopolise the machine) and happens to match the
-# download pool's worker count in jobs.py, so a single client can at most
-# saturate it, never queue behind itself indefinitely.
+# Its *one active job per user* doesn't port over: the web UI puts a download
+# button on every row, so a strict 1 would 429 the second song someone taps.
+# Three matches the download pool's worker count in jobs.py.
 MAX_ACTIVE_JOBS = int(os.getenv("MAX_ACTIVE_JOBS_PER_CLIENT", "3"))
 MAX_TRACKS_PER_JOB = int(os.getenv("MAX_TRACKS_PER_JOB", "100"))
 
@@ -40,18 +33,15 @@ MAX_TRACKS_PER_JOB = int(os.getenv("MAX_TRACKS_PER_JOB", "100"))
 def client_ip(request: Request) -> str:
     """Best guess at the real caller behind the proxy chain.
 
-    In production the chain is client → Traefik → nginx → api, and each hop
-    *appends* to X-Forwarded-For, so the header reads
-    `[spoofed…, ] client, traefik`. Walking right-to-left and taking the first
-    public address therefore lands on the real client and skips anything the
-    caller injected themselves — a spoofed entry can only ever sit to the left
-    of the address a proxy actually observed.
+    Each hop *appends* to X-Forwarded-For, so the header reads
+    `[spoofed…, ] client, traefik`. Walking right-to-left to the first public
+    address skips anything the caller injected: a spoofed entry can only sit to
+    the left of an address a proxy actually observed.
     """
     peer = request.client.host if request.client else "unknown"
     forwarded = request.headers.get("x-forwarded-for")
     if not forwarded or not _is_internal(peer):
-        # Direct connection (local dev, or the port got exposed) — the socket
-        # address is the only trustworthy thing here.
+        # Direct connection — the socket address is all there is to trust.
         return peer
 
     hops = [h.strip() for h in forwarded.split(",") if h.strip()]
@@ -88,9 +78,7 @@ class RateLimiter:
             if len(hits) >= self.limit:
                 return max(1.0, round(self.window - (now - hits[0]), 1))
             hits.append(now)
-            # Keys go quiet far more often than they go over the limit; drop
-            # the empty ones so a long-lived process doesn't accumulate every
-            # IP it has ever seen.
+            # Or a long-lived process accumulates every IP it has ever seen.
             if len(self._hits) > 4096:
                 self._prune(now)
             return None

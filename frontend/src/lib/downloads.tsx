@@ -21,33 +21,29 @@ import {
   type Track,
 } from './api'
 
-/** All the dock needs of a track: the backend's job payload carries ids and
- *  status but no titles. Deliberately narrow — the whole entry is written to
- *  localStorage, and a 100-track playlist has no business storing cover URLs
- *  and release dates it never reads. */
+/** All the dock needs of a track — the job payload carries ids but no titles.
+ *  Narrow because the whole entry goes to localStorage. */
 export type DockTrack = Pick<Track, 'id' | 'title'>
 
-/** One download job the user kicked off, tracked until they dismiss it.
- *  Jobs live here (not in a view) so navigating away never loses them, and
- *  they are mirrored to localStorage so a reload doesn't either. */
+/** One download job, tracked until dismissed. Jobs live here (not in a view)
+ *  so navigating away never loses them, and are mirrored to localStorage so a
+ *  reload doesn't either. */
 export interface DownloadEntry {
   jobId: string
   url: string
   name: string
   kind: Collection['kind']
   cover_url: string | null
-  tracks: DockTrack[] // metadata snapshot for titles in the dock
+  tracks: DockTrack[]
   job: Job | null // latest polled backend state
   /** Seconds until the job finishes, estimated from recent poll deltas. */
   etaSeconds: number | null
-  /** Quality this job was started at — changing the preference later must
-   *  not relabel jobs that are already encoding at the old one. */
+  /** Quality this job started at — changing the preference later must not
+   *  relabel jobs already encoding at the old one. */
   quality: Quality
-  /** When the job was queued, for expiring stored entries client-side. */
   startedAt: number
-  /** Set when the backend no longer knows this job: its files were swept
-   *  after the 24h TTL, or the process restarted. The entry keeps its last
-   *  known state but its download links are dead. */
+  /** The backend no longer knows this job: swept past its TTL, or lost to a
+   *  restart. Last known state is kept, but its download links are dead. */
   expired?: boolean
 }
 
@@ -78,11 +74,9 @@ const isSettled = (e: DownloadEntry) => e.expired === true || isFinished(e)
 const QUALITY_KEY = 'unstream:quality'
 const JOBS_KEY = 'unstream:jobs'
 
-/** Mirrors DOWNLOADS_TTL_HOURS in backend/app/jobs.py: past this the files
- *  are gone, so a stored entry is only ever going to resolve to "expired".
- *  Dropping it up front spares the user a dock full of dead rows. */
+/** Mirrors DOWNLOADS_TTL_HOURS in backend/app/jobs.py — past this a stored
+ *  entry can only ever resolve to "expired", so it is dropped up front. */
 const JOBS_TTL_MS = 24 * 60 * 60 * 1000
-/** Enough to cover a session's worth of jobs without filling the quota. */
 const MAX_STORED_JOBS = 20
 
 function storedQuality(): Quality {
@@ -94,9 +88,8 @@ function storedQuality(): Quality {
   }
 }
 
-/** Jobs from a previous page load. Restored with their last polled state, so
- *  the dock renders fully before the first tick comes back — and so finished
- *  jobs aren't re-announced as if they had just completed. */
+/** Jobs from a previous page load, restored with their last polled state so
+ *  the dock renders complete before the first tick comes back. */
 function storedEntries(): DownloadEntry[] {
   try {
     const raw = localStorage.getItem(JOBS_KEY)
@@ -179,8 +172,7 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
     setEntries((prev) => prev.filter((e) => e.jobId !== jobId))
   }, [])
 
-  // One poller for every unsettled job, independent of what's on screen, and
-  // one request per tick regardless of how many jobs are in flight.
+  // One request per tick, however many jobs are in flight.
   useEffect(() => {
     const tick = async () => {
       const pending = entriesRef.current.filter((e) => !isSettled(e))
@@ -193,9 +185,7 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
         return // network blip or a 429 — the next tick tries again
       }
       const fresh = new Map(polled.map((job) => [job.id, job]))
-      // Anything the server didn't answer for is gone: swept past its TTL, or
-      // lost to a restart. Either way its files are unreachable, so the entry
-      // is retired rather than polled forever.
+      // Unanswered ids are gone for good — retire them rather than poll on.
       const missing = pending.filter((e) => !fresh.has(e.jobId)).map((e) => e.jobId)
       if (fresh.size === 0 && missing.length === 0) return
 
@@ -229,23 +219,19 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
         }),
       )
     }
-    // Restored entries have a stale snapshot on screen — catch them up now
-    // rather than after the first interval.
-    void tick()
+    void tick() // restored entries are stale; don't wait for the interval
     const timer = setInterval(tick, 900)
     return () => clearInterval(timer)
   }, [])
 
-  // Mirror the queue to localStorage so a reload — including the silent one
-  // main.tsx performs on a hidden tab when a new release ships — doesn't
-  // destroy tracking for jobs the backend is still working on.
+  // A reload — including the silent one main.tsx performs on a hidden tab when
+  // a release ships — must not destroy tracking for a running job.
   useEffect(() => {
     try {
       if (entries.length === 0) localStorage.removeItem(JOBS_KEY)
       else localStorage.setItem(JOBS_KEY, JSON.stringify(entries.slice(-MAX_STORED_JOBS)))
     } catch {
-      // Quota or private mode. Losing persistence is survivable; the session
-      // itself still tracks everything in memory.
+      // Quota or private mode; the session still tracks everything in memory.
     }
   }, [entries])
 

@@ -33,8 +33,8 @@ export function QualityPicker({ className }: { className?: string }) {
               title={QUALITY_HINT[option]}
               onClick={() => setQuality(option)}
               className={clsx(
-                // Segments sit shoulder to shoulder, so a taller strip — not a
-                // hit area per segment — is what makes this thumb-usable.
+                // Segments sit shoulder to shoulder, so a taller strip is what
+                // makes this thumb-usable — not a hit area per segment.
                 'rounded-ctl px-2 py-1 text-micro font-medium tabular-nums transition duration-200 active:scale-95 pointer-coarse:px-2.5 pointer-coarse:py-2',
                 active ? 'bg-ink-700 text-ink-100' : 'text-ink-400 hover:text-ink-100',
               )}

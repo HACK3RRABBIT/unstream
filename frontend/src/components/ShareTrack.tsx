@@ -10,20 +10,14 @@ interface Props {
   trackId: string
   title: string
   ext: string
-  /** `compact` is the dock's line height; `row` sits next to a track's save
-   *  link in a collection. */
+  /** `compact` is the dock's line height, `row` a collection's track row. */
   size?: 'compact' | 'row'
 }
 
-/** Sends a finished track to the OS share sheet.
- *
- *  Rendered alongside the download link rather than instead of it: on a
- *  desktop the link is the better control, and on Android both work. This
- *  exists for iOS Safari, where `<a download>` regularly plays the file
- *  instead of saving it and the share sheet is the only way out.
- *
- *  Nothing renders at all where the browser can't share files, so the check
- *  is a feature probe rather than a guess at the platform. */
+/** Sends a finished track to the OS share sheet, alongside the download link
+ *  rather than instead of it — the link is the better control wherever it
+ *  works. Renders nothing where the browser can't share files, so this is a
+ *  feature probe and not a guess at the platform. */
 export function ShareTrack({ jobId, trackId, title, ext, size = 'row' }: Props) {
   const { push } = useToast()
   const [busy, setBusy] = useState(false)

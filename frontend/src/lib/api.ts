@@ -129,11 +129,9 @@ const localizeResult = (result: SearchResult): SearchResult => ({
 })
 
 /** Backend `detail` strings, translated at the same seam as result subtitles.
- *
- *  The wire format stays English — it is shared with the Telegram bot and with
- *  anyone poking at the API — and each surface renders it in its own voice
- *  (ADR 0001). Entries are ordered most specific first; `$1` carries through
- *  whatever number the backend computed. */
+ *  The wire stays English because the Telegram bot shares it; each surface
+ *  renders it in its own voice (ADR 0001). `$1` carries the backend's number
+ *  through. */
 const ERROR_PHRASES: [RegExp, string][] = [
   [/^Too many searches — wait (\d+)s/, 'یه کم تند رفتی — $1 ثانیه صبر کن و دوباره جستجو کن.'],
   [/^Too many links opened — wait (\d+)s/, 'یه کم تند رفتی — $1 ثانیه صبر کن و دوباره امتحان کن.'],
@@ -154,8 +152,8 @@ const ERROR_PHRASES: [RegExp, string][] = [
   [/^Empty search query/, 'چیزی برای جستجو ننوشتی.'],
 ]
 
-/** Anything the table didn't catch — dynamic provider and yt-dlp errors are
- *  raw English, which has no place in a Farsi-only UI. */
+/** For anything the table missed: provider and yt-dlp errors are raw English,
+ *  which has no place in a Farsi-only UI. */
 const STATUS_FALLBACK: Record<number, string> = {
   400: 'این لینک باز نشد — شاید خصوصی باشه یا منبعش در دسترس نباشه.',
   404: 'پیدا نشد.',
@@ -164,9 +162,8 @@ const STATUS_FALLBACK: Record<number, string> = {
 
 function localizeError(detail: string, status: number): string {
   for (const [pattern, farsi] of ERROR_PHRASES) {
-    // Patterns anchor on the distinctive opening and the Farsi replaces the
-    // whole message, so trailing English ("…and try again.") is dropped rather
-    // than left hanging off the end of a Persian sentence.
+    // Patterns anchor on the opening and the Farsi replaces the whole
+    // message, so trailing English doesn't hang off a Persian sentence.
     const match = pattern.exec(detail)
     if (match) return farsi.replace('$1', match[1] ?? '')
   }
@@ -244,11 +241,8 @@ export async function getJob(jobId: string): Promise<Job> {
   return data
 }
 
-/** Poll every unfinished job in one request.
- *
- *  Jobs the server no longer knows — swept after their TTL, or lost to a
- *  restart — are simply absent from the response. Callers use that gap to
- *  retire restored entries that have nothing behind them any more. */
+/** Poll every unfinished job in one request. Jobs the server no longer knows
+ *  are absent from the response — callers use that gap to retire them. */
 export async function getJobs(jobIds: string[]): Promise<Job[]> {
   if (jobIds.length === 0) return []
   const { data } = await client.get<{ jobs: Job[] }>('/jobs', {

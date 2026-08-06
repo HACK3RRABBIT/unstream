@@ -57,10 +57,9 @@ function DownloadNotifier() {
   useEffect(() => {
     for (const entry of entries) {
       const finished = entry.job?.finished ?? false
-      // First sighting only records — never announces. A job started in this
-      // session is always first seen unfinished (it is added before any poll),
-      // so this costs nothing there; a job restored from a previous session is
-      // first seen already finished, and must not be toasted a second time.
+      // First sighting records, never announces: a restored job is first seen
+      // already finished and must not be toasted twice. A job started here is
+      // always first seen unfinished, so nothing is lost.
       const was = finishedState.current.get(entry.jobId)
       if (finished && was === false) {
         const done = entry.job!.done
@@ -103,7 +102,6 @@ function Shell() {
   // Bumped whenever a shortcut focuses the search box, to flash the form.
   const [focusPulse, setFocusPulse] = useState(0)
 
-  // Read once, then kept in state — the chips are only ever changed from here.
   const [recent, setRecent] = useState(recentSearches)
 
   // Set when this page load came from a shared link. Landing straight in a
@@ -437,8 +435,7 @@ function Shell() {
               </kbd>{' '}
               رو بزن، یا هر جای صفحه یه لینک پیست کن.
             </p>
-            {/* Homepage only: above a list of results these would compete with
-                the results for the same attention. */}
+            {/* Homepage only — above results they compete for the same eye. */}
             {stack.length === 0 && (
               <RecentSearches
                 items={recent}

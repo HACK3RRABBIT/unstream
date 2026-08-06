@@ -22,13 +22,10 @@ const STAGE_LABEL: Record<string, string> = {
   retrying: 'تلاش دوباره…',
 }
 
-/** How far the tracks that haven't settled yet have got, as a track count.
- *
- *  Progress measured in settled tracks alone leaves a single-track job pinned
- *  at 0% for the whole download and then jumping to 100% — the percentage in
- *  the row was moving while the bar it belongs to was not. Tagging counts as
- *  whole: the file is downloaded by then, only metadata is still being
- *  written. Every other stage reports 0 and contributes nothing. */
+/** How far the unsettled tracks have got, as a track count. Counting settled
+ *  tracks alone pinned a single-track job at 0% for the whole download and
+ *  then jumped it to 100%. Tagging counts whole — the file is already down,
+ *  only metadata is still being written. */
 function inFlightFraction(job: Job): number {
   return job.tracks.reduce(
     (sum, t) => (t.status === 'downloading' || t.status === 'tagging' ? sum + t.progress : sum),
@@ -114,9 +111,8 @@ function TrackLine({ entry, state }: { entry: DownloadEntry; state: JobTrack }) 
         </span>
       )}
 
-      {/* The same hairline TrackRow draws under a downloading row. The dock
-          was reporting a percentage in text with nothing moving beside it,
-          which reads as stalled however fast the number climbs. */}
+      {/* The hairline TrackRow draws under a downloading row. A percentage in
+          text with nothing moving beside it reads as stalled. */}
       {active && !entry.expired && (
         <span className="absolute inset-x-0 bottom-0 h-px overflow-hidden bg-ink-800">
           {state.status === 'downloading' ? (
@@ -125,8 +121,7 @@ function TrackLine({ entry, state }: { entry: DownloadEntry; state: JobTrack }) 
               style={{ width: `${Math.max(2, state.progress * 100)}%` }}
             />
           ) : (
-            // Searching, tagging and retrying report no percentage — a
-            // travelling band says "working" without inventing a number.
+            // No percentage to report — a travelling band beats a fake number.
             <span className="block h-full w-1/4 animate-sweep bg-lime-flash/50" />
           )}
         </span>
@@ -166,9 +161,6 @@ function JobCard({ entry }: { entry: DownloadEntry }) {
           </p>
           <p className="text-xs text-ink-400 tabular-nums">
             {expired ? (
-              // The backend keeps files for 24h and then sweeps them; a
-              // restart clears the job table outright. Either way the links
-              // are dead, and saying so beats a row that silently 404s.
               'فایل‌ها دیگه روی سرور نیستن — دوباره دانلودش کن'
             ) : finished ? (
               <>
@@ -241,10 +233,9 @@ function JobCard({ entry }: { entry: DownloadEntry }) {
   )
 }
 
-/** True from Tailwind's `sm` up. Read in JS rather than with `sm:` classes
- *  because the two layouts are different components, not one component with
- *  different padding — rendering both and hiding one would put a second copy
- *  of every job list in the DOM. */
+/** True from Tailwind's `sm` up. Read in JS, not with `sm:` classes: the two
+ *  layouts are different components, and rendering both to hide one would put
+ *  a second copy of every job list in the DOM. */
 function useIsDesktop(): boolean {
   const query = '(min-width: 40rem)'
   const [desktop, setDesktop] = useState(() => window.matchMedia(query).matches)
@@ -257,13 +248,10 @@ function useIsDesktop(): boolean {
   return desktop
 }
 
-/** How far down the sheet has to be dragged before letting go dismisses it. */
 const DISMISS_AFTER_PX = 90
 
-/** The downloads list as a bottom sheet: the phone-shaped answer to a floating
- *  panel. Full width, anchored to the edge it slid in from, and dismissed the
- *  three ways a sheet is expected to be — the scrim, the close button, or a
- *  drag on the handle. */
+/** The downloads list as a bottom sheet: full width, anchored to the edge it
+ *  slid in from, dismissed by the scrim, the close button or a drag. */
 function DownloadsSheet({
   summary,
   onClose,
@@ -280,9 +268,7 @@ function DownloadsSheet({
   const startY = useRef<number | null>(null)
   const sheetRef = useRef<HTMLElement | null>(null)
 
-  // The sheet grows as jobs arrive and shrinks as they're dismissed, so its
-  // height is measured rather than assumed — a toast lands just above whatever
-  // it currently is.
+  // Measured, not assumed: the sheet grows and shrinks with its job list.
   useEffect(() => {
     const node = sheetRef.current
     if (!node) return
@@ -294,9 +280,8 @@ function DownloadsSheet({
     }
   }, [onHeight])
 
-  // The page behind must not scroll under an open sheet, and Escape belongs to
-  // the sheet while it is up — App's global handler would otherwise navigate
-  // back, which is not what "close this" means here.
+  // Escape belongs to the sheet while it's up; App's global handler would
+  // otherwise navigate back, which is not what "close this" means here.
   useEffect(() => {
     const previous = document.body.style.overflow
     document.body.style.overflow = 'hidden'
@@ -318,8 +303,7 @@ function DownloadsSheet({
   }
   const onPointerMove = (e: React.PointerEvent) => {
     if (startY.current == null) return
-    // Downward only: dragging up would lift the sheet off its own edge.
-    setDrag(Math.max(0, e.clientY - startY.current))
+    setDrag(Math.max(0, e.clientY - startY.current)) // downward only
   }
   const onPointerUp = () => {
     if (startY.current == null) return
@@ -345,11 +329,10 @@ function DownloadsSheet({
         className={clsx(
           'fixed inset-x-0 bottom-0 z-50 flex max-h-[85svh] flex-col overflow-hidden',
           'rounded-t-panel border-t border-ink-700 bg-ink-900 shadow-2xl shadow-black/60',
-          // Padding, not margin: the list scrolls to the very bottom edge and
-          // its last row must clear the home indicator.
+          // Padding, not margin: the list scrolls to the bottom edge and its
+          // last row must clear the home indicator.
           'pb-[var(--safe-bottom)]',
-          // The entrance animation and the drag transform are both `transform`,
-          // so the animation only runs while nothing is being dragged.
+          // Both the entrance and the drag drive `transform`, so only one runs.
           drag ? 'transition-none' : 'animate-sheet-in',
         )}
       >
@@ -383,12 +366,10 @@ export function DownloadsDock() {
   const { entries, activeCount, panelOpen, setPanelOpen } = useDownloads()
   const isDesktop = useIsDesktop()
 
-  // Toasts are full width on phones, so whatever this component pins to the
-  // bottom edge would end up underneath them. --dock-lift publishes exactly
-  // how much room to leave, and this is its only writer: the FAB's fixed
-  // footprint while it's the thing down there, the sheet's measured height
-  // once it takes over, and nothing at all on desktop, where the toast stack
-  // and the dock sit in opposite corners.
+  // Toasts are full width on phones, so whatever this pins to the bottom edge
+  // ends up under them. --dock-lift says how much room to leave, and this is
+  // its only writer: the FAB's footprint, then the sheet's measured height,
+  // and nothing on desktop where the two sit in opposite corners.
   const docked = entries.length > 0
   const sheetOpen = panelOpen && !isDesktop
   const [sheetHeight, setSheetHeight] = useState(0)
@@ -406,8 +387,7 @@ export function DownloadsDock() {
 
   if (!docked) return null
 
-  // Same continuous measure the cards use, so the ring around the FAB and the
-  // bar inside the panel never disagree about how far along a job is.
+  // Same measure the cards use, so ring and bar can't disagree.
   const totals = entries.reduce(
     (acc, e) => ({
       settled: acc.settled + (e.job ? e.job.done + e.job.failed + inFlightFraction(e.job) : 0),
@@ -445,8 +425,7 @@ export function DownloadsDock() {
         aria-label={panelOpen ? 'بستن پنل دانلود' : 'نمایش دانلودها'}
         className={clsx(
           'relative grid size-14 place-items-center rounded-full bg-lime-flash text-lime-ink shadow-lg shadow-black/40 transition duration-200 hover:bg-lime-soft hover:scale-105 active:scale-95',
-          // The sheet covers the bottom edge and carries its own dismissal, so
-          // the FAB would just be a lime disc floating on top of it.
+          // The sheet owns the bottom edge and its own dismissal.
           sheetOpen && 'pointer-events-none opacity-0',
         )}
       >
