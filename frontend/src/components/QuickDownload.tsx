@@ -31,6 +31,10 @@ export function QuickDownload({ result }: { result: SearchResult }) {
     }
   }
 
+  // Dimming until hover is a mouse idiom: it keeps a dense list quiet and lets
+  // the row's action light up under the cursor. A phone has no hover, so the
+  // button would sit dimmed forever — `pointer-fine` keeps the effect where it
+  // works and leaves the button at full strength everywhere else.
   return (
     <button
       onClick={handleClick}
@@ -45,7 +49,7 @@ export function QuickDownload({ result }: { result: SearchResult }) {
               : `دانلود با ${quality} kbps`)
       }
       aria-label={`دانلود ${result.name}`}
-      className="grid size-8 shrink-0 place-items-center rounded-ctl border border-ink-700 text-ink-400 opacity-60 transition duration-200 group-hover:opacity-100 hover:border-lime-flash/50 hover:text-lime-flash active:scale-90"
+      className="tap-target grid size-8 shrink-0 place-items-center rounded-ctl border border-ink-700 text-ink-400 transition duration-200 pointer-fine:opacity-60 pointer-fine:group-hover:opacity-100 hover:border-lime-flash/50 hover:text-lime-flash active:scale-90"
     >
       {error ? (
         <TriangleAlert className="size-4 text-danger" />

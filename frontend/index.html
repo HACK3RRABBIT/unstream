@@ -2,7 +2,11 @@
 <html lang="fa" dir="rtl">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover lets the app paint behind the notch and the home
+         indicator, which is what an installed PWA should look like. It also
+         makes env(safe-area-inset-*) report real values — everything pinned
+         to an edge (the dock FAB, toasts, the footer) pads itself with them. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 
     <title>دانلود موزیک، آلبوم و پلی‌لیست از اسپاتیفای و یوتیوب | آنستریم</title>
     <meta

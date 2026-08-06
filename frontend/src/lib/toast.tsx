@@ -51,9 +51,14 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={{ push }}>
       {children}
+      {/* Full-bleed on phones (a 20rem card floating in a 24rem viewport reads
+          as a misplaced desktop element), a corner card from sm up. The dock
+          FAB shares the bottom edge on mobile, so the stack lifts above it
+          via --dock-lift, which DownloadsDock sets while it has jobs; from sm
+          up the dock sits in the opposite corner and the lift is dropped. */}
       <div
         aria-live="polite"
-        className="pointer-events-none fixed bottom-5 start-5 z-50 flex w-[min(20rem,calc(100vw-2.5rem))] flex-col gap-2"
+        className="pointer-events-none fixed inset-x-3 bottom-[calc(0.75rem+var(--safe-bottom)+var(--dock-lift,0px))] z-50 flex flex-col gap-2 sm:inset-x-auto sm:start-5 sm:bottom-[calc(1.25rem+var(--safe-bottom))] sm:w-80"
       >
         {toasts.map((toast) => (
           <div
@@ -79,7 +84,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                   dismiss(toast.id)
                   toast.action!.onClick()
                 }}
-                className="shrink-0 rounded-ctl px-1.5 py-0.5 font-medium text-lime-flash transition hover:text-lime-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-flash"
+                className="tap-target shrink-0 rounded-ctl px-1.5 py-0.5 font-medium text-lime-flash transition hover:text-lime-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-flash"
               >
                 {toast.action.label}
               </button>
@@ -87,7 +92,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             <button
               onClick={() => dismiss(toast.id)}
               aria-label="بستن اعلان"
-              className="grid size-5 shrink-0 place-items-center rounded text-ink-400 transition hover:text-ink-100"
+              className="tap-target grid size-5 shrink-0 place-items-center rounded text-ink-400 transition hover:text-ink-100"
             >
               <X className="size-3.5" />
             </button>

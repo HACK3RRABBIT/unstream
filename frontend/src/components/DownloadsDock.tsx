@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import {
   Archive,
   ArrowDownToLine,
@@ -61,7 +62,7 @@ function TrackLine({ entry, state }: { entry: DownloadEntry; state: JobTrack }) 
           download
           title={`دانلود ${title}.${ext}`}
           aria-label={`دانلود ${title} با فرمت ${ext}`}
-          className="flex shrink-0 items-center gap-1 rounded-ctl border border-ink-600 px-2 py-0.5 text-micro font-medium text-lime-flash transition hover:border-lime-flash/50 hover:bg-ink-800"
+          className="tap-target flex shrink-0 items-center gap-1 rounded-ctl border border-ink-600 px-2 py-0.5 text-micro font-medium text-lime-flash transition hover:border-lime-flash/50 hover:bg-ink-800"
         >
           <Download className="size-3" />
           {ext}
@@ -142,7 +143,7 @@ function JobCard({ entry }: { entry: DownloadEntry }) {
             download
             title="دانلود همه به‌صورت ZIP"
             aria-label="دانلود همه‌ی آهنگ‌ها به‌صورت ZIP"
-            className="grid size-7 shrink-0 place-items-center rounded-ctl border border-ink-600 text-ink-100 transition hover:border-lime-flash/50 hover:text-lime-flash"
+            className="tap-target grid size-7 shrink-0 place-items-center rounded-ctl border border-ink-600 text-ink-100 transition hover:border-lime-flash/50 hover:text-lime-flash"
           >
             <Archive className="size-3.5" />
           </a>
@@ -151,7 +152,7 @@ function JobCard({ entry }: { entry: DownloadEntry }) {
           <button
             onClick={() => dismiss(entry.jobId)}
             title="حذف از لیست"
-            className="grid size-7 shrink-0 place-items-center rounded-ctl text-ink-400 transition hover:bg-ink-800 hover:text-ink-100"
+            className="tap-target grid size-7 shrink-0 place-items-center rounded-ctl text-ink-400 transition hover:bg-ink-800 hover:text-ink-100"
           >
             <X className="size-3.5" />
           </button>
@@ -183,7 +184,21 @@ function JobCard({ entry }: { entry: DownloadEntry }) {
 
 export function DownloadsDock() {
   const { entries, activeCount, panelOpen, setPanelOpen } = useDownloads()
-  if (entries.length === 0) return null
+
+  // Toasts go full width on phones, where they'd otherwise run under the FAB.
+  // Publishing the FAB's footprint keeps that offset in one place instead of
+  // hard-coding a magic number in the toast stack.
+  const docked = entries.length > 0
+  useEffect(() => {
+    const root = document.documentElement
+    if (docked) root.style.setProperty('--dock-lift', '4.75rem')
+    else root.style.removeProperty('--dock-lift')
+    return () => {
+      root.style.removeProperty('--dock-lift')
+    }
+  }, [docked])
+
+  if (!docked) return null
 
   const totals = entries.reduce(
     (acc, e) => ({

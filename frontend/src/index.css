@@ -227,6 +227,21 @@
   }
 }
 
+/* Display-cutout insets, named once. index.html asks for viewport-fit=cover,
+   so on an installed iOS PWA these report the notch and the home indicator;
+   everywhere else they are 0 and the calc()s collapse to the plain value. */
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Landscape on a notched phone eats into one side of the page. The content
+   column keeps its own px-5 gutter; this only adds whatever the cutout
+   demands on top of it. */
+@utility safe-x {
+  padding-inline: max(env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px));
+}
+
 html {
   background: var(--color-ink-950);
   color-scheme: dark;
@@ -251,6 +266,32 @@ body {
   :focus-visible {
     outline: 2px solid var(--color-lime-flash);
     outline-offset: 2px;
+  }
+}
+
+/* Icon buttons are drawn at 32px (or 20px for the row checkbox) because that
+   is what the density of a track row wants. A finger needs ~44px. Rather than
+   inflate the visuals on phones, grow an invisible centred hit area — the
+   pseudo-element belongs to the button, so a tap anywhere inside it still
+   activates it. Coarse pointers only: on a mouse an oversized invisible box
+   would steal clicks meant for the row underneath. */
+@utility tap-target {
+  @media (pointer: coarse) {
+    position: relative;
+
+    &::after {
+      content: '';
+      position: absolute;
+      /* Physical, not logical: this only centres, so it reads the same in
+         both directions and needs no RTL flip. */
+      top: 50%;
+      left: 50%;
+      translate: -50% -50%;
+      width: 100%;
+      height: 100%;
+      min-width: 44px;
+      min-height: 44px;
+    }
   }
 }
 

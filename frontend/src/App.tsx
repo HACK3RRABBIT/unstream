@@ -341,8 +341,8 @@ function Shell() {
         : `search:${view.query}`
 
   return (
-    <div className="flex min-h-screen flex-col bg-ink-950">
-      <header className="mx-auto flex w-full max-w-3xl items-center gap-2.5 px-5 pt-8">
+    <div className="safe-x flex min-h-screen flex-col bg-ink-950">
+      <header className="mx-auto flex w-full max-w-3xl items-center gap-2.5 px-5 pt-[calc(2rem+var(--safe-top))]">
         <span className="grid size-8 place-items-center rounded-ctl bg-lime-flash text-lime-ink">
           <AudioLines className="size-4.5" strokeWidth={2.25} />
         </span>
@@ -469,7 +469,7 @@ function Shell() {
 
       <footer
         dir="ltr"
-        className="mx-auto flex w-full max-w-3xl flex-wrap items-center justify-center gap-x-1.5 gap-y-2 px-5 pb-10 text-sm text-ink-400"
+        className="mx-auto flex w-full max-w-3xl flex-wrap items-center justify-center gap-x-1.5 gap-y-2 px-5 pb-[calc(2.5rem+var(--safe-bottom))] text-sm text-ink-400"
       >
         <span>Built by</span>
         <a
