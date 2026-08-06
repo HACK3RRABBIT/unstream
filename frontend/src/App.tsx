@@ -19,7 +19,9 @@ import { SearchResults } from './components/SearchResults'
 import { ArtistView } from './components/ArtistView'
 import { DownloadsDock } from './components/DownloadsDock'
 import { QualityPicker } from './components/QualityPicker'
+import { RecentSearches } from './components/RecentSearches'
 import { DownloadsProvider, useDownloads } from './lib/downloads'
+import { clearRecentSearches, recentSearches, rememberSearch } from './lib/recent'
 import { ToastProvider, useToast } from './lib/toast'
 
 /** What's on screen. A stack, so "back" walks search → artist → album. */
@@ -101,6 +103,9 @@ function Shell() {
   // Bumped whenever a shortcut focuses the search box, to flash the form.
   const [focusPulse, setFocusPulse] = useState(0)
 
+  // Read once, then kept in state — the chips are only ever changed from here.
+  const [recent, setRecent] = useState(recentSearches)
+
   // Set when this page load came from a shared link. Landing straight in a
   // loading collection with the marketing hero above it reads as the app
   // searching on its own, so that arrival gets its own framing instead.
@@ -141,6 +146,7 @@ function Shell() {
   const handleSubmit = (input: string) => {
     resetErrors()
     setSharedArrival(null) // the user is driving now, not the link
+    setRecent(rememberSearch(input))
 
     if (isCatalogUrl(input)) {
       openCollection(input, false)
@@ -300,6 +306,7 @@ function Shell() {
       if (text && isCatalogUrl(text)) {
         e.preventDefault()
         setSharedArrival(null)
+        setRecent(rememberSearch(text))
         pushRef.current('لینک پیدا شد — در حال باز کردن…', 'info')
         openCollectionRef.current(text, false)
       }
@@ -430,6 +437,15 @@ function Shell() {
               </kbd>{' '}
               رو بزن، یا هر جای صفحه یه لینک پیست کن.
             </p>
+            {/* Homepage only: above a list of results these would compete with
+                the results for the same attention. */}
+            {stack.length === 0 && (
+              <RecentSearches
+                items={recent}
+                onPick={handleSubmit}
+                onClear={() => setRecent(clearRecentSearches())}
+              />
+            )}
             {error && (
               <p
                 role="alert"

@@ -126,6 +126,28 @@
   --animate-sweep: sweep 1.1s ease-in-out infinite;
   --animate-breathe: breathe 2s ease-in-out infinite;
   --animate-focus-pulse: focus-pulse 0.55s var(--ease-out-expo);
+  --animate-sheet-in: sheet-in 0.34s var(--ease-out-expo) both;
+  --animate-scrim-in: scrim-in 0.25s ease-out both;
+
+  /* The mobile downloads sheet rises from the edge it is anchored to, so the
+     gesture that opens it and the motion that follows are the same shape. */
+  @keyframes sheet-in {
+    from {
+      transform: translateY(100%);
+    }
+    to {
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes scrim-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
 
   /* Confirms a keyboard shortcut landed on the search box. Uses outline
        rather than box-shadow so it doesn't fight the focus-within ring. */

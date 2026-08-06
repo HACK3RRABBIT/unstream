@@ -58,7 +58,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           up the dock sits in the opposite corner and the lift is dropped. */}
       <div
         aria-live="polite"
-        className="pointer-events-none fixed inset-x-3 bottom-[calc(0.75rem+var(--safe-bottom)+var(--dock-lift,0px))] z-50 flex flex-col gap-2 sm:inset-x-auto sm:start-5 sm:bottom-[calc(1.25rem+var(--safe-bottom))] sm:w-80"
+        className="pointer-events-none fixed inset-x-3 bottom-[calc(0.75rem+var(--safe-bottom)+var(--dock-lift,0px))] z-60 flex flex-col gap-2 sm:inset-x-auto sm:start-5 sm:bottom-[calc(1.25rem+var(--safe-bottom))] sm:w-80"
       >
         {toasts.map((toast) => (
           <div

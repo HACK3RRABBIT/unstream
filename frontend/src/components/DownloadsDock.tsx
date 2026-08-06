@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   Archive,
   ArrowDownToLine,
@@ -12,6 +12,7 @@ import {
 import clsx from 'clsx'
 import { jobZipUrl, trackFileUrl, QUALITY_LABEL, type JobTrack } from '../lib/api'
 import { useDownloads, type DownloadEntry } from '../lib/downloads'
+import { ShareTrack } from './ShareTrack'
 
 const STAGE_LABEL: Record<string, string> = {
   queued: 'تو صف',
@@ -58,16 +59,25 @@ function TrackLine({ entry, state }: { entry: DownloadEntry; state: JobTrack }) 
         {title}
       </p>
       {available ? (
-        <a
-          href={trackFileUrl(entry.jobId, state.id)}
-          download
-          title={`دانلود ${title}.${ext}`}
-          aria-label={`دانلود ${title} با فرمت ${ext}`}
-          className="tap-target flex shrink-0 items-center gap-1 rounded-ctl border border-ink-600 px-2 py-0.5 text-micro font-medium text-lime-flash transition hover:border-lime-flash/50 hover:bg-ink-800"
-        >
-          <Download className="size-3" />
-          {ext}
-        </a>
+        <>
+          <ShareTrack
+            jobId={entry.jobId}
+            trackId={state.id}
+            title={title}
+            ext={ext}
+            size="compact"
+          />
+          <a
+            href={trackFileUrl(entry.jobId, state.id)}
+            download
+            title={`دانلود ${title}.${ext}`}
+            aria-label={`دانلود ${title} با فرمت ${ext}`}
+            className="tap-target flex shrink-0 items-center gap-1 rounded-ctl border border-ink-600 px-2 py-0.5 text-micro font-medium text-lime-flash transition hover:border-lime-flash/50 hover:bg-ink-800"
+          >
+            <Download className="size-3" />
+            {ext}
+          </a>
+        </>
       ) : state.status === 'error' ? (
         <span className="text-xs text-danger">ناموفق</span>
       ) : entry.expired ? (
@@ -191,21 +201,145 @@ function JobCard({ entry }: { entry: DownloadEntry }) {
   )
 }
 
+/** True from Tailwind's `sm` up. Read in JS rather than with `sm:` classes
+ *  because the two layouts are different components, not one component with
+ *  different padding — rendering both and hiding one would put a second copy
+ *  of every job list in the DOM. */
+function useIsDesktop(): boolean {
+  const query = '(min-width: 40rem)'
+  const [desktop, setDesktop] = useState(() => window.matchMedia(query).matches)
+  useEffect(() => {
+    const mq = window.matchMedia(query)
+    const onChange = () => setDesktop(mq.matches)
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
+  return desktop
+}
+
+/** How far down the sheet has to be dragged before letting go dismisses it. */
+const DISMISS_AFTER_PX = 90
+
+/** The downloads list as a bottom sheet: the phone-shaped answer to a floating
+ *  panel. Full width, anchored to the edge it slid in from, and dismissed the
+ *  three ways a sheet is expected to be — the scrim, the close button, or a
+ *  drag on the handle. */
+function DownloadsSheet({
+  summary,
+  onClose,
+  children,
+}: {
+  summary: string
+  onClose: () => void
+  children: ReactNode
+}) {
+  const [drag, setDrag] = useState(0)
+  const startY = useRef<number | null>(null)
+
+  // The page behind must not scroll under an open sheet, and Escape belongs to
+  // the sheet while it is up — App's global handler would otherwise navigate
+  // back, which is not what "close this" means here.
+  useEffect(() => {
+    const previous = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.stopPropagation()
+      onClose()
+    }
+    document.addEventListener('keydown', onKey, true)
+    return () => {
+      document.body.style.overflow = previous
+      document.removeEventListener('keydown', onKey, true)
+    }
+  }, [onClose])
+
+  const onPointerDown = (e: React.PointerEvent) => {
+    startY.current = e.clientY
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+  const onPointerMove = (e: React.PointerEvent) => {
+    if (startY.current == null) return
+    // Downward only: dragging up would lift the sheet off its own edge.
+    setDrag(Math.max(0, e.clientY - startY.current))
+  }
+  const onPointerUp = () => {
+    if (startY.current == null) return
+    startY.current = null
+    if (drag > DISMISS_AFTER_PX) {
+      onClose() // unmounts; no point springing back first
+      return
+    }
+    setDrag(0)
+  }
+
+  return (
+    <>
+      <div
+        onClick={onClose}
+        aria-hidden
+        className="fixed inset-0 z-40 animate-scrim-in bg-ink-950/70 backdrop-blur-[2px]"
+      />
+      <section
+        aria-label="دانلودها"
+        style={{ transform: drag ? `translateY(${drag}px)` : undefined }}
+        className={clsx(
+          'fixed inset-x-0 bottom-0 z-50 flex max-h-[85svh] flex-col overflow-hidden',
+          'rounded-t-panel border-t border-ink-700 bg-ink-900 shadow-2xl shadow-black/60',
+          // Padding, not margin: the list scrolls to the very bottom edge and
+          // its last row must clear the home indicator.
+          'pb-[var(--safe-bottom)]',
+          // The entrance animation and the drag transform are both `transform`,
+          // so the animation only runs while nothing is being dragged.
+          drag ? 'transition-none' : 'animate-sheet-in',
+        )}
+      >
+        <header
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
+          className="shrink-0 cursor-grab touch-none border-b border-ink-800 active:cursor-grabbing"
+        >
+          <div className="mx-auto mt-2.5 h-1 w-9 rounded-full bg-ink-600" />
+          <div className="flex items-center gap-3 px-4 pt-2 pb-3">
+            <h2 className="text-micro font-semibold text-ink-400">دانلودها</h2>
+            <span className="flex-1 text-xs text-ink-400 tabular-nums">{summary}</span>
+            <button
+              onClick={onClose}
+              aria-label="بستن پنل دانلود"
+              className="tap-target -m-1 grid size-7 shrink-0 place-items-center rounded-ctl text-ink-400 transition hover:bg-ink-800 hover:text-ink-100"
+            >
+              <ChevronDown className="size-4" />
+            </button>
+          </div>
+        </header>
+        <div className="overflow-y-auto overscroll-contain">{children}</div>
+      </section>
+    </>
+  )
+}
+
 export function DownloadsDock() {
   const { entries, activeCount, panelOpen, setPanelOpen } = useDownloads()
+  const isDesktop = useIsDesktop()
 
   // Toasts go full width on phones, where they'd otherwise run under the FAB.
   // Publishing the FAB's footprint keeps that offset in one place instead of
-  // hard-coding a magic number in the toast stack.
+  // hard-coding a magic number in the toast stack — and drops it again when
+  // the sheet takes the FAB's place, since there is then nothing to clear.
   const docked = entries.length > 0
+  const fabVisible = docked && !(panelOpen && !isDesktop)
   useEffect(() => {
     const root = document.documentElement
-    if (docked) root.style.setProperty('--dock-lift', '4.75rem')
+    if (fabVisible) root.style.setProperty('--dock-lift', '4.75rem')
     else root.style.removeProperty('--dock-lift')
     return () => {
       root.style.removeProperty('--dock-lift')
     }
-  }, [docked])
+  }, [fabVisible])
+
+  const close = useCallback(() => setPanelOpen(false), [setPanelOpen])
 
   if (!docked) return null
 
@@ -217,32 +351,39 @@ export function DownloadsDock() {
     { settled: 0, total: 0 },
   )
   const fraction = totals.total ? totals.settled / totals.total : 0
+  const summary = activeCount > 0 ? `${activeCount} در جریان` : `${entries.length} تمام‌شده`
+  const cards = [...entries].reverse().map((entry) => <JobCard key={entry.jobId} entry={entry} />)
 
   return (
-    <div className="fixed end-5 bottom-5 z-50 flex flex-col items-end gap-3">
-      {panelOpen && (
+    <div className="fixed end-5 bottom-[calc(1.25rem+var(--safe-bottom))] z-50 flex flex-col items-end gap-3">
+      {panelOpen && isDesktop && (
         <section
           aria-label="دانلودها"
           className="flex w-[min(24rem,calc(100vw-2.5rem))] animate-fade-up flex-col overflow-hidden rounded-panel border border-ink-700 bg-ink-900 shadow-2xl shadow-black/60"
         >
           <header className="flex items-center justify-between border-b border-ink-800 px-4 py-3">
             <h2 className="text-micro font-semibold text-ink-400">دانلودها</h2>
-            <span className="text-xs text-ink-400 tabular-nums">
-              {activeCount > 0 ? `${activeCount} در جریان` : `${entries.length} تمام‌شده`}
-            </span>
+            <span className="text-xs text-ink-400 tabular-nums">{summary}</span>
           </header>
-          <div className="max-h-[55vh] overflow-y-auto">
-            {[...entries].reverse().map((entry) => (
-              <JobCard key={entry.jobId} entry={entry} />
-            ))}
-          </div>
+          <div className="max-h-[55vh] overflow-y-auto">{cards}</div>
         </section>
+      )}
+
+      {panelOpen && !isDesktop && (
+        <DownloadsSheet summary={summary} onClose={close}>
+          {cards}
+        </DownloadsSheet>
       )}
 
       <button
         onClick={() => setPanelOpen(!panelOpen)}
         aria-label={panelOpen ? 'بستن پنل دانلود' : 'نمایش دانلودها'}
-        className="relative grid size-14 place-items-center rounded-full bg-lime-flash text-lime-ink shadow-lg shadow-black/40 transition duration-200 hover:bg-lime-soft hover:scale-105 active:scale-95"
+        className={clsx(
+          'relative grid size-14 place-items-center rounded-full bg-lime-flash text-lime-ink shadow-lg shadow-black/40 transition duration-200 hover:bg-lime-soft hover:scale-105 active:scale-95',
+          // The sheet covers the bottom edge and carries its own dismissal, so
+          // the FAB would just be a lime disc floating on top of it.
+          panelOpen && !isDesktop && 'pointer-events-none opacity-0',
+        )}
       >
         {/* progress ring around the button while anything is downloading */}
         {activeCount > 0 && (

@@ -3,6 +3,7 @@ import { Check, Download, LoaderCircle, Pause, Play, TriangleAlert } from 'lucid
 import clsx from 'clsx'
 import { trackFileUrl, type JobTrack, type Track } from '../lib/api'
 import { togglePreview, usePlayingPreviewId, usePreviewLoading } from '../lib/preview'
+import { ShareTrack } from './ShareTrack'
 
 interface Props {
   index: number
@@ -159,15 +160,23 @@ export function TrackRow({
               ناموفق
             </span>
           ) : status === 'done' && jobId ? (
-            <a
-              href={trackFileUrl(jobId, track.id)}
-              download
-              className="tap-target flex animate-pop items-center gap-1.5 rounded-ctl border border-ink-600 px-2.5 py-1.5 text-mini font-medium text-lime-flash transition duration-200 hover:border-lime-flash/50 hover:bg-lime-flash/10 active:scale-95"
-            >
-              <Check className="size-3.5" />
-              {state?.ext ?? 'mp3'}
-              <Download className="size-3.5" />
-            </a>
+            <>
+              <ShareTrack
+                jobId={jobId}
+                trackId={track.id}
+                title={track.title}
+                ext={state?.ext ?? 'mp3'}
+              />
+              <a
+                href={trackFileUrl(jobId, track.id)}
+                download
+                className="tap-target flex animate-pop items-center gap-1.5 rounded-ctl border border-ink-600 px-2.5 py-1.5 text-mini font-medium text-lime-flash transition duration-200 hover:border-lime-flash/50 hover:bg-lime-flash/10 active:scale-95"
+              >
+                <Check className="size-3.5" />
+                {state?.ext ?? 'mp3'}
+                <Download className="size-3.5" />
+              </a>
+            </>
           ) : active || status === 'queued' ? (
             <span
               className={clsx(
