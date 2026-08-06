@@ -56,6 +56,11 @@ class Job:
     id: str
     name: str
     quality: str = downloader.DEFAULT_QUALITY
+    # Opaque client key (an IP, from app.limits) used only to count how many
+    # jobs one caller has in flight. Never leaves the process — as_dict()
+    # doesn't include it, and job ids stay unguessable so anyone holding one
+    # can still fetch it.
+    owner: str = ""
     tracks: dict[str, TrackState] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -92,6 +97,12 @@ def get(job_id: str) -> Job | None:
     return _jobs.get(job_id)
 
 
+def active_count(owner: str) -> int:
+    """How many of this client's jobs are still running."""
+    # list() so a concurrent start() resizing the dict can't blow up iteration.
+    return sum(1 for job in list(_jobs.values()) if job.owner == owner and not job.finished)
+
+
 def _run_track(job: Job, state: TrackState) -> None:
     def on_progress(stage: str, fraction: float) -> None:
         with job.lock:
@@ -117,9 +128,12 @@ def _run_track(job: Job, state: TrackState) -> None:
 
 
 def start(
-    name: str, tracks: list[Track], quality: str = downloader.DEFAULT_QUALITY
+    name: str,
+    tracks: list[Track],
+    quality: str = downloader.DEFAULT_QUALITY,
+    owner: str = "",
 ) -> Job:
-    job = Job(id=uuid.uuid4().hex[:12], name=name, quality=quality)
+    job = Job(id=uuid.uuid4().hex[:12], name=name, quality=quality, owner=owner)
     # Two different tracks can share "Artist - Title" (playlist duplicates,
     # remastered copies). Concurrent downloads to one filename truncate each
     # other mid-conversion, so make every stem unique up front.

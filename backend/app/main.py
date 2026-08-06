@@ -12,12 +12,12 @@ from dataclasses import asdict
 from difflib import SequenceMatcher
 from urllib.parse import quote
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
-from . import deezer, downloader, embed, itunes, jobs, soundcloud, ytdlp
+from . import deezer, downloader, embed, itunes, jobs, limits, soundcloud, ytdlp
 from .models import Collection, ProviderError, SearchResult
 
 # Every provider here is keyless and free — no accounts, no API credentials.
@@ -197,12 +197,13 @@ def health() -> dict:
 
 
 @app.get("/api/search")
-def search(q: str, page: int = 0) -> dict:
+def search(request: Request, q: str, page: int = 0) -> dict:
     q = q.strip()
     if not q:
         raise HTTPException(status_code=400, detail="Empty search query")
     if page < 0:
         raise HTTPException(status_code=400, detail="Bad page number")
+    limits.enforce("search", request)
     try:
         results, has_more = search_any(q, page)
     except ProviderError as exc:
@@ -215,9 +216,11 @@ def search(q: str, page: int = 0) -> dict:
 
 
 @app.get("/api/artist/{artist_id}")
-def artist(artist_id: str) -> dict:
+def artist(request: Request, artist_id: str) -> dict:
     if not artist_id.isdigit():
         raise HTTPException(status_code=400, detail="Bad artist id")
+    # One Deezer fetch, same cost profile as opening a link.
+    limits.enforce("resolve", request)
     try:
         data = deezer.artist(artist_id)
     except ProviderError as exc:
@@ -230,7 +233,8 @@ def artist(artist_id: str) -> dict:
 
 
 @app.post("/api/resolve")
-def resolve(body: ResolveRequest) -> dict:
+def resolve(body: ResolveRequest, request: Request) -> dict:
+    limits.enforce("resolve", request)
     try:
         collection = resolve_any(body.url)
     except ProviderError as exc:
@@ -239,12 +243,21 @@ def resolve(body: ResolveRequest) -> dict:
 
 
 @app.post("/api/download")
-def download(body: DownloadRequest) -> dict:
+def download(body: DownloadRequest, request: Request) -> dict:
     if body.quality not in downloader.QUALITIES:
         raise HTTPException(
             status_code=400,
             detail=f"Quality must be one of: {', '.join(downloader.QUALITIES)}",
         )
+    client = limits.enforce("download", request)
+    # Checked before resolving: a caller who is already at their limit should
+    # not get a provider fetch out of the request that turns them away.
+    if jobs.active_count(client) >= limits.MAX_ACTIVE_JOBS:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many downloads at once — wait for one to finish.",
+        )
+
     try:
         collection = resolve_any(body.url)
     except ProviderError as exc:
@@ -256,8 +269,13 @@ def download(body: DownloadRequest) -> dict:
         tracks = [t for t in tracks if t.id in wanted]
     if not tracks:
         raise HTTPException(status_code=400, detail="No tracks to download")
+    if len(tracks) > limits.MAX_TRACKS_PER_JOB:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many tracks — {limits.MAX_TRACKS_PER_JOB} at a time at most.",
+        )
 
-    job = jobs.start(collection.name, tracks, body.quality)
+    job = jobs.start(collection.name, tracks, body.quality, owner=client)
     return {"job_id": job.id}
 
 

@@ -76,7 +76,8 @@ Open <http://localhost:5173>, paste any supported URL (or search by name), hit *
 | `GET /api/artist/{id}` | Artist page: top tracks + complete discography (Deezer) |
 | `POST /api/resolve` `{url}` | Spotify/Deezer/Apple Music/YouTube/SoundCloud URL → track list |
 | `POST /api/download` `{url, track_ids?, quality?}` | Start a download job, returns `job_id`. `quality` is `128` \| `192` (default) \| `320` \| `original` |
-| `GET /api/jobs/{id}` | Per-track status/progress (polled by the UI) |
+| `GET /api/jobs/{id}` | Per-track status/progress |
+| `GET /api/jobs?ids=a,b,c` | The same, for several jobs at once — what the UI actually polls. Unknown ids are omitted rather than 404ing |
 | `GET /api/jobs/{id}/tracks/{tid}/file` | Download one finished track (mp3/m4a/opus) |
 | `GET /api/jobs/{id}/zip` | ZIP of all finished tracks |
 
@@ -102,4 +103,13 @@ Local run of the same stack: `docker compose up --build` (add a port mapping ove
 - The embed pages are an undocumented structure — Spotify can change them any time. If resolving suddenly breaks, that's the first place to look (`backend/app/embed.py`).
 - On a VPS, YouTube sometimes bot-checks datacenter IPs ("Sign in to confirm you're not a bot"). If downloads start failing there while working locally, the fix is passing a cookies file to yt-dlp (`cookiefile` option) or updating yt-dlp (`uv lock --upgrade-package yt-dlp` + rebuild). Rebuild the image every month or two anyway — old yt-dlp versions stop working as YouTube changes.
 - Old job folders are cleaned automatically after `DOWNLOADS_TTL_HOURS` (default 24, set it in the environment to change).
+- There are no accounts, so anything that costs real resources is capped per client IP in `backend/app/limits.py` — in-memory and per process, which is enough for the single-container stack above but would need a shared store if the API were ever scaled out. All the defaults are environment variables:
+
+  | Variable | Default | Caps |
+  |---|---|---|
+  | `RATE_SEARCH_PER_MINUTE` | 15 | Searches (four providers fan out per call — the most expensive read) |
+  | `RATE_RESOLVE_PER_MINUTE` | 30 | Link opens and artist pages |
+  | `RATE_DOWNLOADS_PER_HOUR` | 20 | Download jobs started |
+  | `MAX_ACTIVE_JOBS_PER_CLIENT` | 3 | Jobs running at once — matches the download pool's worker count |
+  | `MAX_TRACKS_PER_JOB` | 100 | Tracks in one job, same cap the Telegram bot agreed on |
 - Only download music you have the rights to. This project exists to learn the mechanics of APIs, media pipelines and background jobs.
