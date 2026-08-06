@@ -75,7 +75,13 @@ export function UrlForm({ loading, onSubmit, className, inputRef, focusPulse = 0
         dir="auto"
         placeholder="آهنگ، آلبوم یا آرتیست جستجو کن — یا لینک اسپاتیفای / دیزر / یوتیوب / ساندکلاد رو پیست کن"
         spellCheck={false}
-        className="min-w-0 flex-1 bg-transparent text-body text-ink-100 placeholder:text-ink-600 placeholder-shown:[direction:rtl] focus:outline-none"
+        // `dir="auto"` is about how the text is *shaped* — a Latin query has
+        // to render left-to-right internally or "fadaei" comes out reversed.
+        // It also flips where the line starts, which drags a Latin query to
+        // the far side of an otherwise RTL form. `text-right` pins the line to
+        // the same edge everything else in the UI starts from, so the caret is
+        // where the eye already is, whichever script is being typed.
+        className="min-w-0 flex-1 bg-transparent text-right text-body text-ink-100 placeholder:text-ink-600 placeholder-shown:[direction:rtl] focus:outline-none"
       />
       <button
         type="submit"

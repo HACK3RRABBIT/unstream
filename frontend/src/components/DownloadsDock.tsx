@@ -10,7 +10,7 @@ import {
   X,
 } from 'lucide-react'
 import clsx from 'clsx'
-import { jobZipUrl, trackFileUrl, QUALITY_LABEL, type JobTrack } from '../lib/api'
+import { jobZipUrl, trackFileUrl, QUALITY_LABEL, type Job, type JobTrack } from '../lib/api'
 import { useDownloads, type DownloadEntry } from '../lib/downloads'
 import { ShareTrack } from './ShareTrack'
 
@@ -20,6 +20,20 @@ const STAGE_LABEL: Record<string, string> = {
   downloading: 'در حال دانلود',
   tagging: 'در حال تگ زدن…',
   retrying: 'تلاش دوباره…',
+}
+
+/** How far the tracks that haven't settled yet have got, as a track count.
+ *
+ *  Progress measured in settled tracks alone leaves a single-track job pinned
+ *  at 0% for the whole download and then jumping to 100% — the percentage in
+ *  the row was moving while the bar it belongs to was not. Tagging counts as
+ *  whole: the file is downloaded by then, only metadata is still being
+ *  written. Every other stage reports 0 and contributes nothing. */
+function inFlightFraction(job: Job): number {
+  return job.tracks.reduce(
+    (sum, t) => (t.status === 'downloading' || t.status === 'tagging' ? sum + t.progress : sum),
+    0,
+  )
 }
 
 function formatEta(seconds: number): string {
@@ -35,8 +49,14 @@ function TrackLine({ entry, state }: { entry: DownloadEntry; state: JobTrack }) 
   // "original" can land as m4a or opus depending on the upload, so the file
   // itself is the only honest source for this label.
   const ext = state.ext ?? 'mp3'
+  const active =
+    state.status === 'downloading' ||
+    state.status === 'searching' ||
+    state.status === 'tagging' ||
+    state.status === 'retrying'
+
   return (
-    <li className="flex items-center gap-2.5 px-4 py-1.5">
+    <li className="relative flex items-center gap-2.5 px-4 py-1.5">
       {state.status === 'done' ? (
         <Check className="size-3.5 shrink-0 animate-pop text-lime-flash" />
       ) : state.status === 'error' ? (
@@ -93,6 +113,24 @@ function TrackLine({ entry, state }: { entry: DownloadEntry; state: JobTrack }) 
           {state.status === 'downloading' && ` ${Math.round(state.progress * 100)}%`}
         </span>
       )}
+
+      {/* The same hairline TrackRow draws under a downloading row. The dock
+          was reporting a percentage in text with nothing moving beside it,
+          which reads as stalled however fast the number climbs. */}
+      {active && !entry.expired && (
+        <span className="absolute inset-x-0 bottom-0 h-px overflow-hidden bg-ink-800">
+          {state.status === 'downloading' ? (
+            <span
+              className="block h-full bg-lime-flash/70 transition-[width] duration-500 ease-out"
+              style={{ width: `${Math.max(2, state.progress * 100)}%` }}
+            />
+          ) : (
+            // Searching, tagging and retrying report no percentage — a
+            // travelling band says "working" without inventing a number.
+            <span className="block h-full w-1/4 animate-sweep bg-lime-flash/50" />
+          )}
+        </span>
+      )}
     </li>
   )
 }
@@ -105,6 +143,8 @@ function JobCard({ entry }: { entry: DownloadEntry }) {
   const total = job?.total ?? entry.tracks.length
   const expired = entry.expired === true
   const finished = expired || (job?.finished ?? false)
+  const inFlight = job ? inFlightFraction(job) : 0
+  const fraction = total ? Math.min(1, (done + failed + inFlight) / total) : 0
   // ZIP is for batches — a single song is just the mp3 link on its row.
   const showZip = total > 1 && done > 0 && !expired
 
@@ -183,7 +223,7 @@ function JobCard({ entry }: { entry: DownloadEntry }) {
             'h-full rounded-full transition-[width] duration-500 ease-out',
             failed > 0 && done === 0 ? 'bg-danger' : 'bg-lime-flash',
           )}
-          style={{ width: `${total ? ((done + failed) / total) * 100 : 0}%` }}
+          style={{ width: `${fraction * 100}%` }}
         />
       </div>
       <ul className="max-h-44 overflow-y-auto py-1.5">
@@ -227,14 +267,32 @@ const DISMISS_AFTER_PX = 90
 function DownloadsSheet({
   summary,
   onClose,
+  onHeight,
   children,
 }: {
   summary: string
   onClose: () => void
+  /** Publishes the sheet's rendered height so toasts can clear it. */
+  onHeight: (px: number) => void
   children: ReactNode
 }) {
   const [drag, setDrag] = useState(0)
   const startY = useRef<number | null>(null)
+  const sheetRef = useRef<HTMLElement | null>(null)
+
+  // The sheet grows as jobs arrive and shrinks as they're dismissed, so its
+  // height is measured rather than assumed — a toast lands just above whatever
+  // it currently is.
+  useEffect(() => {
+    const node = sheetRef.current
+    if (!node) return
+    const observer = new ResizeObserver(([entry]) => onHeight(entry.contentRect.height))
+    observer.observe(node)
+    return () => {
+      observer.disconnect()
+      onHeight(0)
+    }
+  }, [onHeight])
 
   // The page behind must not scroll under an open sheet, and Escape belongs to
   // the sheet while it is up — App's global handler would otherwise navigate
@@ -281,6 +339,7 @@ function DownloadsSheet({
         className="fixed inset-0 z-40 animate-scrim-in bg-ink-950/70 backdrop-blur-[2px]"
       />
       <section
+        ref={sheetRef}
         aria-label="دانلودها"
         style={{ transform: drag ? `translateY(${drag}px)` : undefined }}
         className={clsx(
@@ -324,33 +383,39 @@ export function DownloadsDock() {
   const { entries, activeCount, panelOpen, setPanelOpen } = useDownloads()
   const isDesktop = useIsDesktop()
 
-  // Toasts go full width on phones, where they'd otherwise run under the FAB.
-  // Publishing the FAB's footprint keeps that offset in one place instead of
-  // hard-coding a magic number in the toast stack — and drops it again when
-  // the sheet takes the FAB's place, since there is then nothing to clear.
+  // Toasts are full width on phones, so whatever this component pins to the
+  // bottom edge would end up underneath them. --dock-lift publishes exactly
+  // how much room to leave, and this is its only writer: the FAB's fixed
+  // footprint while it's the thing down there, the sheet's measured height
+  // once it takes over, and nothing at all on desktop, where the toast stack
+  // and the dock sit in opposite corners.
   const docked = entries.length > 0
-  const fabVisible = docked && !(panelOpen && !isDesktop)
+  const sheetOpen = panelOpen && !isDesktop
+  const [sheetHeight, setSheetHeight] = useState(0)
   useEffect(() => {
     const root = document.documentElement
-    if (fabVisible) root.style.setProperty('--dock-lift', '4.75rem')
+    const lift = isDesktop ? 0 : sheetOpen ? sheetHeight : docked ? 76 : 0
+    if (lift > 0) root.style.setProperty('--dock-lift', `${lift}px`)
     else root.style.removeProperty('--dock-lift')
     return () => {
       root.style.removeProperty('--dock-lift')
     }
-  }, [fabVisible])
+  }, [docked, isDesktop, sheetOpen, sheetHeight])
 
   const close = useCallback(() => setPanelOpen(false), [setPanelOpen])
 
   if (!docked) return null
 
+  // Same continuous measure the cards use, so the ring around the FAB and the
+  // bar inside the panel never disagree about how far along a job is.
   const totals = entries.reduce(
     (acc, e) => ({
-      settled: acc.settled + (e.job ? e.job.done + e.job.failed : 0),
+      settled: acc.settled + (e.job ? e.job.done + e.job.failed + inFlightFraction(e.job) : 0),
       total: acc.total + (e.job?.total ?? e.tracks.length),
     }),
     { settled: 0, total: 0 },
   )
-  const fraction = totals.total ? totals.settled / totals.total : 0
+  const fraction = totals.total ? Math.min(1, totals.settled / totals.total) : 0
   const summary = activeCount > 0 ? `${activeCount} در جریان` : `${entries.length} تمام‌شده`
   const cards = [...entries].reverse().map((entry) => <JobCard key={entry.jobId} entry={entry} />)
 
@@ -369,8 +434,8 @@ export function DownloadsDock() {
         </section>
       )}
 
-      {panelOpen && !isDesktop && (
-        <DownloadsSheet summary={summary} onClose={close}>
+      {sheetOpen && (
+        <DownloadsSheet summary={summary} onClose={close} onHeight={setSheetHeight}>
           {cards}
         </DownloadsSheet>
       )}
@@ -382,7 +447,7 @@ export function DownloadsDock() {
           'relative grid size-14 place-items-center rounded-full bg-lime-flash text-lime-ink shadow-lg shadow-black/40 transition duration-200 hover:bg-lime-soft hover:scale-105 active:scale-95',
           // The sheet covers the bottom edge and carries its own dismissal, so
           // the FAB would just be a lime disc floating on top of it.
-          panelOpen && !isDesktop && 'pointer-events-none opacity-0',
+          sheetOpen && 'pointer-events-none opacity-0',
         )}
       >
         {/* progress ring around the button while anything is downloading */}
