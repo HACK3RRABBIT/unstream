@@ -218,13 +218,19 @@
   }
 
   /* Indeterminate progress — a band travelling across the track, used
-       when a stage reports no percentage (searching / tagging). */
+       when a stage reports no percentage (searching / tagging).
+
+       translateX is physical, but the band's resting place is logical: in RTL
+       it starts flush against the *right* edge, so an untouched -100%..400%
+       leaves it sitting mid-track and then throws it off to the right. The
+       --sweep-dir flip below sends it the way the determinate bar fills —
+       right to left under `dir="rtl"`, left to right under LTR. */
   @keyframes sweep {
     0% {
-      transform: translateX(-100%);
+      transform: translateX(calc(-100% * var(--sweep-dir, 1)));
     }
     100% {
-      transform: translateX(400%);
+      transform: translateX(calc(400% * var(--sweep-dir, 1)));
     }
   }
 
@@ -253,6 +259,26 @@
 :root {
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Which way `sweep` travels. The band has to chase the inline axis, but
+   translateX is physical, so the keyframe multiplies by this sign.
+   Nearest-ancestor-wins is faked by source order: ltr last, because the LTR
+   islands (the footer credit, the admin panel) are always nested inside the
+   rtl document and never the other way round.
+   `:dir()` would read the effective direction and say this properly, but
+   Lightning CSS downlevels it to a :lang() guess — which matches lang="fa"
+   straight through those islands and gets them backwards. */
+.animate-sweep {
+  --sweep-dir: 1;
+
+  [dir='rtl'] & {
+    --sweep-dir: -1;
+  }
+
+  [dir='ltr'] & {
+    --sweep-dir: 1;
+  }
 }
 
 /* Landscape on a notched phone eats one side of the page. Adds only what the
