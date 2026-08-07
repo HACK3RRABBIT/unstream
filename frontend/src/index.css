@@ -303,6 +303,19 @@ body {
   color: var(--color-lime-ink);
 }
 
+/* iOS Safari zooms the page in whenever a focused field's text is under 16px,
+   and the type scale tops out at 15px. Lift just the fields, just on touch —
+   the 1px is invisible, and this beats a `maximum-scale` viewport, which would
+   also take pinch-zoom away. Deliberately unlayered so it outranks the
+   `text-body` utility on the inputs themselves. */
+@media (pointer: coarse) {
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
 /* Keyboard focus is always visible; pointer focus never draws a ring.
    This lives in @layer base on purpose: unlayered rules outrank *every*
    layered utility regardless of specificity, so an unlayered version here
