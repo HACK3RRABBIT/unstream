@@ -27,7 +27,10 @@ export function CollectionView({ url, collection }: Props) {
   // all" plus any number of single-track ones — so merge them all here.
   const downloads = useDownloads()
   const { push } = useToast()
-  const entries = downloads.entriesForUrl(url)
+  // Expired jobs (files swept, or the server restarted) are dropped rather
+  // than merged: their per-track links 404, and the honest thing for this
+  // view to show is an album that is simply ready to download again.
+  const entries = downloads.entriesForUrl(url).filter((e) => !e.expired)
 
   // Tracks the user ticked to download as one batch.
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -229,16 +232,31 @@ export function CollectionView({ url, collection }: Props) {
         </p>
       )}
 
+      {/* Taller on a phone so the action's 44px hit area is contained by the
+          row — left at py-2 it would reach past the divider and swallow taps
+          meant for the first track's buttons. */}
       {collection.tracks.length > 1 && (
-        <div className="flex items-center justify-between border-b border-ink-800 bg-ink-950/50 px-5 py-2">
-          <span className="text-xs text-ink-400 tabular-nums">
-            {selected.size > 0
-              ? `${selected.size} از ${collection.tracks.length} انتخاب شده`
-              : `${collection.tracks.length} آهنگ — هرکدوم رو تیک بزنی فقط همون‌ها دانلود میشن`}
+        <div className="flex items-center justify-between gap-3 border-b border-ink-800 bg-ink-950/50 px-5 py-3 sm:py-2">
+          {/* min-w-0 lets this shrink instead of shoving the action out of the
+              row; the action itself never wraps, so "انتخاب همه" can't break
+              across two lines the way it did at phone width. */}
+          <span className="min-w-0 text-xs text-ink-400 tabular-nums">
+            {selected.size > 0 ? (
+              `${selected.size} از ${collection.tracks.length} انتخاب شده`
+            ) : (
+              <>
+                {collection.tracks.length} آهنگ
+                <span className="mx-1.5 text-ink-600">·</span>
+                {/* The same instruction, at two lengths — the long one has no
+                    room on a phone, and truncating it would cut mid-sentence. */}
+                <span className="sm:hidden">با تیک انتخاب کن</span>
+                <span className="hidden sm:inline">هرکدوم رو تیک بزنی فقط همون‌ها دانلود میشن</span>
+              </>
+            )}
           </span>
           <button
             onClick={selected.size === collection.tracks.length ? clearSelection : selectAll}
-            className="text-xs font-medium text-lime-flash transition hover:text-lime-soft"
+            className="tap-target shrink-0 text-xs font-medium whitespace-nowrap text-lime-flash transition hover:text-lime-soft"
           >
             {selected.size === collection.tracks.length ? 'لغو همه' : 'انتخاب همه'}
           </button>

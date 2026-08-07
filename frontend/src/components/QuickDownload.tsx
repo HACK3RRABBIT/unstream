@@ -12,8 +12,10 @@ export function QuickDownload({ result }: { result: SearchResult }) {
   const [error, setError] = useState<string | null>(null)
 
   const entry = entryForUrl(result.url)
-  const queued = entry != null && !entry.job?.finished
-  const done = entry?.job?.finished ?? false
+  // Expired is neither running nor available — offer the download again.
+  const live = entry && !entry.expired ? entry : null
+  const queued = live != null && !live.job?.finished
+  const done = live?.job?.finished ?? false
 
   const handleClick = async () => {
     if (pending) return
@@ -31,6 +33,8 @@ export function QuickDownload({ result }: { result: SearchResult }) {
     }
   }
 
+  // `pointer-fine` on the dimming: a phone has no hover, so without it the
+  // button would sit at 60% forever.
   return (
     <button
       onClick={handleClick}
@@ -45,7 +49,7 @@ export function QuickDownload({ result }: { result: SearchResult }) {
               : `دانلود با ${quality} kbps`)
       }
       aria-label={`دانلود ${result.name}`}
-      className="grid size-8 shrink-0 place-items-center rounded-ctl border border-ink-700 text-ink-400 opacity-60 transition duration-200 group-hover:opacity-100 hover:border-lime-flash/50 hover:text-lime-flash active:scale-90"
+      className="tap-target grid size-8 shrink-0 place-items-center rounded-ctl border border-ink-700 text-ink-400 transition duration-200 pointer-fine:opacity-60 pointer-fine:group-hover:opacity-100 hover:border-lime-flash/50 hover:text-lime-flash active:scale-90"
     >
       {error ? (
         <TriangleAlert className="size-4 text-danger" />

@@ -1,2 +1,5 @@
 User-agent: *
 Allow: /
+# Owner-facing stats page. Token-gated either way, but there is nothing
+# here for a crawler and no reason to publish the path.
+Disallow: /admin

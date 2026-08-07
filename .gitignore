@@ -1,1 +1,6 @@
 .DS_Store
+
+# A signed-in browser session for YouTube, in a public repo. The compose file
+# points YTDLP_COOKIEFILE at this path, so it is the one that gets dropped here
+# by hand and swept up by the next `git add -A`.
+cookies.txt

@@ -17,7 +17,7 @@ RUN uv sync --frozen --no-dev
 COPY app ./app
 
 RUN useradd -u 1001 -m appuser \
-    && mkdir -p /app/downloads \
+    && mkdir -p /app/downloads /app/data \
     && chown -R appuser:appuser /app
 USER appuser
 

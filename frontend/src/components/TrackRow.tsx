@@ -3,6 +3,7 @@ import { Check, Download, LoaderCircle, Pause, Play, TriangleAlert } from 'lucid
 import clsx from 'clsx'
 import { trackFileUrl, type JobTrack, type Track } from '../lib/api'
 import { togglePreview, usePlayingPreviewId, usePreviewLoading } from '../lib/preview'
+import { ShareTrack } from './ShareTrack'
 
 interface Props {
   index: number
@@ -81,10 +82,12 @@ export function TrackRow({
             aria-checked={selected}
             aria-label={`انتخاب ${track.title}`}
             className={clsx(
-              'grid size-5 shrink-0 place-items-center rounded-[6px] border transition-all duration-150 active:scale-90',
+              'tap-target grid size-5 shrink-0 place-items-center rounded-[6px] border transition-all duration-150 active:scale-90',
               selected
                 ? 'border-lime-flash bg-lime-flash text-lime-ink'
-                : 'border-ink-600 text-transparent opacity-40 group-hover:opacity-100 hover:border-ink-400',
+                : // Unselected boxes recede until the row is hovered, which
+                  // never happens on a phone — dim only where hover exists.
+                  'border-ink-600 text-transparent pointer-fine:opacity-40 pointer-fine:group-hover:opacity-100 hover:border-ink-400',
             )}
           >
             {selected && <Check className="size-3 animate-pop" strokeWidth={3.5} />}
@@ -132,7 +135,7 @@ export function TrackRow({
                   : `پخش ۳۰ ثانیه از ${track.title}`
               }
               className={clsx(
-                'grid size-8 shrink-0 place-items-center rounded-ctl border transition duration-200 active:scale-90',
+                'tap-target grid size-8 shrink-0 place-items-center rounded-ctl border transition duration-200 active:scale-90',
                 isCurrentPreview
                   ? 'border-lime-flash/50 bg-lime-flash/10 text-lime-flash'
                   : 'border-ink-700 text-ink-400 hover:border-lime-flash/50 hover:text-lime-flash',
@@ -157,15 +160,23 @@ export function TrackRow({
               ناموفق
             </span>
           ) : status === 'done' && jobId ? (
-            <a
-              href={trackFileUrl(jobId, track.id)}
-              download
-              className="flex animate-pop items-center gap-1.5 rounded-ctl border border-ink-600 px-2.5 py-1.5 text-mini font-medium text-lime-flash transition duration-200 hover:border-lime-flash/50 hover:bg-lime-flash/10 active:scale-95"
-            >
-              <Check className="size-3.5" />
-              {state?.ext ?? 'mp3'}
-              <Download className="size-3.5" />
-            </a>
+            <>
+              <ShareTrack
+                jobId={jobId}
+                trackId={track.id}
+                title={track.title}
+                ext={state?.ext ?? 'mp3'}
+              />
+              <a
+                href={trackFileUrl(jobId, track.id)}
+                download
+                className="tap-target flex animate-pop items-center gap-1.5 rounded-ctl border border-ink-600 px-2.5 py-1.5 text-mini font-medium text-lime-flash transition duration-200 hover:border-lime-flash/50 hover:bg-lime-flash/10 active:scale-95"
+              >
+                <Check className="size-3.5" />
+                {state?.ext ?? 'mp3'}
+                <Download className="size-3.5" />
+              </a>
+            </>
           ) : active || status === 'queued' ? (
             <span
               className={clsx(
@@ -189,10 +200,10 @@ export function TrackRow({
                   aria-label={`دانلود ${track.title}`}
                   aria-busy={downloading}
                   className={clsx(
-                    'grid size-8 shrink-0 place-items-center rounded-ctl border transition duration-200 active:scale-90',
+                    'tap-target grid size-8 shrink-0 place-items-center rounded-ctl border transition duration-200 active:scale-90',
                     downloading
                       ? 'cursor-not-allowed border-lime-flash/40 text-lime-flash opacity-70'
-                      : 'border-ink-700 text-ink-400 opacity-60 group-hover:opacity-100 hover:border-lime-flash/50 hover:text-lime-flash',
+                      : 'border-ink-700 text-ink-400 hover:border-lime-flash/50 hover:text-lime-flash pointer-fine:opacity-60 pointer-fine:group-hover:opacity-100',
                   )}
                 >
                   {downloading ? (

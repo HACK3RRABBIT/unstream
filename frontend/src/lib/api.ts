@@ -128,9 +128,54 @@ const localizeResult = (result: SearchResult): SearchResult => ({
   subtitle: localizeSubtitle(result.subtitle),
 })
 
+/** Backend `detail` strings, translated at the same seam as result subtitles.
+ *  The wire stays English because the Telegram bot shares it; each surface
+ *  renders it in its own voice (ADR 0001). `$1` carries the backend's number
+ *  through. */
+const ERROR_PHRASES: [RegExp, string][] = [
+  [/^Too many searches — wait (\d+)s/, 'یه کم تند رفتی — $1 ثانیه صبر کن و دوباره جستجو کن.'],
+  [/^Too many links opened — wait (\d+)s/, 'یه کم تند رفتی — $1 ثانیه صبر کن و دوباره امتحان کن.'],
+  [
+    /^Too many downloads started — wait (\d+)s/,
+    'برای امروز به سقف دانلود رسیدی — $1 ثانیه دیگه دوباره امتحان کن.',
+  ],
+  [/^Too many downloads at once/, 'همزمان چندتا دانلود در جریانه — صبر کن یکیش تموم شه.'],
+  [/^Too many tracks — (\d+)/, 'این لیست خیلی بلنده — هر بار حداکثر $1 آهنگ.'],
+  [
+    /^Unsupported link/,
+    'این لینک پشتیبانی نمیشه — لینک اسپاتیفای، دیزر، اپل موزیک، یوتیوب یا ساندکلاد بذار، یا اسمش رو جستجو کن.',
+  ],
+  [/^No tracks to download/, 'هیچ آهنگی برای دانلود انتخاب نشده.'],
+  [/^No completed tracks yet/, 'هنوز هیچ آهنگی آماده نشده.'],
+  [/^Track not ready/, 'این فایل هنوز آماده نیست.'],
+  [/^Unknown job/, 'این دانلود دیگه روی سرور نیست.'],
+  [/^Empty search query/, 'چیزی برای جستجو ننوشتی.'],
+]
+
+/** For anything the table missed: provider and yt-dlp errors are raw English,
+ *  which has no place in a Farsi-only UI. */
+const STATUS_FALLBACK: Record<number, string> = {
+  400: 'این لینک باز نشد — شاید خصوصی باشه یا منبعش در دسترس نباشه.',
+  404: 'پیدا نشد.',
+  429: 'یه کم تند رفتی — چند لحظه صبر کن.',
+}
+
+function localizeError(detail: string, status: number): string {
+  for (const [pattern, farsi] of ERROR_PHRASES) {
+    // Patterns anchor on the opening and the Farsi replaces the whole
+    // message, so trailing English doesn't hang off a Persian sentence.
+    const match = pattern.exec(detail)
+    if (match) return farsi.replace('$1', match[1] ?? '')
+  }
+  return STATUS_FALLBACK[status] ?? 'سرور جواب نداد — یه بار دیگه امتحان کن.'
+}
+
 export function apiError(err: unknown): string {
   if (axios.isAxiosError(err)) {
-    return err.response?.data?.detail ?? err.message
+    const status = err.response?.status
+    const detail = err.response?.data?.detail
+    if (status == null) return 'به سرور وصل نشدیم — اینترنتت رو چک کن.'
+    return localizeError(typeof detail === 'string' ? detail : '', status)
   }
   return err instanceof Error ? err.message : 'یه مشکلی پیش اومد'
 }
@@ -194,6 +239,16 @@ export async function startDownload(
 export async function getJob(jobId: string): Promise<Job> {
   const { data } = await client.get<Job>(`/jobs/${jobId}`)
   return data
+}
+
+/** Poll every unfinished job in one request. Jobs the server no longer knows
+ *  are absent from the response — callers use that gap to retire them. */
+export async function getJobs(jobIds: string[]): Promise<Job[]> {
+  if (jobIds.length === 0) return []
+  const { data } = await client.get<{ jobs: Job[] }>('/jobs', {
+    params: { ids: jobIds.join(',') },
+  })
+  return data.jobs
 }
 
 export const trackFileUrl = (jobId: string, trackId: string) =>

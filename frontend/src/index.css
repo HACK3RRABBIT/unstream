@@ -126,6 +126,27 @@
   --animate-sweep: sweep 1.1s ease-in-out infinite;
   --animate-breathe: breathe 2s ease-in-out infinite;
   --animate-focus-pulse: focus-pulse 0.55s var(--ease-out-expo);
+  --animate-sheet-in: sheet-in 0.34s var(--ease-out-expo) both;
+  --animate-scrim-in: scrim-in 0.25s ease-out both;
+
+  /* The sheet rises from the edge it is anchored to. */
+  @keyframes sheet-in {
+    from {
+      transform: translateY(100%);
+    }
+    to {
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes scrim-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
 
   /* Confirms a keyboard shortcut landed on the search box. Uses outline
        rather than box-shadow so it doesn't fight the focus-within ring. */
@@ -227,6 +248,19 @@
   }
 }
 
+/* Display-cutout insets, named once. Zero everywhere but an installed PWA,
+   where the calc()s pick up the notch and the home indicator. */
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Landscape on a notched phone eats one side of the page. Adds only what the
+   cutout demands; the content column keeps its own px-5 gutter. */
+@utility safe-x {
+  padding-inline: max(env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px));
+}
+
 html {
   background: var(--color-ink-950);
   color-scheme: dark;
@@ -251,6 +285,29 @@ body {
   :focus-visible {
     outline: 2px solid var(--color-lime-flash);
     outline-offset: 2px;
+  }
+}
+
+/* Icon buttons are 32px (20px for the row checkbox) because that is what a
+   track row's density wants; a finger needs ~44. Rather than inflate them,
+   grow an invisible centred hit area. Coarse pointers only — on a mouse it
+   would steal clicks meant for the row underneath. */
+@utility tap-target {
+  @media (pointer: coarse) {
+    position: relative;
+
+    &::after {
+      content: '';
+      position: absolute;
+      /* Physical, not logical — centring needs no RTL flip. */
+      top: 50%;
+      left: 50%;
+      translate: -50% -50%;
+      width: 100%;
+      height: 100%;
+      min-width: 44px;
+      min-height: 44px;
+    }
   }
 }
 

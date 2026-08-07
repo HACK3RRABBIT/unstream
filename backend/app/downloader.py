@@ -33,6 +33,7 @@ from mutagen.mp4 import MP4, MP4Cover
 from yt_dlp import YoutubeDL
 
 from .models import Track
+from .ytdlp import base_opts
 
 # A candidate must be within this many seconds of the catalog duration.
 MAX_DURATION_DRIFT = 20
@@ -114,14 +115,12 @@ def search_source(
     a retry then picks the next-best candidate instead of hitting the same
     broken upload again. `prefix` selects the site: ytsearchN / scsearchN.
     """
-    opts = {
-        "quiet": True,
-        "no_warnings": True,
-        "extract_flat": True,  # metadata only, don't resolve each video
-        "noplaylist": True,
-        "retries": 3,
-        "socket_timeout": 15,
-    }
+    opts = base_opts(
+        extract_flat=True,  # metadata only, don't resolve each video
+        noplaylist=True,
+        retries=3,
+        socket_timeout=15,
+    )
     with YoutubeDL(opts) as ydl:
         info = ydl.extract_info(f"{prefix}:{track.query}", download=False)
     entries = [e for e in (info.get("entries") or []) if e]
@@ -198,19 +197,17 @@ def download_audio(
             if total:
                 on_progress(status.get("downloaded_bytes", 0) / total)
 
-    opts = {
-        "quiet": True,
-        "no_warnings": True,
-        "format": "bestaudio/best",
-        "outtmpl": str(dest) + ".%(ext)s",
-        "noplaylist": True,
-        "retries": 5,
-        "fragment_retries": 5,
-        "socket_timeout": 15,
-        "nopart": False,
-        "overwrites": True,
-        "progress_hooks": [hook],
-    }
+    opts = base_opts(
+        format="bestaudio/best",
+        outtmpl=str(dest) + ".%(ext)s",
+        noplaylist=True,
+        retries=5,
+        fragment_retries=5,
+        socket_timeout=15,
+        nopart=False,
+        overwrites=True,
+        progress_hooks=[hook],
+    )
     if quality != ORIGINAL:
         opts["postprocessors"] = [
             {
@@ -346,6 +343,7 @@ def download_track(
     attempts: int = 4,
     filename: str | None = None,
     quality: str = DEFAULT_QUALITY,
+    on_source: Callable[[str, int], None] | None = None,
 ) -> Path:
     """Full pipeline for one track. Reports (stage, fraction) via callback.
 
@@ -353,6 +351,10 @@ def download_track(
     two tracks sharing one stem would otherwise clobber each other's files
     mid-download when they run concurrently. `quality` is an mp3 bitrate in
     kbps or "original"; see QUALITIES.
+
+    `on_source` is told which upload each attempt settled on, and which
+    attempt it was — the only place that knows whether a track came from
+    its own page, from YouTube search, or from the SoundCloud last resort.
 
     Attempt order: the track's own source page if it has one, then YouTube
     search (excluding failed uploads), then SoundCloud as the last resort.
@@ -382,6 +384,8 @@ def download_track(
             else:
                 url = search_source(track, exclude=failed_urls, prefix="ytsearch8")
 
+            if on_source:
+                on_source(url, attempt + 1)
             _clean_partials(dest)
             on_progress("downloading", 0.0)
             audio = download_audio(

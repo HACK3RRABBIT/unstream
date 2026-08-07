@@ -1,4 +1,4 @@
-import { useEffect, useState, type RefObject } from 'react'
+import { useEffect, useRef, useState, type RefObject } from 'react'
 import { ArrowLeft, LoaderCircle, Search } from 'lucide-react'
 import clsx from 'clsx'
 import { isCatalogUrl } from '../lib/api'
@@ -16,6 +16,19 @@ interface Props {
 export function UrlForm({ loading, onSubmit, className, inputRef, focusPulse = 0 }: Props) {
   const [input, setInput] = useState('')
   const isUrl = isCatalogUrl(input)
+
+  // Focus on arrival is a desktop courtesy and a mobile ambush — on a phone it
+  // summons the keyboard over the hero. `autoFocus` has no way to ask, so it's
+  // done here instead.
+  const ownInputRef = useRef<HTMLInputElement | null>(null)
+  const inputEl = inputRef ?? ownInputRef
+  useEffect(() => {
+    if (window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
+      inputEl.current?.focus()
+    }
+    // Mount-only: later focus goes through `focusPulse` and the / shortcut.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const [pulsing, setPulsing] = useState(false)
   useEffect(() => {
@@ -54,15 +67,17 @@ export function UrlForm({ loading, onSubmit, className, inputRef, focusPulse = 0
         )}
       />
       <input
-        ref={inputRef}
+        ref={inputEl}
         type="text"
         value={input}
         onChange={(e) => setInput(e.target.value)}
         dir="auto"
         placeholder="آهنگ، آلبوم یا آرتیست جستجو کن — یا لینک اسپاتیفای / دیزر / یوتیوب / ساندکلاد رو پیست کن"
         spellCheck={false}
-        autoFocus
-        className="min-w-0 flex-1 bg-transparent text-body text-ink-100 placeholder:text-ink-600 placeholder-shown:[direction:rtl] focus:outline-none"
+        // `dir="auto"` shapes a Latin query left-to-right (or "fadaei" comes
+        // out reversed) but also flips where the line starts, dragging it to
+        // the far side of an RTL form. `text-right` keeps the alignment.
+        className="min-w-0 flex-1 bg-transparent text-right text-body text-ink-100 placeholder:text-ink-600 placeholder-shown:[direction:rtl] focus:outline-none"
       />
       <button
         type="submit"

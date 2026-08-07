@@ -3,21 +3,25 @@
 Run with:  uvicorn app.main:app --reload --port 8000
 """
 
+import hmac
 import io
+import os
 import re
 import zipfile
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, wait
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from difflib import SequenceMatcher
-from urllib.parse import quote
+from pathlib import Path
+from urllib.parse import quote, urlparse
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
-from . import deezer, downloader, embed, itunes, jobs, soundcloud, ytdlp
+from . import analytics, deezer, downloader, embed, itunes, jobs, limits, soundcloud, ytdlp
 from .models import Collection, ProviderError, SearchResult
 
 # Every provider here is keyless and free — no accounts, no API credentials.
@@ -51,6 +55,21 @@ def resolve_any(url: str) -> Collection:
         "Unsupported link — paste a Spotify, Deezer, Apple Music, "
         "YouTube or SoundCloud URL, or search by name instead."
     )
+
+
+def provider_of(url: str) -> str:
+    """Which catalog a pasted link belongs to — an analytics dimension only."""
+    if deezer.is_deezer_url(url):
+        return "deezer"
+    if itunes.is_itunes_url(url):
+        return "apple"
+    if soundcloud.is_soundcloud_url(url):
+        return "soundcloud"
+    if ytdlp.is_supported_url(url):
+        return "youtube"
+    if embed.parse_url(url):
+        return "spotify"
+    return "unknown"
 
 
 def _squash(text: str) -> str:
@@ -151,6 +170,7 @@ def search_any(query: str, page: int = 0) -> tuple[list[SearchResult], bool]:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    analytics.start()
     jobs.start_sweeper()
     yield
 
@@ -197,16 +217,28 @@ def health() -> dict:
 
 
 @app.get("/api/search")
-def search(q: str, page: int = 0) -> dict:
+def search(request: Request, q: str, page: int = 0) -> dict:
     q = q.strip()
     if not q:
         raise HTTPException(status_code=400, detail="Empty search query")
     if page < 0:
         raise HTTPException(status_code=400, detail="Bad page number")
+    limits.enforce("search", request)
     try:
         results, has_more = search_any(q, page)
     except ProviderError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    # Only the first page counts as "a search" — infinite scroll would
+    # otherwise report one curious visitor as five.
+    if page == 0:
+        analytics.record(
+            "search",
+            surface=limits.surface(request),
+            visitor=limits.visitor(request),
+            detail="hit" if results else "empty",
+            label=" ".join(q.lower().split()),
+            value=len(results),
+        )
     return {
         "results": [asdict(r) | {"dedup_key": dedup_key(r)} for r in results],
         "page": page,
@@ -215,13 +247,22 @@ def search(q: str, page: int = 0) -> dict:
 
 
 @app.get("/api/artist/{artist_id}")
-def artist(artist_id: str) -> dict:
+def artist(request: Request, artist_id: str) -> dict:
     if not artist_id.isdigit():
         raise HTTPException(status_code=400, detail="Bad artist id")
+    # One Deezer fetch, same cost profile as opening a link.
+    limits.enforce("resolve", request)
     try:
         data = deezer.artist(artist_id)
     except ProviderError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    analytics.record(
+        "artist_view",
+        surface=limits.surface(request),
+        visitor=limits.visitor(request),
+        source="deezer",
+        label=data.get("name"),
+    )
     # Same shape as /api/search results, dedup_key included, so the client
     # can render an artist's tracks and albums with the same components.
     for key in ("top_tracks", "albums"):
@@ -230,21 +271,46 @@ def artist(artist_id: str) -> dict:
 
 
 @app.post("/api/resolve")
-def resolve(body: ResolveRequest) -> dict:
+def resolve(body: ResolveRequest, request: Request) -> dict:
+    limits.enforce("resolve", request)
     try:
         collection = resolve_any(body.url)
     except ProviderError as exc:
+        analytics.record(
+            "resolve_error",
+            surface=limits.surface(request),
+            visitor=limits.visitor(request),
+            source=provider_of(body.url),
+        )
         raise HTTPException(status_code=400, detail=str(exc))
+    analytics.record(
+        "resolve",
+        surface=limits.surface(request),
+        visitor=limits.visitor(request),
+        source=provider_of(body.url),
+        detail=collection.kind,
+        label=collection.name,
+        value=len(collection.tracks),
+    )
     return asdict(collection)
 
 
 @app.post("/api/download")
-def download(body: DownloadRequest) -> dict:
+def download(body: DownloadRequest, request: Request) -> dict:
     if body.quality not in downloader.QUALITIES:
         raise HTTPException(
             status_code=400,
             detail=f"Quality must be one of: {', '.join(downloader.QUALITIES)}",
         )
+    client = limits.enforce("download", request)
+    # Before resolving: a caller at their limit shouldn't get a provider fetch
+    # out of the request that turns them away.
+    if jobs.active_count(client) >= limits.MAX_ACTIVE_JOBS:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many downloads at once — wait for one to finish.",
+        )
+
     try:
         collection = resolve_any(body.url)
     except ProviderError as exc:
@@ -256,9 +322,44 @@ def download(body: DownloadRequest) -> dict:
         tracks = [t for t in tracks if t.id in wanted]
     if not tracks:
         raise HTTPException(status_code=400, detail="No tracks to download")
+    if len(tracks) > limits.MAX_TRACKS_PER_JOB:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many tracks — {limits.MAX_TRACKS_PER_JOB} at a time at most.",
+        )
 
-    job = jobs.start(collection.name, tracks, body.quality)
+    surface = limits.surface(request)
+    visitor = limits.visitor(request)
+    job = jobs.start(
+        collection.name,
+        tracks,
+        body.quality,
+        owner=client,
+        visitor=visitor,
+        surface=surface,
+    )
+    analytics.record(
+        "download_start",
+        surface=surface,
+        visitor=visitor,
+        source=provider_of(body.url),
+        detail=body.quality,
+        label=collection.name,
+        value=len(tracks),
+    )
     return {"job_id": job.id}
+
+
+@app.get("/api/jobs")
+def job_statuses(ids: str) -> dict:
+    """Poll several jobs at once: ?ids=a,b,c
+
+    Unknown ids are omitted rather than raising, so a client restoring a job
+    list from a previous session learns which the server has already swept
+    without failing the whole poll.
+    """
+    wanted = [i for i in (part.strip() for part in ids.split(",")) if i][:50]
+    return {"jobs": [job.as_dict() for i in wanted if (job := jobs.get(i))]}
 
 
 @app.get("/api/jobs/{job_id}")
@@ -270,13 +371,23 @@ def job_status(job_id: str) -> dict:
 
 
 @app.get("/api/jobs/{job_id}/tracks/{track_id}/file")
-def track_file(job_id: str, track_id: str) -> FileResponse:
+def track_file(job_id: str, track_id: str, request: Request) -> FileResponse:
+    limits.enforce("file", request)
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Unknown job")
     state = job.tracks.get(track_id)
     if not state or state.status != "done" or not state.file_path:
         raise HTTPException(status_code=404, detail="Track not ready")
+    # The file leaving the server is the closest thing to "a download" in
+    # the sense a user means it — everything before this is just a queue.
+    analytics.record(
+        "file_save",
+        surface=limits.surface(request),
+        visitor=limits.visitor(request),
+        detail=job.quality,
+        label=f"{', '.join(state.track.artists)} - {state.track.title}",
+    )
     return FileResponse(
         state.file_path,
         media_type=_MEDIA_TYPES.get(
@@ -286,8 +397,65 @@ def track_file(job_id: str, track_id: str) -> FileResponse:
     )
 
 
+class _ZipSink(io.RawIOBase):
+    """Holds what ZipFile writes until the generator can yield it away.
+
+    ZipFile insists on a file object; the response wants an iterator. This
+    is the seam. Unseekable on purpose — that makes ZipFile emit each entry
+    with a data descriptor instead of rewinding to patch its header, which
+    is what allows the archive to be produced in one forward pass.
+    """
+
+    def __init__(self) -> None:
+        self._chunks: list[bytes] = []
+
+    def writable(self) -> bool:
+        return True
+
+    def write(self, data) -> int:  # noqa: ANN001 — memoryview or bytes
+        self._chunks.append(bytes(data))
+        return len(data)
+
+    def drain(self) -> bytes:
+        out = b"".join(self._chunks)
+        self._chunks.clear()
+        return out
+
+
+# One track's worth of bytes in flight at a time, not one album's.
+_ZIP_CHUNK_BYTES = 256 * 1024
+
+
+def _zip_chunks(files: list[Path]) -> Iterator[bytes]:
+    """Yield a ZIP of `files` as it is built.
+
+    Buffering the whole archive was a memory bomb: a 100-track album at 320
+    kbps is a few hundred MB, doubled while the response was assembled, with
+    nothing capping how many people asked at once. Stored (not deflated), so
+    a file's bytes pass through once and peak memory is one chunk.
+    """
+    sink = _ZipSink()
+    with zipfile.ZipFile(sink, "w", zipfile.ZIP_STORED) as zf:
+        for path in files:
+            try:
+                source = path.open("rb")
+            except OSError:
+                continue  # swept mid-download; the rest of the album is fine
+            with source, zf.open(path.name, "w") as entry:
+                while chunk := source.read(_ZIP_CHUNK_BYTES):
+                    entry.write(chunk)
+                    if data := sink.drain():
+                        yield data
+            if data := sink.drain():
+                yield data
+    # The central directory, written when ZipFile closed.
+    if data := sink.drain():
+        yield data
+
+
 @app.get("/api/jobs/{job_id}/zip")
-def job_zip(job_id: str) -> Response:
+def job_zip(job_id: str, request: Request) -> Response:
+    limits.enforce("zip", request)
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Unknown job")
@@ -299,10 +467,15 @@ def job_zip(job_id: str) -> Response:
     if not files:
         raise HTTPException(status_code=404, detail="No completed tracks yet")
 
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_STORED) as zf:
-        for path in files:
-            zf.write(path, arcname=path.name)
+    analytics.record(
+        "zip_download",
+        surface=limits.surface(request),
+        visitor=limits.visitor(request),
+        detail=job.quality,
+        label=job.name,
+        value=len(files),
+    )
+
     # HTTP headers are latin-1 only; non-ASCII names (e.g. "PERSIĀDELICĀ")
     # need the RFC 5987 filename* form with an ASCII fallback.
     name = (job.name or "unstream").replace('"', "").replace("\\", "")
@@ -311,8 +484,96 @@ def job_zip(job_id: str) -> Response:
         f'attachment; filename="{ascii_name}.zip"; '
         f"filename*=UTF-8''{quote(name)}.zip"
     )
-    return Response(
-        content=buffer.getvalue(),
+    return StreamingResponse(
+        _zip_chunks(files),
         media_type="application/zip",
         headers={"Content-Disposition": disposition},
     )
+
+
+# --------------------------------------------------------------------------
+# Analytics: one beacon in, a token-gated dashboard out.
+
+
+class CollectRequest(BaseModel):
+    """What the browser is allowed to tell us. Everything else is ignored."""
+
+    name: str
+    path: str | None = None
+    referrer: str | None = None
+    device: str | None = None
+    standalone: bool = False  # running as an installed PWA
+    detail: str | None = None
+
+
+# The server records everything it can see by itself; these are the few
+# things only the browser knows.
+_CLIENT_EVENTS = {"page_view", "share", "pwa_install", "install_prompt"}
+_DEVICES = {"mobile", "tablet", "desktop"}
+
+
+def _referrer_host(referrer: str | None, request: Request) -> str | None:
+    """Host that sent the visitor, or None for direct and self-referrals."""
+    if not referrer:
+        return "direct"
+    try:
+        host = urlparse(referrer).hostname
+    except ValueError:
+        return None
+    if not host or host == request.url.hostname:
+        return None  # in-app navigation, not an arrival
+    return host[:80]
+
+
+@app.post("/api/collect", status_code=204)
+def collect(body: CollectRequest, request: Request) -> Response:
+    """Page views and other browser-only events, from `sendBeacon`.
+
+    Deliberately forgiving: an unknown event name is dropped rather than
+    answered with an error, because nothing on the page waits for this
+    response and a beacon must never turn into a visible failure.
+    """
+    limits.enforce("collect", request)
+    if body.name in _CLIENT_EVENTS:
+        analytics.record(
+            body.name,
+            surface="pwa" if body.standalone else limits.surface(request),
+            visitor=limits.visitor(request),
+            source=_referrer_host(body.referrer, request) if body.name == "page_view" else None,
+            detail=body.device if body.device in _DEVICES else body.detail,
+            # Query strings can carry a search term; the search event already
+            # records those properly, so keep paths to the path.
+            label=(body.path or "/").split("?")[0][:120],
+        )
+    return Response(status_code=204)
+
+
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
+
+
+def require_admin(request: Request) -> None:
+    """Bearer-token gate. Unset token means the dashboard does not exist."""
+    if not ADMIN_TOKEN:
+        raise HTTPException(
+            status_code=503, detail="Admin dashboard is off — set ADMIN_TOKEN to enable it."
+        )
+    header = request.headers.get("authorization", "")
+    token = header[7:] if header[:7].lower() == "bearer " else ""
+    if not hmac.compare_digest(token, ADMIN_TOKEN):
+        # Charged only on failure, so normal polling is never throttled.
+        limits.enforce("admin", request)
+        raise HTTPException(status_code=401, detail="Bad admin token")
+
+
+@app.get("/api/admin/stats")
+def admin_stats(request: Request, days: int = 30) -> dict:
+    require_admin(request)
+    days = max(1, min(days, analytics.RETENTION_DAYS))
+    return analytics.stats(days) | {"live": jobs.live_counts()}
+
+
+@app.get("/api/admin/events")
+def admin_events(request: Request, limit: int = 200) -> dict:
+    """Raw event feed — for confirming the wiring works, not for reading."""
+    require_admin(request)
+    return {"events": analytics.recent(limit)}

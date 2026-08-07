@@ -1,18 +1,39 @@
-import { StrictMode } from 'react'
+import { StrictMode, Suspense, lazy } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import './index.css'
 import App from './App.tsx'
+import { trackPageView, watchInstall } from './lib/analytics.ts'
 
 const queryClient = new QueryClient()
+
+// The stats dashboard is the app's only other page, and it belongs to the
+// owner rather than to visitors — so it gets a path check instead of a
+// router dependency, and `lazy` keeps its code in a chunk that nobody
+// arriving for music ever downloads.
+const isAdmin = window.location.pathname.startsWith('/admin')
+const Admin = lazy(() => import('./admin/Admin.tsx'))
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <App />
+      {isAdmin ? (
+        <Suspense fallback={null}>
+          <Admin />
+        </Suspense>
+      ) : (
+        <App />
+      )}
     </QueryClientProvider>
   </StrictMode>,
 )
+
+// Counting the owner checking their own numbers would be a way to lie to
+// yourself, so the dashboard is left out.
+if (!isAdmin) {
+  trackPageView()
+  watchInstall()
+}
 
 // PWA: register the service worker (production only — in dev it would get
 // in the way of HMR) and listen for release updates.
