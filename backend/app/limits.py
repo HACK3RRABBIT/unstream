@@ -24,6 +24,13 @@ SEARCH_PER_MINUTE = int(os.getenv("RATE_SEARCH_PER_MINUTE", "15"))
 RESOLVE_PER_MINUTE = int(os.getenv("RATE_RESOLVE_PER_MINUTE", "30"))
 DOWNLOADS_PER_HOUR = int(os.getenv("RATE_DOWNLOADS_PER_HOUR", "20"))
 
+# Serving a finished file costs no CPU but all of the bandwidth, and a job id
+# is the only thing needed to ask for one. Generous enough that tapping save
+# on every row of a long album never trips it, tight enough that a loop does.
+FILES_PER_MINUTE = int(os.getenv("RATE_FILES_PER_MINUTE", "60"))
+# A ZIP is the whole album in one request, so it is priced per hour instead.
+ZIPS_PER_HOUR = int(os.getenv("RATE_ZIPS_PER_HOUR", "30"))
+
 # The 100-track cap is the Telegram bot's, unchanged (docs/telegram-bot-spec.md).
 # Its *one active job per user* doesn't port over: the web UI puts a download
 # button on every row, so a strict 1 would 429 the second song someone taps.
@@ -73,10 +80,9 @@ def visitor(request: Request) -> str:
 class RateLimiter:
     """Sliding-window counter: at most `limit` hits per `window` seconds."""
 
-    def __init__(self, limit: int, window_seconds: float, name: str) -> None:
+    def __init__(self, limit: int, window_seconds: float) -> None:
         self.limit = limit
         self.window = window_seconds
-        self.name = name
         self._hits: dict[str, deque[float]] = defaultdict(deque)
         self._lock = threading.Lock()
 
@@ -100,20 +106,24 @@ class RateLimiter:
             del self._hits[key]
 
 
-_SEARCH = RateLimiter(SEARCH_PER_MINUTE, 60, "search")
-_RESOLVE = RateLimiter(RESOLVE_PER_MINUTE, 60, "resolve")
-_DOWNLOAD = RateLimiter(DOWNLOADS_PER_HOUR, 3600, "download")
+_SEARCH = RateLimiter(SEARCH_PER_MINUTE, 60)
+_RESOLVE = RateLimiter(RESOLVE_PER_MINUTE, 60)
+_DOWNLOAD = RateLimiter(DOWNLOADS_PER_HOUR, 3600)
+_FILE = RateLimiter(FILES_PER_MINUTE, 60)
+_ZIP = RateLimiter(ZIPS_PER_HOUR, 3600)
 # Analytics beacons: a real browser sends a handful per session, so this is
 # only here to stop someone inflating the numbers with a loop.
-_COLLECT = RateLimiter(int(os.getenv("RATE_COLLECT_PER_MINUTE", "30")), 60, "collect")
+_COLLECT = RateLimiter(int(os.getenv("RATE_COLLECT_PER_MINUTE", "30")), 60)
 # Charged on *failed* admin auth only, so a wrong token a few times is fine
 # but guessing at the token is not.
-_ADMIN = RateLimiter(10, 900, "admin")
+_ADMIN = RateLimiter(10, 900)
 
 _LIMITERS = {
     "search": _SEARCH,
     "resolve": _RESOLVE,
     "download": _DOWNLOAD,
+    "file": _FILE,
+    "zip": _ZIP,
     "collect": _COLLECT,
     "admin": _ADMIN,
 }
@@ -122,13 +132,15 @@ _MESSAGES = {
     "search": "Too many searches — wait {retry}s and try again.",
     "resolve": "Too many links opened — wait {retry}s and try again.",
     "download": "Too many downloads started — wait {retry}s and try again.",
+    "file": "Too many files saved — wait {retry}s and try again.",
+    "zip": "Too many ZIPs — wait {retry}s and try again.",
     "collect": "Too many events — wait {retry}s and try again.",
     "admin": "Too many bad tokens — wait {retry}s and try again.",
 }
 
 # The point of a `rate_limited` event is seeing real people bump into a
 # limit. Beacon spam and token guessing would only flood the table.
-_TRACKED = {"search", "resolve", "download"}
+_TRACKED = {"search", "resolve", "download", "file", "zip"}
 
 
 def enforce(kind: str, request: Request) -> str:

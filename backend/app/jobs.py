@@ -7,7 +7,8 @@ GET /api/jobs/{id} for per-track progress.
 A background sweeper keeps the downloads folder from growing forever:
 job directories older than DOWNLOADS_TTL_HOURS (default 24) are deleted
 once their job has finished, and orphan directories from previous runs
-are cleaned the same way.
+are cleaned the same way. Whatever outlives that pass is then held under
+MAX_DOWNLOADS_GB by evicting the oldest jobs first.
 """
 
 import os
@@ -25,7 +26,17 @@ from .models import Track
 DOWNLOADS_DIR = Path(__file__).resolve().parent.parent / "downloads"
 
 DOWNLOADS_TTL_HOURS = float(os.getenv("DOWNLOADS_TTL_HOURS", "24"))
-_SWEEP_INTERVAL_SECONDS = 3600
+
+# The TTL alone is not a disk limit. Three workers can land on the order of
+# 500 tracks an hour, and nothing is deleted for a day — enough to fill a
+# small VPS long before the first job expires. This is the actual ceiling:
+# over it, the sweeper evicts finished jobs oldest-first until it is back
+# under, so the volume trades history for staying writable.
+DOWNLOADS_MAX_BYTES = int(float(os.getenv("MAX_DOWNLOADS_GB", "20")) * 1024**3)
+
+# Ten minutes, not an hour: a budget checked hourly can be exceeded for an
+# hour. The sweep is a stat() per file, so running it often is cheap.
+_SWEEP_INTERVAL_SECONDS = 600
 
 # Be polite to YouTube: a few tracks at a time, not the whole playlist.
 _executor = ThreadPoolExecutor(max_workers=3)
@@ -227,34 +238,71 @@ def start(
     return job
 
 
-def _sweep(ttl_hours: float = DOWNLOADS_TTL_HOURS) -> int:
-    """Delete expired job directories; returns how many were removed."""
+def _measure(path: Path) -> tuple[float, int] | None:
+    """(mtime of the newest file, total bytes) for one job directory."""
+    try:
+        newest, total = path.stat().st_mtime, 0
+        for child in path.iterdir():
+            stat = child.stat()
+            newest = max(newest, stat.st_mtime)
+            total += stat.st_size
+    except OSError:
+        return None  # vanished under us, or unreadable — leave it alone
+    return newest, total
+
+
+def _evict(path: Path) -> None:
+    shutil.rmtree(path, ignore_errors=True)
+    _jobs.pop(path.name, None)
+
+
+def _sweep(
+    ttl_hours: float = DOWNLOADS_TTL_HOURS, max_bytes: int = DOWNLOADS_MAX_BYTES
+) -> int:
+    """Delete expired job directories, then any excess over the disk budget.
+
+    Returns how many were removed. A running job is never touched, so a
+    volume held over budget entirely by jobs in flight stays over — the
+    concurrency and per-client caps are what bound that case.
+    """
     if not DOWNLOADS_DIR.exists():
         return 0
     cutoff = time.time() - ttl_hours * 3600
     removed = 0
+    # (newest mtime, bytes, path) for everything that survived the TTL pass.
+    survivors: list[tuple[float, int, Path]] = []
+
     for path in DOWNLOADS_DIR.iterdir():
         if not path.is_dir():
             continue
         job = _jobs.get(path.name)
         if job and not job.finished:
             continue  # never pull files out from under a running job
-        try:
-            newest = max(
-                (p.stat().st_mtime for p in path.iterdir()),
-                default=path.stat().st_mtime,
-            )
-        except OSError:
+        measured = _measure(path)
+        if measured is None:
             continue
+        newest, size = measured
         if newest < cutoff:
-            shutil.rmtree(path, ignore_errors=True)
-            _jobs.pop(path.name, None)
+            _evict(path)
             removed += 1
+        else:
+            survivors.append((newest, size, path))
+
+    # Oldest first, so what goes is what someone is least likely to still want.
+    total = sum(size for _, size, _ in survivors)
+    survivors.sort()
+    for _, size, path in survivors:
+        if total <= max_bytes:
+            break
+        _evict(path)
+        total -= size
+        removed += 1
     return removed
 
 
 def start_sweeper() -> None:
-    """Hourly cleanup thread; also sweeps leftovers from previous runs."""
+    """Cleanup thread on _SWEEP_INTERVAL_SECONDS; also sweeps leftovers from
+    previous runs."""
 
     def loop() -> None:
         while True:

@@ -8,15 +8,17 @@ import io
 import os
 import re
 import zipfile
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, wait
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from difflib import SequenceMatcher
+from pathlib import Path
 from urllib.parse import quote, urlparse
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 from . import analytics, deezer, downloader, embed, itunes, jobs, limits, soundcloud, ytdlp
@@ -370,6 +372,7 @@ def job_status(job_id: str) -> dict:
 
 @app.get("/api/jobs/{job_id}/tracks/{track_id}/file")
 def track_file(job_id: str, track_id: str, request: Request) -> FileResponse:
+    limits.enforce("file", request)
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Unknown job")
@@ -394,8 +397,65 @@ def track_file(job_id: str, track_id: str, request: Request) -> FileResponse:
     )
 
 
+class _ZipSink(io.RawIOBase):
+    """Holds what ZipFile writes until the generator can yield it away.
+
+    ZipFile insists on a file object; the response wants an iterator. This
+    is the seam. Unseekable on purpose — that makes ZipFile emit each entry
+    with a data descriptor instead of rewinding to patch its header, which
+    is what allows the archive to be produced in one forward pass.
+    """
+
+    def __init__(self) -> None:
+        self._chunks: list[bytes] = []
+
+    def writable(self) -> bool:
+        return True
+
+    def write(self, data) -> int:  # noqa: ANN001 — memoryview or bytes
+        self._chunks.append(bytes(data))
+        return len(data)
+
+    def drain(self) -> bytes:
+        out = b"".join(self._chunks)
+        self._chunks.clear()
+        return out
+
+
+# One track's worth of bytes in flight at a time, not one album's.
+_ZIP_CHUNK_BYTES = 256 * 1024
+
+
+def _zip_chunks(files: list[Path]) -> Iterator[bytes]:
+    """Yield a ZIP of `files` as it is built.
+
+    Buffering the whole archive was a memory bomb: a 100-track album at 320
+    kbps is a few hundred MB, doubled while the response was assembled, with
+    nothing capping how many people asked at once. Stored (not deflated), so
+    a file's bytes pass through once and peak memory is one chunk.
+    """
+    sink = _ZipSink()
+    with zipfile.ZipFile(sink, "w", zipfile.ZIP_STORED) as zf:
+        for path in files:
+            try:
+                source = path.open("rb")
+            except OSError:
+                continue  # swept mid-download; the rest of the album is fine
+            with source, zf.open(path.name, "w") as entry:
+                while chunk := source.read(_ZIP_CHUNK_BYTES):
+                    entry.write(chunk)
+                    if data := sink.drain():
+                        yield data
+            if data := sink.drain():
+                yield data
+    # The central directory, written when ZipFile closed.
+    if data := sink.drain():
+        yield data
+
+
 @app.get("/api/jobs/{job_id}/zip")
 def job_zip(job_id: str, request: Request) -> Response:
+    limits.enforce("zip", request)
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Unknown job")
@@ -416,10 +476,6 @@ def job_zip(job_id: str, request: Request) -> Response:
         value=len(files),
     )
 
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_STORED) as zf:
-        for path in files:
-            zf.write(path, arcname=path.name)
     # HTTP headers are latin-1 only; non-ASCII names (e.g. "PERSIĀDELICĀ")
     # need the RFC 5987 filename* form with an ASCII fallback.
     name = (job.name or "unstream").replace('"', "").replace("\\", "")
@@ -428,8 +484,8 @@ def job_zip(job_id: str, request: Request) -> Response:
         f'attachment; filename="{ascii_name}.zip"; '
         f"filename*=UTF-8''{quote(name)}.zip"
     )
-    return Response(
-        content=buffer.getvalue(),
+    return StreamingResponse(
+        _zip_chunks(files),
         media_type="application/zip",
         headers={"Content-Disposition": disposition},
     )

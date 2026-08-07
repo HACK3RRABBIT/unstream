@@ -10,13 +10,35 @@ Tracks resolved here carry `source_url`, so the downloader grabs that exact
 page instead of running a YouTube search for a match.
 """
 
+import os
 import re
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError as YtdlpError
 
 from .models import Collection, ProviderError, SearchResult, Track
+
+# YouTube bot-checks datacenter IPs ("Sign in to confirm you're not a bot")
+# long before it bothers a home connection, which is why downloads can work
+# locally and fail on a VPS. Pointing this at a cookies.txt exported from a
+# signed-in browser is the documented fix, so it lives in the environment: a
+# server that starts failing needs a mounted file and a restart, not a
+# release. A path that isn't there is ignored rather than passed on — a stale
+# variable would otherwise fail every extraction the process ever makes.
+COOKIEFILE = os.getenv("YTDLP_COOKIEFILE", "")
+if COOKIEFILE and not Path(COOKIEFILE).is_file():
+    COOKIEFILE = ""
+
+
+def base_opts(**extra) -> dict:
+    """Options every yt-dlp call in the project shares."""
+    opts = {"quiet": True, "no_warnings": True, **extra}
+    if COOKIEFILE:
+        opts["cookiefile"] = COOKIEFILE
+    return opts
+
 
 _YOUTUBE_RE = re.compile(
     r"(?:music\.|www\.|m\.)?(?:youtube\.com/(?:watch\?|playlist\?)|youtu\.be/)"
@@ -48,14 +70,12 @@ def is_supported_url(url: str) -> bool:
 
 
 def _extract(url_or_query: str, *, flat: bool = True) -> dict:
-    opts = {
-        "quiet": True,
-        "no_warnings": True,
-        "extract_flat": "in_playlist" if flat else False,
-        "skip_download": True,
-        "retries": 2,
-        "socket_timeout": 15,
-    }
+    opts = base_opts(
+        extract_flat="in_playlist" if flat else False,
+        skip_download=True,
+        retries=2,
+        socket_timeout=15,
+    )
     try:
         with YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url_or_query, download=False)

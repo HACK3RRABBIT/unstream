@@ -33,6 +33,7 @@ from mutagen.mp4 import MP4, MP4Cover
 from yt_dlp import YoutubeDL
 
 from .models import Track
+from .ytdlp import base_opts
 
 # A candidate must be within this many seconds of the catalog duration.
 MAX_DURATION_DRIFT = 20
@@ -114,14 +115,12 @@ def search_source(
     a retry then picks the next-best candidate instead of hitting the same
     broken upload again. `prefix` selects the site: ytsearchN / scsearchN.
     """
-    opts = {
-        "quiet": True,
-        "no_warnings": True,
-        "extract_flat": True,  # metadata only, don't resolve each video
-        "noplaylist": True,
-        "retries": 3,
-        "socket_timeout": 15,
-    }
+    opts = base_opts(
+        extract_flat=True,  # metadata only, don't resolve each video
+        noplaylist=True,
+        retries=3,
+        socket_timeout=15,
+    )
     with YoutubeDL(opts) as ydl:
         info = ydl.extract_info(f"{prefix}:{track.query}", download=False)
     entries = [e for e in (info.get("entries") or []) if e]
@@ -198,19 +197,17 @@ def download_audio(
             if total:
                 on_progress(status.get("downloaded_bytes", 0) / total)
 
-    opts = {
-        "quiet": True,
-        "no_warnings": True,
-        "format": "bestaudio/best",
-        "outtmpl": str(dest) + ".%(ext)s",
-        "noplaylist": True,
-        "retries": 5,
-        "fragment_retries": 5,
-        "socket_timeout": 15,
-        "nopart": False,
-        "overwrites": True,
-        "progress_hooks": [hook],
-    }
+    opts = base_opts(
+        format="bestaudio/best",
+        outtmpl=str(dest) + ".%(ext)s",
+        noplaylist=True,
+        retries=5,
+        fragment_retries=5,
+        socket_timeout=15,
+        nopart=False,
+        overwrites=True,
+        progress_hooks=[hook],
+    )
     if quality != ORIGINAL:
         opts["postprocessors"] = [
             {
