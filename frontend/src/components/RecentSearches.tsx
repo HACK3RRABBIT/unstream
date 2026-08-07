@@ -26,14 +26,19 @@ export function RecentSearches({ items, onPick, onClear }: Props) {
           <X className="size-3.5" />
         </button>
       </div>
-      <ul className="mt-2.5 flex flex-wrap gap-2">
+      {/* One scrolling row on a phone, wrapped rows from `sm` up. Six chips
+          that wrap on a 390px screen are five stacked rows pushing the form
+          and everything under it down the page; sideways, they cost one.
+          The scrollbar is hidden — the chips clipping at the edge is the
+          affordance, and a visible bar under two of them reads as chrome. */}
+      <ul className="mt-2.5 flex snap-x snap-mandatory gap-2 overflow-x-auto pb-1 [scrollbar-width:none] sm:flex-wrap sm:overflow-visible sm:pb-0 [&::-webkit-scrollbar]:hidden">
         {items.map((item) => (
-          <li key={item.input}>
+          <li key={item.input} className="shrink-0 snap-start sm:shrink">
             <button
               onClick={() => onPick(item.input)}
               dir="auto"
               title={item.input}
-              className="flex max-w-[15rem] items-center gap-1.5 rounded-btn border border-ink-700 bg-ink-900 px-3 py-2 text-mini text-ink-300 transition duration-200 hover:border-ink-600 hover:text-ink-100 active:scale-[0.98]"
+              className="tap-target flex max-w-[68vw] items-center gap-1.5 rounded-btn border border-ink-700 bg-ink-900 px-3 py-2 text-mini text-ink-300 transition duration-200 hover:border-ink-600 hover:text-ink-100 active:scale-[0.98] sm:max-w-[15rem]"
             >
               {item.isLink ? (
                 <Link2 className="size-3.5 shrink-0 text-ink-600" />

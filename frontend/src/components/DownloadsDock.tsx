@@ -22,6 +22,11 @@ const STAGE_LABEL: Record<string, string> = {
   retrying: 'تلاش دوباره…',
 }
 
+/** Working, but with no percentage to report — these get a travelling band
+ *  instead of a width. Only `downloading` knows how far along it is. */
+const INDETERMINATE = new Set(['searching', 'tagging', 'retrying'])
+const isActive = (status: string) => status === 'downloading' || INDETERMINATE.has(status)
+
 /** How far the unsettled tracks have got, as a track count. Counting settled
  *  tracks alone pinned a single-track job at 0% for the whole download and
  *  then jumped it to 100%. Tagging counts whole — the file is already down,
@@ -39,18 +44,23 @@ function formatEta(seconds: number): string {
   return `${minutes} دقیقه`
 }
 
-function TrackLine({ entry, state }: { entry: DownloadEntry; state: JobTrack }) {
+function TrackLine({
+  entry,
+  state,
+  showBar = true,
+}: {
+  entry: DownloadEntry
+  state: JobTrack
+  /** False when the card above is already drawing this track's progress. */
+  showBar?: boolean
+}) {
   const track = entry.tracks.find((t) => t.id === state.id)
   const title = track ? track.title : state.id
   const available = state.status === 'done' && !entry.expired
   // "original" can land as m4a or opus depending on the upload, so the file
   // itself is the only honest source for this label.
   const ext = state.ext ?? 'mp3'
-  const active =
-    state.status === 'downloading' ||
-    state.status === 'searching' ||
-    state.status === 'tagging' ||
-    state.status === 'retrying'
+  const active = isActive(state.status)
 
   return (
     <li className="relative flex items-center gap-2.5 px-4 py-1.5">
@@ -113,7 +123,7 @@ function TrackLine({ entry, state }: { entry: DownloadEntry; state: JobTrack }) 
 
       {/* The hairline TrackRow draws under a downloading row. A percentage in
           text with nothing moving beside it reads as stalled. */}
-      {active && !entry.expired && (
+      {showBar && active && !entry.expired && (
         <span className="absolute inset-x-0 bottom-0 h-px overflow-hidden bg-ink-800">
           {state.status === 'downloading' ? (
             <span
@@ -130,7 +140,7 @@ function TrackLine({ entry, state }: { entry: DownloadEntry; state: JobTrack }) 
   )
 }
 
-function JobCard({ entry }: { entry: DownloadEntry }) {
+function JobCard({ entry, capped = true }: { entry: DownloadEntry; capped?: boolean }) {
   const { dismiss } = useDownloads()
   const job = entry.job
   const done = job?.done ?? 0
@@ -142,6 +152,13 @@ function JobCard({ entry }: { entry: DownloadEntry }) {
   const fraction = total ? Math.min(1, (done + failed + inFlight) / total) : 0
   // ZIP is for batches — a single song is just the mp3 link on its row.
   const showZip = total > 1 && done > 0 && !expired
+
+  // With one track, this bar and the row's own hairline are the same number
+  // drawn twice. The card keeps it — it is the wider of the two and the one
+  // the FAB ring mirrors — which means it also inherits the stages that have
+  // no percentage, and the row below goes bare.
+  const only = total === 1 ? job?.tracks[0] : undefined
+  const sweeping = !!only && !expired && INDETERMINATE.has(only.status)
 
   return (
     <div className="border-b border-ink-800 last:border-b-0">
@@ -210,17 +227,26 @@ function JobCard({ entry }: { entry: DownloadEntry }) {
         )}
       </div>
       <div className="mx-4 h-0.5 overflow-hidden rounded-full bg-ink-800">
-        <div
-          className={clsx(
-            'h-full rounded-full transition-[width] duration-500 ease-out',
-            failed > 0 && done === 0 ? 'bg-danger' : 'bg-lime-flash',
-          )}
-          style={{ width: `${fraction * 100}%` }}
-        />
+        {sweeping ? (
+          <div className="h-full w-1/4 animate-sweep rounded-full bg-lime-flash/70" />
+        ) : (
+          <div
+            className={clsx(
+              'h-full rounded-full transition-[width] duration-500 ease-out',
+              failed > 0 && done === 0 ? 'bg-danger' : 'bg-lime-flash',
+            )}
+            style={{ width: `${fraction * 100}%` }}
+          />
+        )}
       </div>
-      <ul className="max-h-44 overflow-y-auto py-1.5">
+      {/* Capped only when it has neighbours: several jobs each need to keep
+          their header reachable, so each gets a slice and scrolls inside it.
+          A lone job instead grows to whatever the panel gives it and lets the
+          panel do the scrolling — capped, it clipped its own list mid-row
+          while the sheet below it sat empty. */}
+      <ul className={clsx('py-1.5', capped && 'max-h-44 overflow-y-auto')}>
         {(job?.tracks ?? []).map((state) => (
-          <TrackLine key={state.id} entry={entry} state={state} />
+          <TrackLine key={state.id} entry={entry} state={state} showBar={total > 1} />
         ))}
         {!job && (
           <li className="flex items-center gap-2.5 px-4 py-1.5 text-mini text-ink-400">
@@ -327,7 +353,12 @@ function DownloadsSheet({
         aria-label="دانلودها"
         style={{ transform: drag ? `translateY(${drag}px)` : undefined }}
         className={clsx(
-          'fixed inset-x-0 bottom-0 z-50 flex max-h-[85svh] flex-col overflow-hidden',
+          // A resting height, not a hug. Sized to its contents, one job made
+          // the sheet a strip barely taller than the row in it — a notification
+          // rather than a panel, with the grab handle somewhere new each time.
+          // Proportional rather than a rem floor, so landscape can't push it
+          // past the ceiling (min-height wins over max-height when they clash).
+          'fixed inset-x-0 bottom-0 z-50 flex h-[60svh] max-h-[85svh] flex-col overflow-hidden',
           'rounded-t-panel border-t border-ink-700 bg-ink-900 shadow-2xl shadow-black/60',
           // Padding, not margin: the list scrolls to the bottom edge and its
           // last row must clear the home indicator.
@@ -356,7 +387,7 @@ function DownloadsSheet({
             </button>
           </div>
         </header>
-        <div className="overflow-y-auto overscroll-contain">{children}</div>
+        <div className="flex-1 overflow-y-auto overscroll-contain">{children}</div>
       </section>
     </>
   )
@@ -397,7 +428,9 @@ export function DownloadsDock() {
   )
   const fraction = totals.total ? Math.min(1, totals.settled / totals.total) : 0
   const summary = activeCount > 0 ? `${activeCount} در جریان` : `${entries.length} تمام‌شده`
-  const cards = [...entries].reverse().map((entry) => <JobCard key={entry.jobId} entry={entry} />)
+  const cards = [...entries]
+    .reverse()
+    .map((entry) => <JobCard key={entry.jobId} entry={entry} capped={entries.length > 1} />)
 
   return (
     <div className="fixed end-5 bottom-[calc(1.25rem+var(--safe-bottom))] z-50 flex flex-col items-end gap-3">

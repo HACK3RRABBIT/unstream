@@ -554,40 +554,42 @@ function Shell() {
         )}
       </main>
 
-      <footer
-        dir="ltr"
-        className="mx-auto flex w-full max-w-3xl flex-wrap items-center justify-center gap-x-1.5 gap-y-2 px-5 pb-[calc(2.5rem+var(--safe-bottom))] text-sm text-ink-400"
-      >
-        <span>Built by</span>
-        <a
-          href="https://x.com/_amiralibgi"
-          target="_blank"
-          rel="noreferrer"
-          className="flex items-center gap-1.5 font-medium text-ink-300 underline decoration-ink-600 underline-offset-2 transition hover:text-lime-flash hover:decoration-lime-flash/60"
+      <footer className="mx-auto w-full max-w-3xl px-5 pb-[calc(2.5rem+var(--safe-bottom))]">
+        <div
+          dir="ltr"
+          className="mt-5 flex flex-wrap items-center justify-center gap-x-1.5 gap-y-2 text-sm text-ink-400"
         >
-          <img
-            src="/amirali.jpg"
-            alt=""
-            loading="lazy"
-            className="size-5 rounded-full object-cover"
-          />
-          amiralibgi
-        </a>
-        <span>and</span>
-        <a
-          href="https://x.com/yazdanctx"
-          target="_blank"
-          rel="noreferrer"
-          className="flex items-center gap-1.5 font-medium text-ink-300 underline decoration-ink-600 underline-offset-2 transition hover:text-lime-flash hover:decoration-lime-flash/60"
-        >
-          <img
-            src="/yazdan.jpg"
-            alt=""
-            loading="lazy"
-            className="size-5 rounded-full object-cover"
-          />
-          yazdanctx
-        </a>
+          <span>Built by</span>
+          <a
+            href="https://x.com/_amiralibgi"
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center gap-1.5 font-medium text-ink-300 underline decoration-ink-600 underline-offset-2 transition hover:text-lime-flash hover:decoration-lime-flash/60"
+          >
+            <img
+              src="/amirali.jpg"
+              alt=""
+              loading="lazy"
+              className="size-5 rounded-full object-cover"
+            />
+            amiralibgi
+          </a>
+          <span>and</span>
+          <a
+            href="https://x.com/yazdanctx"
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center gap-1.5 font-medium text-ink-300 underline decoration-ink-600 underline-offset-2 transition hover:text-lime-flash hover:decoration-lime-flash/60"
+          >
+            <img
+              src="/yazdan.jpg"
+              alt=""
+              loading="lazy"
+              className="size-5 rounded-full object-cover"
+            />
+            yazdanctx
+          </a>
+        </div>
       </footer>
 
       <DownloadNotifier />
