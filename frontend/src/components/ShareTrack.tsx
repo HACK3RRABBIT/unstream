@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { LoaderCircle, Share2 } from 'lucide-react'
 import clsx from 'clsx'
 import { trackFileUrl } from '../lib/api'
+import { trackShare } from '../lib/analytics'
 import { canShareFiles, shareFilename, shareTrackFile } from '../lib/share'
 import { useToast } from '../lib/toast'
 
@@ -33,6 +34,7 @@ export function ShareTrack({ jobId, trackId, title, ext, size = 'row' }: Props) 
         shareFilename(title, ext),
         `audio/${ext === 'mp3' ? 'mpeg' : ext}`,
       )
+      trackShare(outcome)
       if (outcome === 'unsupported')
         push('این مرورگر اشتراک‌گذاری فایل رو پشتیبانی نمی‌کنه', 'info')
     } catch {

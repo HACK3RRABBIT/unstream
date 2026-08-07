@@ -346,6 +346,7 @@ def download_track(
     attempts: int = 4,
     filename: str | None = None,
     quality: str = DEFAULT_QUALITY,
+    on_source: Callable[[str, int], None] | None = None,
 ) -> Path:
     """Full pipeline for one track. Reports (stage, fraction) via callback.
 
@@ -353,6 +354,10 @@ def download_track(
     two tracks sharing one stem would otherwise clobber each other's files
     mid-download when they run concurrently. `quality` is an mp3 bitrate in
     kbps or "original"; see QUALITIES.
+
+    `on_source` is told which upload each attempt settled on, and which
+    attempt it was — the only place that knows whether a track came from
+    its own page, from YouTube search, or from the SoundCloud last resort.
 
     Attempt order: the track's own source page if it has one, then YouTube
     search (excluding failed uploads), then SoundCloud as the last resort.
@@ -382,6 +387,8 @@ def download_track(
             else:
                 url = search_source(track, exclude=failed_urls, prefix="ytsearch8")
 
+            if on_source:
+                on_source(url, attempt + 1)
             _clean_partials(dest)
             on_progress("downloading", 0.0)
             audio = download_audio(

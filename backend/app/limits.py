@@ -16,6 +16,8 @@ from collections import defaultdict, deque
 
 from fastapi import HTTPException, Request
 
+from . import analytics
+
 # Search fans out to four providers for up to 20s — by far the most expensive
 # read. Resolve is a single fetch, so it can be looser.
 SEARCH_PER_MINUTE = int(os.getenv("RATE_SEARCH_PER_MINUTE", "15"))
@@ -58,6 +60,16 @@ def _is_internal(host: str) -> bool:
         return False  # not an IP at all — treat as untrusted
 
 
+def surface(request: Request) -> str:
+    """Which client this is. The bot sets the header; browsers don't."""
+    return "telegram" if request.headers.get("x-unstream-surface") == "telegram" else "web"
+
+
+def visitor(request: Request) -> str:
+    """Analytics pseudonym for the caller — hashed, daily, never stored raw."""
+    return analytics.visitor_id(client_ip(request), request.headers.get("user-agent", ""))
+
+
 class RateLimiter:
     """Sliding-window counter: at most `limit` hits per `window` seconds."""
 
@@ -91,14 +103,32 @@ class RateLimiter:
 _SEARCH = RateLimiter(SEARCH_PER_MINUTE, 60, "search")
 _RESOLVE = RateLimiter(RESOLVE_PER_MINUTE, 60, "resolve")
 _DOWNLOAD = RateLimiter(DOWNLOADS_PER_HOUR, 3600, "download")
+# Analytics beacons: a real browser sends a handful per session, so this is
+# only here to stop someone inflating the numbers with a loop.
+_COLLECT = RateLimiter(int(os.getenv("RATE_COLLECT_PER_MINUTE", "30")), 60, "collect")
+# Charged on *failed* admin auth only, so a wrong token a few times is fine
+# but guessing at the token is not.
+_ADMIN = RateLimiter(10, 900, "admin")
 
-_LIMITERS = {"search": _SEARCH, "resolve": _RESOLVE, "download": _DOWNLOAD}
+_LIMITERS = {
+    "search": _SEARCH,
+    "resolve": _RESOLVE,
+    "download": _DOWNLOAD,
+    "collect": _COLLECT,
+    "admin": _ADMIN,
+}
 
 _MESSAGES = {
     "search": "Too many searches — wait {retry}s and try again.",
     "resolve": "Too many links opened — wait {retry}s and try again.",
     "download": "Too many downloads started — wait {retry}s and try again.",
+    "collect": "Too many events — wait {retry}s and try again.",
+    "admin": "Too many bad tokens — wait {retry}s and try again.",
 }
+
+# The point of a `rate_limited` event is seeing real people bump into a
+# limit. Beacon spam and token guessing would only flood the table.
+_TRACKED = {"search", "resolve", "download"}
 
 
 def enforce(kind: str, request: Request) -> str:
@@ -109,6 +139,13 @@ def enforce(kind: str, request: Request) -> str:
     key = client_ip(request)
     retry = _LIMITERS[kind].take(key)
     if retry is not None:
+        if kind in _TRACKED:
+            analytics.record(
+                "rate_limited",
+                surface=surface(request),
+                visitor=visitor(request),
+                detail=kind,
+            )
         raise HTTPException(
             status_code=429,
             detail=_MESSAGES[kind].format(retry=int(retry)),

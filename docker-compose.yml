@@ -22,8 +22,18 @@ services:
     environment:
       # How long finished downloads stay on disk before the sweeper deletes them.
       - DOWNLOADS_TTL_HOURS=${DOWNLOADS_TTL_HOURS:-24}
+      # Unset (the default) means /admin returns 503 and the dashboard does
+      # not exist. Set it to a long random string to turn analytics on.
+      - ADMIN_TOKEN=${ADMIN_TOKEN:-}
+      # Which day an event is counted in. 0 = UTC; 210 = Tehran, so "today"
+      # on the dashboard matches today here.
+      - ANALYTICS_UTC_OFFSET_MINUTES=${ANALYTICS_UTC_OFFSET_MINUTES:-210}
+      - ANALYTICS_RETENTION_DAYS=${ANALYTICS_RETENTION_DAYS:-90}
     volumes:
       - downloads:/app/downloads
+      # Separate from downloads: that volume is disposable, this one is the
+      # only copy of the history and must survive a redeploy.
+      - analytics:/app/data
     networks:
       - unstream
     logging: *logging
@@ -35,3 +45,4 @@ networks:
 
 volumes:
   downloads:
+  analytics:

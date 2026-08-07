@@ -19,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import downloader
+from . import analytics, downloader
 from .models import Track
 
 DOWNLOADS_DIR = Path(__file__).resolve().parent.parent / "downloads"
@@ -60,6 +60,11 @@ class Job:
     # jobs in flight. Never leaves the process — as_dict() omits it, and job
     # ids stay unguessable so anyone holding one can still fetch it.
     owner: str = ""
+    # Analytics only: a hashed, daily-rotating pseudonym and which client
+    # started the job, so a finished track can be attributed without the
+    # download pipeline ever seeing an address.
+    visitor: str = ""
+    surface: str = "web"
     tracks: dict[str, TrackState] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -96,10 +101,39 @@ def get(job_id: str) -> Job | None:
     return _jobs.get(job_id)
 
 
+def live_counts() -> dict:
+    """What the process is doing right now — for the admin dashboard."""
+    snapshot = list(_jobs.values())
+    running = [job for job in snapshot if not job.finished]
+    return {
+        "active_jobs": len(running),
+        "active_tracks": sum(
+            1
+            for job in running
+            for state in list(job.tracks.values())
+            if state.status not in ("done", "error")
+        ),
+        "jobs_tracked": len(snapshot),
+    }
+
+
 def active_count(owner: str) -> int:
     """How many of this client's jobs are still running."""
     # list() so a concurrent start() resizing the dict can't break iteration.
     return sum(1 for job in list(_jobs.values()) if job.owner == owner and not job.finished)
+
+
+_AUDIO_HOSTS = (
+    ("youtu", "youtube"),
+    ("soundcloud", "soundcloud"),
+)
+
+
+def _host_of(url: str) -> str:
+    for needle, name in _AUDIO_HOSTS:
+        if needle in url:
+            return name
+    return "other"
 
 
 def _run_track(job: Job, state: TrackState) -> None:
@@ -108,6 +142,16 @@ def _run_track(job: Job, state: TrackState) -> None:
             state.status = stage
             state.progress = fraction
 
+    # Which upload the download settled on, and on which try — the pipeline
+    # can fall back through YouTube search to SoundCloud, so neither is
+    # knowable from the outside until it happens.
+    chosen = {"url": "", "attempt": 0}
+
+    def on_source(url: str, attempt: int) -> None:
+        chosen.update(url=url, attempt=attempt)
+
+    label = f"{', '.join(state.track.artists)} - {state.track.title}"
+    started = time.monotonic()
     try:
         path = downloader.download_track(
             state.track,
@@ -115,15 +159,36 @@ def _run_track(job: Job, state: TrackState) -> None:
             on_progress,
             filename=state.filename,
             quality=job.quality,
+            on_source=on_source,
         )
         with job.lock:
             state.status = "done"
             state.progress = 1.0
             state.file_path = path
+        analytics.record(
+            "track_done",
+            surface=job.surface,
+            visitor=job.visitor or None,
+            source=_host_of(chosen["url"]),
+            detail=job.quality,
+            label=label,
+            value=chosen["attempt"],
+            ms=int((time.monotonic() - started) * 1000),
+        )
     except Exception as exc:  # any failure marks just this track, not the job
         with job.lock:
             state.status = "error"
             state.error = str(exc)
+        analytics.record(
+            "track_error",
+            surface=job.surface,
+            visitor=job.visitor or None,
+            source=_host_of(chosen["url"]),
+            detail=analytics.error_class(str(exc)),
+            label=label,
+            value=chosen["attempt"],
+            ms=int((time.monotonic() - started) * 1000),
+        )
 
 
 def start(
@@ -131,8 +196,17 @@ def start(
     tracks: list[Track],
     quality: str = downloader.DEFAULT_QUALITY,
     owner: str = "",
+    visitor: str = "",
+    surface: str = "web",
 ) -> Job:
-    job = Job(id=uuid.uuid4().hex[:12], name=name, quality=quality, owner=owner)
+    job = Job(
+        id=uuid.uuid4().hex[:12],
+        name=name,
+        quality=quality,
+        owner=owner,
+        visitor=visitor,
+        surface=surface,
+    )
     # Two different tracks can share "Artist - Title" (playlist duplicates,
     # remastered copies). Concurrent downloads to one filename truncate each
     # other mid-conversion, so make every stem unique up front.

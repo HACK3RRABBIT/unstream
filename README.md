@@ -48,7 +48,7 @@ frontend (Vite + React + Tailwind)  ──proxy /api──▶  backend (FastAPI)
 
 Prereqs: Python 3.12+ with [uv](https://docs.astral.sh/uv/), Node 20+, ffmpeg (`brew install ffmpeg`).
 
-No accounts, keys or `.env` needed — every provider is public and keyless.
+No accounts, keys or `.env` needed — every provider is public and keyless. (The one optional variable is `ADMIN_TOKEN`, which unlocks the stats dashboard; it's a password you invent, not a credential from anyone.)
 
 **1. Backend**
 
@@ -80,6 +80,33 @@ Open <http://localhost:5173>, paste any supported URL (or search by name), hit *
 | `GET /api/jobs?ids=a,b,c` | The same, for several jobs at once — what the UI actually polls. Unknown ids are omitted rather than 404ing |
 | `GET /api/jobs/{id}/tracks/{tid}/file` | Download one finished track (mp3/m4a/opus) |
 | `GET /api/jobs/{id}/zip` | ZIP of all finished tracks |
+| `POST /api/collect` | Page-view beacon (see Analytics) |
+| `GET /api/admin/stats?days=` · `GET /api/admin/events` | Dashboard data, `Authorization: Bearer $ADMIN_TOKEN` |
+
+## Analytics
+
+Unstream counts its own usage, with no third-party service, no cookie and no consent banner — see [ADR 0004](docs/adr/0004-self-hosted-analytics.md). Events go into a SQLite file on the `analytics` volume; a dashboard at **`/admin`** reads them back.
+
+Set `ADMIN_TOKEN` to turn it on. **Without it, `/api/admin/*` returns 503 and the dashboard does not exist** — it can't accidentally end up public.
+
+```sh
+# a token worth using
+openssl rand -hex 24
+```
+
+Then open `/admin`, paste the token once (kept in `localStorage`), and you get visitors, searches, downloads, per-track success rate and median time, what people searched for, which links they pasted, which quality they chose, why tracks failed, and where the traffic came from — plus a **Copy for socials** button that formats the headline numbers for a post.
+
+Most of it is recorded server-side inside the endpoints that already run, so ad blockers don't subtract from it and the Telegram bot will be counted for free (it sends `X-Unstream-Surface: telegram`). The only browser-side part is a `sendBeacon` for page views. A caller is identified by a **daily-rotating hash of IP + user agent** — no address is ever stored, which also means "returning visitors" is deliberately unmeasurable.
+
+| Variable | Default | Does |
+|---|---|---|
+| `ADMIN_TOKEN` | *unset* | Enables `/admin`. Unset = 503 |
+| `ANALYTICS_UTC_OFFSET_MINUTES` | 210 in compose, 0 in code | Which day an event counts in (210 = Tehran) |
+| `ANALYTICS_RETENTION_DAYS` | 90 | How long rows are kept |
+| `ANALYTICS_DB_PATH` | `backend/data/analytics.db` | Where the file lives |
+| `RATE_COLLECT_PER_MINUTE` | 30 | Beacons per client, so nobody can inflate the numbers |
+
+> The `analytics` volume is the only copy of this history. Unlike `downloads`, it is **not** disposable.
 
 ## Deploying (Dokploy)
 
@@ -94,6 +121,7 @@ unstream.amiralibg.xyz ──▶ Traefik ──▶ frontend (nginx :80) ──/a
 2. Dokploy → **Create Service → Compose**, pick the repo, compose path `./docker-compose.yml`.
 3. **Domains tab**: add `unstream.amiralibg.xyz` → service `frontend`, port `80`, HTTPS on (Let's Encrypt).
 4. DNS: `A` record `unstream` → VPS IP.
+5. **Environment tab**: set `ADMIN_TOKEN` to a long random string if you want the `/admin` dashboard (see Analytics). Leave it out and the dashboard stays off.
 
 Local run of the same stack: `docker compose up --build` (add a port mapping override for `frontend`, or use Dokploy's network by creating it: `docker network create dokploy-network`).
 
