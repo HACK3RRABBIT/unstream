@@ -311,11 +311,30 @@ def stats(days: int = 30) -> dict:
             "SELECT COUNT(DISTINCT visitor) FROM events WHERE day >= ? AND visitor IS NOT NULL",
             (since,),
         ).fetchone()[0]
-        totals["zips"] = conn.execute(
-            "SELECT COUNT(*) FROM events WHERE day >= ? AND name = 'zip_download'", (since,)
-        ).fetchone()[0]
-        totals["rate_limited"] = conn.execute(
-            "SELECT COUNT(*) FROM events WHERE day >= ? AND name = 'rate_limited'", (since,)
+
+        # One pass for every plain event count, rather than a query each.
+        counts = {
+            name: total
+            for name, total in _rows(
+                conn,
+                "SELECT name, COUNT(*) FROM events WHERE day >= ? GROUP BY name",
+                (since,),
+            )
+        }
+        totals["zips"] = counts.get("zip_download", 0)
+        totals["rate_limited"] = counts.get("rate_limited", 0)
+        # A file leaving the server is the only event that means what a user
+        # means by "a download" — everything before it is a queue.
+        totals["files_saved"] = counts.get("file_save", 0)
+        totals["artist_views"] = counts.get("artist_view", 0)
+        totals["link_errors"] = counts.get("resolve_error", 0)
+        totals["installs"] = counts.get("pwa_install", 0)
+        # The gap between the two is the interesting part: how many people the
+        # browser offered an install to, and how many took it.
+        totals["install_prompts"] = counts.get("install_prompt", 0)
+        totals["shares"] = conn.execute(
+            "SELECT COUNT(*) FROM events WHERE day >= ? AND name = 'share' AND detail = 'shared'",
+            (since,),
         ).fetchone()[0]
         totals["tracks_delivered"] = conn.execute(
             "SELECT COALESCE(SUM(value), 0) FROM events WHERE day >= ? AND name = 'download_start'",
@@ -351,6 +370,11 @@ def stats(days: int = 30) -> dict:
             "devices": _breakdown(conn, since, "detail", "name = 'page_view'"),
             "surfaces": _breakdown(conn, since, "surface", "name != 'page_view'"),
             "limits_hit": _breakdown(conn, since, "detail", "name = 'rate_limited'"),
+            # Which provider a pasted link failed on. The embed pages are an
+            # undocumented structure, so this is where a Spotify change shows
+            # up first — as one source climbing on its own.
+            "link_errors": _breakdown(conn, since, "source", "name = 'resolve_error'"),
+            "artists_browsed": _breakdown(conn, since, "label", "name = 'artist_view'"),
         }
 
         # Nobody searching means nobody finding — worth seeing on its own.

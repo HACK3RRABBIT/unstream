@@ -26,6 +26,13 @@ export interface Totals {
   tracks_delivered: number
   zips: number
   rate_limited: number
+  /** Files that actually left the server — the honest download count. */
+  files_saved: number
+  shares: number
+  artist_views: number
+  link_errors: number
+  installs: number
+  install_prompts: number
   /** 0–1, or null before any track has finished either way. */
   success_rate: number | null
   median_track_seconds: number | null
@@ -43,6 +50,8 @@ export interface Breakdowns {
   devices: Slice[]
   surfaces: Slice[]
   limits_hit: Slice[]
+  link_errors: Slice[]
+  artists_browsed: Slice[]
 }
 
 export interface Stats {
@@ -77,9 +86,7 @@ async function get<T>(path: string, token: string): Promise<T> {
       if (status === 429) throw new AuthError('Too many bad tokens. Wait a few minutes.')
       if (status === 503)
         throw new AuthError('Analytics is off — set ADMIN_TOKEN on the api service.')
-      throw new Error(
-        (err.response?.data as { detail?: string })?.detail ?? err.message,
-      )
+      throw new Error((err.response?.data as { detail?: string })?.detail ?? err.message)
     }
     throw err
   }

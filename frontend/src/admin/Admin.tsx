@@ -56,6 +56,14 @@ export default function Admin() {
     document.title = 'Unstream · analytics'
     document.documentElement.setAttribute('dir', 'ltr')
     document.documentElement.setAttribute('lang', 'en')
+    // index.html is one shared shell, so its SEO metadata describes the app.
+    // robots.txt disallows this path; the tag is what covers a crawler that
+    // reached it from a link anyway.
+    const meta = document.createElement('meta')
+    meta.name = 'robots'
+    meta.content = 'noindex, nofollow'
+    document.head.append(meta)
+    return () => meta.remove()
   }, [])
 
   const query = useQuery({
@@ -98,18 +106,14 @@ export default function Admin() {
         />
 
         {query.isLoading && <Loading />}
-        {query.error && !authFailed && (
-          <Banner>{(query.error as Error).message}</Banner>
-        )}
+        {query.error && !authFailed && <Banner>{(query.error as Error).message}</Banner>}
         {query.data && !query.data.enabled && (
           <Banner>
-            The analytics database could not be opened — check that the api service can
-            write to its data volume.
+            The analytics database could not be opened — check that the api service can write to its
+            data volume.
           </Banner>
         )}
-        {query.data?.enabled && (
-          <Dashboard stats={query.data} days={days} token={token} />
-        )}
+        {query.data?.enabled && <Dashboard stats={query.data} days={days} token={token} />}
       </div>
     </div>
   )
@@ -117,13 +121,7 @@ export default function Admin() {
 
 // ------------------------------------------------------------------ chrome
 
-function TokenGate({
-  message,
-  onSubmit,
-}: {
-  message?: string
-  onSubmit: (token: string) => void
-}) {
+function TokenGate({ message, onSubmit }: { message?: string; onSubmit: (token: string) => void }) {
   const [value, setValue] = useState('')
   return (
     <div
@@ -139,9 +137,7 @@ function TokenGate({
         className="w-full max-w-sm rounded-panel border border-ink-800 bg-ink-900 p-6"
       >
         <h1 className="text-body font-semibold">Unstream analytics</h1>
-        <p className="mt-1 text-mini text-ink-400">
-          Paste the ADMIN_TOKEN set on the api service.
-        </p>
+        <p className="mt-1 text-mini text-ink-400">Paste the ADMIN_TOKEN set on the api service.</p>
         <input
           type="password"
           value={value}
@@ -196,8 +192,8 @@ function Header({
               className="size-1.5 animate-breathe rounded-full"
               style={{ background: ACCENT }}
             />
-            {live.active_jobs} job{live.active_jobs === 1 ? '' : 's'} running ·{' '}
-            {live.active_tracks} track{live.active_tracks === 1 ? '' : 's'}
+            {live.active_jobs} job{live.active_jobs === 1 ? '' : 's'} running · {live.active_tracks}{' '}
+            track{live.active_tracks === 1 ? '' : 's'}
           </span>
         )}
       </div>
@@ -288,8 +284,16 @@ function Dashboard({ stats, days, token }: { stats: Stats; days: number; token: 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           <StatTile label="Visitors" value={compact(totals.visitors)} hint="unique per day" />
           <StatTile label="Page views" value={compact(totals.page_views)} />
-          <StatTile label="Searches" value={compact(totals.searches)} hint={`${totals.empty_searches} with no results`} />
-          <StatTile label="Downloads started" value={compact(totals.downloads)} hint={`${compact(totals.tracks_delivered)} tracks queued`} />
+          <StatTile
+            label="Searches"
+            value={compact(totals.searches)}
+            hint={`${totals.empty_searches} with no results`}
+          />
+          <StatTile
+            label="Downloads started"
+            value={compact(totals.downloads)}
+            hint={`${compact(totals.tracks_delivered)} tracks queued`}
+          />
           <StatTile
             label="Success rate"
             value={rate}
@@ -301,8 +305,20 @@ function Dashboard({ stats, days, token }: { stats: Stats; days: number; token: 
             value={totals.median_track_seconds ? `${totals.median_track_seconds}s` : '—'}
             hint="search → tagged file"
           />
+          <StatTile
+            label="Files saved"
+            value={compact(totals.files_saved)}
+            hint={
+              totals.shares > 0 ? `${compact(totals.shares)} via share sheet` : 'left the server'
+            }
+          />
           <StatTile label="ZIPs" value={compact(totals.zips)} hint="album downloads" />
-          <StatTile label="Rate limited" value={compact(totals.rate_limited)} hint="requests turned away" />
+          <StatTile
+            label="Rate limited"
+            value={compact(totals.rate_limited)}
+            hint="requests turned away"
+          />
+          <InstallTile stats={stats} />
           <SurfaceTile stats={stats} />
         </div>
       </section>
@@ -360,12 +376,37 @@ function Dashboard({ stats, days, token }: { stats: Stats; days: number; token: 
         <ListCard title="Most searched" hint="What people typed" slices={breakdowns.top_searches} />
         <ListCard title="Most downloaded artists" slices={breakdowns.top_artists} />
         <ListCard title="Most downloaded tracks" slices={breakdowns.top_tracks} />
-        <ListCard title="Links pasted" hint="Which service the URL came from" slices={breakdowns.link_providers} />
+        <ListCard
+          title="Links pasted"
+          hint="Which service the URL came from"
+          slices={breakdowns.link_providers}
+        />
         <ListCard title="Quality chosen" slices={breakdowns.quality} />
-        <ListCard title="Audio came from" hint="Where the file was actually fetched" slices={breakdowns.audio_sources} />
+        <ListCard
+          title="Audio came from"
+          hint="Where the file was actually fetched"
+          slices={breakdowns.audio_sources}
+        />
         <ListCard title="Why tracks failed" slices={breakdowns.errors} color={DANGER} />
+        <ListCard
+          title="Links that failed"
+          hint="A provider climbing here alone means its pages changed"
+          slices={breakdowns.link_errors}
+          color={DANGER}
+        />
         <ListCard title="Referrers" hint="What sent people here" slices={breakdowns.referrers} />
         <ListCard title="Devices" slices={breakdowns.devices} />
+        <ListCard
+          title="Artists browsed"
+          hint={`${withCommas(totals.artist_views)} artist pages opened`}
+          slices={breakdowns.artists_browsed}
+        />
+        <ListCard
+          title="Limits hit"
+          hint="Which cap turned a real request away"
+          slices={breakdowns.limits_hit}
+          color={DANGER}
+        />
       </section>
 
       <RawFeed token={token} />
@@ -392,6 +433,21 @@ function ListCard({
     >
       <BarList slices={slices} color={color} limit={8} />
     </Card>
+  )
+}
+
+/** Installs, against the number of people the browser offered one to. The
+ *  ratio is the only read on whether the PWA is worth the service worker;
+ *  hidden until a browser has actually prompted, since iOS never does. */
+function InstallTile({ stats }: { stats: Stats }) {
+  const { installs, install_prompts } = stats.totals
+  if (installs === 0 && install_prompts === 0) return null
+  return (
+    <StatTile
+      label="PWA installs"
+      value={compact(installs)}
+      hint={install_prompts > 0 ? `${compact(install_prompts)} offered` : 'no prompts shown'}
+    />
   )
 }
 
@@ -425,11 +481,11 @@ function ShareCard({ stats, days }: { stats: Stats; days: number }) {
       `${withCommas(totals.visitors)} visitors`,
       `${withCommas(totals.searches)} searches`,
       `${withCommas(totals.tracks_done)} tracks downloaded`,
+      `${withCommas(totals.files_saved)} files actually saved`,
     ]
     if (totals.success_rate !== null)
       lines.push(`${(totals.success_rate * 100).toFixed(1)}% of them succeeded`)
-    if (totals.median_track_seconds)
-      lines.push(`${totals.median_track_seconds}s median per track`)
+    if (totals.median_track_seconds) lines.push(`${totals.median_track_seconds}s median per track`)
     const top = breakdowns.top_searches.slice(0, 3).map((s) => s.key)
     if (top.length) lines.push('', `Most searched: ${top.join(', ')}`)
     return lines.join('\n')
@@ -473,10 +529,7 @@ function RawFeed({ token }: { token: string }) {
 
   return (
     <section className="rounded-panel border border-ink-800 bg-ink-900 p-5">
-      <button
-        onClick={() => setOpen(!open)}
-        className="text-body font-semibold text-ink-100"
-      >
+      <button onClick={() => setOpen(!open)} className="text-body font-semibold text-ink-100">
         Raw events{' '}
         <span className="text-mini font-normal text-ink-400">
           {open ? '— hide' : '— show the last 200, for checking the wiring'}
