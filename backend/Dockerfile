@@ -3,9 +3,10 @@ FROM python:3.12-slim AS base
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-# ffmpeg for audio conversion, dumb-init for clean signal handling
+# ffmpeg for audio conversion, dumb-init for clean signal handling, gosu to
+# drop from root to PUID/PGID once the mounts have been handed over.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg dumb-init ca-certificates curl unzip \
+    && apt-get install -y --no-install-recommends ffmpeg dumb-init gosu ca-certificates curl unzip \
     && rm -rf /var/lib/apt/lists/*
 
 # A JavaScript runtime, because YouTube's player now hands out challenges that
@@ -43,13 +44,20 @@ COPY app ./app
 RUN useradd -u 1001 -m appuser \
     && mkdir -p /app/downloads /app/data /app/cache \
     && chown -R appuser:appuser /app
-USER appuser
 
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# No USER here, deliberately. The container starts as root, hands the mounted
+# directories to PUID/PGID and immediately drops to them — which is what lets
+# a bind mount to someone's own music folder work at all. The server itself
+# never runs as root; see docker-entrypoint.sh. Set `user:` in compose to
+# skip the root step entirely, and the entrypoint gets out of the way.
 ENV PATH="/app/.venv/bin:$PATH"
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
 
-ENTRYPOINT ["dumb-init", "--"]
+ENTRYPOINT ["dumb-init", "--", "/usr/local/bin/docker-entrypoint.sh"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

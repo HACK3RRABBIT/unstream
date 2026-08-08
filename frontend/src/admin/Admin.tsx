@@ -1,6 +1,6 @@
 /** The stats dashboard, at /admin.
  *
- *  English and left-to-right on purpose: ADR 0001 makes the *product*
+ *  English and left-to-right on purpose: docs/DESIGN.md makes the *product*
  *  Farsi-only, and this is not the product — it is the one page only the
  *  owner sees, whose screenshots are meant to travel.
  *
@@ -451,9 +451,9 @@ function InstallTile({ stats }: { stats: Stats }) {
   )
 }
 
-/** Only earns its space once there is more than one client — which is what
- *  happens the day the Telegram bot ships. Until then it renders nothing
- *  rather than a tile that always says "100% web". */
+/** Only earns its space once there is more than one client — installed PWA
+ *  against browser. Until then it renders nothing rather than a tile that
+ *  always says "100% web". */
 function SurfaceTile({ stats }: { stats: Stats }) {
   const surfaces = stats.breakdowns.surfaces
   if (surfaces.length < 2) return null

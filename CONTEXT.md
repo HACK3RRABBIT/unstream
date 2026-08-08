@@ -1,6 +1,6 @@
 # Unstream
 
-A web app for searching songs, albums and playlists — or pasting a Spotify/Deezer link — and downloading them as tagged MP3 files. All user-facing surfaces (web UI and the Telegram bot) are Farsi-only (see `docs/adr/0001`); this glossary fixes the canonical Farsi rendering of each domain term so the copy stays consistent across surfaces.
+A web app for searching songs, albums and playlists — or pasting a Spotify/Deezer link — and downloading them as tagged MP3 files. The UI is Farsi-only (see `docs/DESIGN.md`); this glossary fixes the canonical Farsi rendering of each domain term so the copy stays consistent.
 
 ## Language
 
@@ -40,10 +40,6 @@ _Avoid_: کوالیتی
 A pasted Spotify or Deezer URL that resolves to a track or collection.
 _Avoid_: پیوند، آدرس
 
-**تنظیمات** (Settings):
-The per-user preferences remembered by the Telegram bot — currently only audio quality.
-_Avoid_: ستینگ
-
 **دانلود همه** (Download all):
-Downloading every track in an album or playlist in one action. On the web this yields a ZIP; in the Telegram bot, a sequence of audio messages.
+Downloading every track in an album or playlist in one action, which yields a ZIP.
 _Avoid_: دانلود کامل

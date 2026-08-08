@@ -4,8 +4,22 @@ No accounts, so the only handle on a caller is their IP. Counters are in
 memory, per process — enough for the single-container stack this project ships
 (docker-compose.yml); anything scaled out would need a shared store.
 
-Messages stay English so the Telegram bot can share them; the Farsi UI
-translates at the API seam (`localizeError` in frontend/src/lib/api.ts).
+Two different things live here, and only one of them is about strangers:
+
+* The **rate limiters** price what a caller can ask for per minute or hour.
+  They exist because a public instance is an open relay without them, and
+  they are noise on a machine whose only user is the person who installed it
+  — so RATE_LIMITS_ENABLED=false switches them off in one move. The admin
+  limiter is exempt: it charges *failed* token attempts, which is a
+  brute-force guard, and a private instance that someone port-forwarded by
+  accident needs it more than a public one, not less.
+
+* The **job caps** below bound what one request can cost in threads and
+  memory. Those are true of any deployment, so they stay on when the rate
+  limiters are off, and are widened rather than disabled — 0 for no limit.
+
+Messages stay English at the wire; the Farsi UI translates at the API seam
+(`localizeError` in frontend/src/lib/api.ts).
 """
 
 import ipaddress
@@ -17,6 +31,17 @@ from collections import defaultdict, deque
 from fastapi import HTTPException, Request
 
 from . import analytics
+
+def _flag(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() not in ("0", "false", "no", "off")
+
+
+# Whether a caller is charged for what they ask for at all. Leave it on for
+# anything reachable by someone you don't know.
+RATE_LIMITS_ENABLED = _flag("RATE_LIMITS_ENABLED", True)
 
 # Search fans out to four providers for up to 20s — by far the most expensive
 # read. Resolve is a single fetch, so it can be looser.
@@ -31,10 +56,14 @@ FILES_PER_MINUTE = int(os.getenv("RATE_FILES_PER_MINUTE", "60"))
 # A ZIP is the whole album in one request, so it is priced per hour instead.
 ZIPS_PER_HOUR = int(os.getenv("RATE_ZIPS_PER_HOUR", "30"))
 
-# The 100-track cap is the Telegram bot's, unchanged (docs/telegram-bot-spec.md).
-# Its *one active job per user* doesn't port over: the web UI puts a download
-# button on every row, so a strict 1 would 429 the second song someone taps.
-# Three matches the download pool's worker count in jobs.py.
+# One active job per caller would 429 the second song someone taps, because
+# the UI puts a download button on every row. Three matches the download
+# pool's default worker count in jobs.py.
+#
+# 0 means no limit on either, which is a real thing to want — a discography
+# is one job of several hundred tracks — and not something the rate limiters'
+# off switch should imply, since these cost threads and memory rather than
+# somebody else's fair share.
 MAX_ACTIVE_JOBS = int(os.getenv("MAX_ACTIVE_JOBS_PER_CLIENT", "3"))
 MAX_TRACKS_PER_JOB = int(os.getenv("MAX_TRACKS_PER_JOB", "100"))
 
@@ -65,11 +94,6 @@ def _is_internal(host: str) -> bool:
         return ipaddress.ip_address(host).is_private
     except ValueError:
         return False  # not an IP at all — treat as untrusted
-
-
-def surface(request: Request) -> str:
-    """Which client this is. The bot sets the header; browsers don't."""
-    return "telegram" if request.headers.get("x-unstream-surface") == "telegram" else "web"
 
 
 def visitor(request: Request) -> str:
@@ -142,6 +166,13 @@ _MESSAGES = {
 # limit. Beacon spam and token guessing would only flood the table.
 _TRACKED = {"search", "resolve", "download", "file", "zip"}
 
+# Charged even with RATE_LIMITS_ENABLED off. "admin" is not a fair-share
+# budget — it only counts *wrong* tokens, so the sole way to feel it is to be
+# guessing at one, and turning that off to make a private instance more
+# convenient would trade the only thing standing in front of the dashboard
+# for nothing anyone would notice.
+_ALWAYS_ENFORCED = {"admin"}
+
 
 def enforce(kind: str, request: Request) -> str:
     """Charge one hit against the caller's budget, or raise 429.
@@ -149,12 +180,13 @@ def enforce(kind: str, request: Request) -> str:
     Returns the client key, which callers reuse for per-client job limits.
     """
     key = client_ip(request)
+    if not RATE_LIMITS_ENABLED and kind not in _ALWAYS_ENFORCED:
+        return key
     retry = _LIMITERS[kind].take(key)
     if retry is not None:
         if kind in _TRACKED:
             analytics.record(
                 "rate_limited",
-                surface=surface(request),
                 visitor=visitor(request),
                 detail=kind,
             )

@@ -1,0 +1,90 @@
+# Unstream as deployed — one Dokploy stack, one domain.
+#
+#   unstream.amiralibg.xyz ─▶ Traefik ─▶ frontend (nginx :80) ─/api─▶ api (:8000)
+#
+# Not the file to start from if you are self-hosting: use docker-compose.yml,
+# which needs no external network, no file mounts and no reverse proxy.
+#
+# Anything not set here falls through to the defaults in the code, which are
+# the public-server ones. That is deliberate — the settings a stranger could
+# abuse should not exist in two copies that drift.
+
+services:
+  frontend:
+    build: ./frontend
+    restart: always
+    depends_on:
+      - api
+    networks:
+      - unstream
+      # Traefik reaches the container over this; the domain is set in
+      # Dokploy's Domains tab. No ports published — Traefik is the only way in.
+      - dokploy-network
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  pot-provider:
+    image: brainicism/bgutil-ytdlp-pot-provider:latest
+    restart: always
+    networks:
+      - unstream
+    logging: *logging
+
+  api:
+    build: ./backend
+    restart: always
+    depends_on:
+      - pot-provider
+    environment:
+      - DOWNLOADS_TTL_HOURS=${DOWNLOADS_TTL_HOURS:-24}
+      # Keep under what the host actually has free.
+      - MAX_DOWNLOADS_GB=${MAX_DOWNLOADS_GB:-20}
+      # Not interpolated on purpose: this is the one host where the limits are
+      # load-bearing, and a leftover variable in Dokploy must not disable them.
+      - RATE_LIMITS_ENABLED=true
+      - YTDLP_REMOTE_COMPONENTS=${YTDLP_REMOTE_COMPONENTS-ejs:github}
+      - YTDLP_CACHE_DIR=/app/cache
+      - POT_PROVIDER_URL=${POT_PROVIDER_URL:-http://pot-provider:4416}
+      # Use a throwaway Google account: this account carries every download
+      # the server makes, and YouTube bans accounts for that.
+      - YTDLP_COOKIEFILE=${YTDLP_COOKIEFILE:-/app/cookies.txt}
+      - ADMIN_TOKEN=${ADMIN_TOKEN:-}
+      # 210 = Tehran, so "today" on the dashboard matches today here.
+      - ANALYTICS_UTC_OFFSET_MINUTES=${ANALYTICS_UTC_OFFSET_MINUTES:-210}
+      - ANALYTICS_RETENTION_DAYS=${ANALYTICS_RETENTION_DAYS:-90}
+    volumes:
+      - downloads:/app/downloads
+      # The only copy of the analytics history — unlike downloads, not
+      # disposable. Back it up with SQLite's own .backup, not cp.
+      - analytics:/app/data
+      - ytdlp-cache:/app/cache
+      # Goes with YTDLP_COOKIEFILE above; the variable without the mount is a
+      # failure this project has already had, and /api/admin/extraction names it.
+      #
+      # Not optional on this host: YouTube answers this address with
+      # LOGIN_REQUIRED on every client, before a token or a solved challenge
+      # comes up. The other two defences still have to be here — signing in
+      # moves yt-dlp onto the web clients, which is exactly where they become
+      # load-bearing — but alone they get nowhere.
+      #
+      # Dokploy's File Mount path, which survives later deploys. A cookie
+      # committed to the repo would be reverted on every pull. Read-write
+      # because YouTube rotates these and yt-dlp saves them back; the mount is
+      # a seed, and app/ytdlp.py copies it onto the cache volume at boot.
+      - ../files/cookies.txt:/app/cookies.txt
+    networks:
+      - unstream
+    logging: *logging
+
+networks:
+  unstream:
+  dokploy-network:
+    external: true
+
+volumes:
+  downloads:
+  analytics:
+  ytdlp-cache:

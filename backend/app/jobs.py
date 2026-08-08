@@ -9,6 +9,11 @@ job directories older than DOWNLOADS_TTL_HOURS (default 24) are deleted
 once their job has finished, and orphan directories from previous runs
 are cleaned the same way. Whatever outlives that pass is then held under
 MAX_DOWNLOADS_GB by evicting the oldest jobs first.
+
+Either limit can be switched off with 0, and a self-hosted instance
+downloading into a folder someone actually browses usually switches both
+off — the sweeper exists because a public server's disk is shared with
+strangers, which is not true of a laptop or a NAS.
 """
 
 import os
@@ -25,13 +30,17 @@ from .models import Track
 
 DOWNLOADS_DIR = Path(__file__).resolve().parent.parent / "downloads"
 
+# 0 keeps finished downloads forever. The default suits a server whose disk
+# is shared with strangers; it is the wrong default for someone downloading
+# to their own machine, which is why it is the first thing self-hosters set.
 DOWNLOADS_TTL_HOURS = float(os.getenv("DOWNLOADS_TTL_HOURS", "24"))
 
 # The TTL alone is not a disk limit. Three workers can land on the order of
 # 500 tracks an hour, and nothing is deleted for a day — enough to fill a
 # small VPS long before the first job expires. This is the actual ceiling:
 # over it, the sweeper evicts finished jobs oldest-first until it is back
-# under, so the volume trades history for staying writable.
+# under, so the volume trades history for staying writable. 0 disables it,
+# on the same reasoning as the TTL above.
 DOWNLOADS_MAX_BYTES = int(float(os.getenv("MAX_DOWNLOADS_GB", "20")) * 1024**3)
 
 # Ten minutes, not an hour: a budget checked hourly can be exceeded for an
@@ -39,7 +48,14 @@ DOWNLOADS_MAX_BYTES = int(float(os.getenv("MAX_DOWNLOADS_GB", "20")) * 1024**3)
 _SWEEP_INTERVAL_SECONDS = 600
 
 # Be polite to YouTube: a few tracks at a time, not the whole playlist.
-_executor = ThreadPoolExecutor(max_workers=3)
+#
+# Raising this is the obvious way to make a long discography finish sooner,
+# and it is also the fastest way to get bot-checked — the limit being bought
+# is how many requests one address makes at once, which is the signal being
+# watched. A home connection has more room here than a datacenter one, but
+# it is still the thing that breaks first, so move it in small steps.
+DOWNLOAD_WORKERS = max(1, int(os.getenv("DOWNLOAD_WORKERS", "3")))
+_executor = ThreadPoolExecutor(max_workers=DOWNLOAD_WORKERS)
 
 
 @dataclass
@@ -71,11 +87,9 @@ class Job:
     # jobs in flight. Never leaves the process — as_dict() omits it, and job
     # ids stay unguessable so anyone holding one can still fetch it.
     owner: str = ""
-    # Analytics only: a hashed, daily-rotating pseudonym and which client
-    # started the job, so a finished track can be attributed without the
-    # download pipeline ever seeing an address.
+    # Analytics only: a hashed, daily-rotating pseudonym, so a finished track
+    # can be attributed without the download pipeline ever seeing an address.
     visitor: str = ""
-    surface: str = "web"
     tracks: dict[str, TrackState] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -178,7 +192,6 @@ def _run_track(job: Job, state: TrackState) -> None:
             state.file_path = path
         analytics.record(
             "track_done",
-            surface=job.surface,
             visitor=job.visitor or None,
             source=_host_of(chosen["url"]),
             detail=job.quality,
@@ -192,7 +205,6 @@ def _run_track(job: Job, state: TrackState) -> None:
             state.error = str(exc)
         analytics.record(
             "track_error",
-            surface=job.surface,
             visitor=job.visitor or None,
             source=_host_of(chosen["url"]),
             detail=analytics.error_class(str(exc)),
@@ -208,7 +220,6 @@ def start(
     quality: str = downloader.DEFAULT_QUALITY,
     owner: str = "",
     visitor: str = "",
-    surface: str = "web",
 ) -> Job:
     job = Job(
         id=uuid.uuid4().hex[:12],
@@ -216,7 +227,6 @@ def start(
         quality=quality,
         owner=owner,
         visitor=visitor,
-        surface=surface,
     )
     # Two different tracks can share "Artist - Title" (playlist duplicates,
     # remastered copies). Concurrent downloads to one filename truncate each
@@ -261,13 +271,19 @@ def _sweep(
 ) -> int:
     """Delete expired job directories, then any excess over the disk budget.
 
+    Either pass is disabled by passing 0 or less for its limit; with both off
+    this does nothing at all, and returns before walking the directory rather
+    than stat()ing a library that nothing is allowed to delete.
+
     Returns how many were removed. A running job is never touched, so a
     volume held over budget entirely by jobs in flight stays over — the
     concurrency and per-client caps are what bound that case.
     """
+    if ttl_hours <= 0 and max_bytes <= 0:
+        return 0
     if not DOWNLOADS_DIR.exists():
         return 0
-    cutoff = time.time() - ttl_hours * 3600
+    cutoff = time.time() - ttl_hours * 3600 if ttl_hours > 0 else None
     removed = 0
     # (newest mtime, bytes, path) for everything that survived the TTL pass.
     survivors: list[tuple[float, int, Path]] = []
@@ -282,11 +298,14 @@ def _sweep(
         if measured is None:
             continue
         newest, size = measured
-        if newest < cutoff:
+        if cutoff is not None and newest < cutoff:
             _evict(path)
             removed += 1
         else:
             survivors.append((newest, size, path))
+
+    if max_bytes <= 0:
+        return removed
 
     # Oldest first, so what goes is what someone is least likely to still want.
     total = sum(size for _, size, _ in survivors)
