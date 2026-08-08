@@ -13,6 +13,7 @@ page instead of running a YouTube search for a match.
 import os
 import re
 import shutil
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -49,11 +50,12 @@ POT_PROVIDER_URL = os.getenv("POT_PROVIDER_URL", "").rstrip("/")
 # day, which is slow and noisy rather than broken.
 CACHE_DIR = os.getenv("YTDLP_CACHE_DIR", "")
 
-# The second is a cookies.txt exported from a signed-in browser. It works
-# where tokens alone don't, at the cost of tying every download to one
-# account — YouTube bans accounts for exactly this, so it wants a throwaway,
-# not a real one, and the file wants a read-write mount because YouTube
-# rotates these cookies and yt-dlp writes the new ones back.
+# The third is a cookies.txt exported from a signed-in browser. On a VPS this
+# is not the last resort it reads like: YouTube answers a flagged address with
+# LOGIN_REQUIRED at the playability check, before a token is asked for and
+# before a challenge exists to solve, so neither of the two above ever gets to
+# help. The cost is tying every download to one account — YouTube bans
+# accounts for exactly this, so it wants a throwaway, not a real one.
 #
 # A path that isn't there is ignored rather than passed on — a stale variable
 # would otherwise fail every extraction the process ever makes. That failure
@@ -65,6 +67,43 @@ if COOKIEFILE_MISSING:
     COOKIEFILE = ""
 
 
+def _writable_cookiefile(source: str) -> str:
+    """Return a copy of `source` that yt-dlp is allowed to write back to.
+
+    YouTube rotates these cookies as they are spent, and yt-dlp saves the new
+    ones when it closes — into the same file it read them from. That makes a
+    read-only cookie file worse than no cookie at all: extraction succeeds,
+    close() raises PermissionError afterwards, and since that is not a
+    ProviderError it leaves as a 500 with the real cause buried in a traceback.
+
+    Which is exactly what a mounted file is. Dokploy writes its File Mounts as
+    root while the container runs as appuser, and chown would only hold until
+    the next deploy rewrote it. So the mount is treated as a seed rather than
+    as the session: it is copied onto the cache volume and the rotation happens
+    there, where it also survives a restart. Editing the file in Dokploy takes
+    effect on the next boot, because the copy is refreshed whenever the mount
+    is the newer of the two.
+    """
+    if os.access(source, os.W_OK):
+        return source  # a local checkout owns its own cookies.txt
+    live = Path(CACHE_DIR or tempfile.gettempdir()) / "cookies.live.txt"
+    try:
+        seed = Path(source)
+        if not live.exists() or seed.stat().st_mtime > live.stat().st_mtime:
+            live.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(seed, live)
+            live.chmod(0o600)
+        return str(live)
+    except OSError:
+        # Nowhere writable to put it. Handing back the read-only original
+        # would trade this for a 500 on every extraction, so the cookie is
+        # dropped instead and status() reports the difference.
+        return ""
+
+
+COOKIEFILE_LIVE = _writable_cookiefile(COOKIEFILE) if COOKIEFILE else ""
+
+
 def base_opts(**extra) -> dict:
     """Options every yt-dlp call in the project shares."""
     opts = {"quiet": True, "no_warnings": True, **extra}
@@ -72,8 +111,8 @@ def base_opts(**extra) -> dict:
         opts["remote_components"] = REMOTE_COMPONENTS.split(",")
     if CACHE_DIR:
         opts["cachedir"] = CACHE_DIR
-    if COOKIEFILE:
-        opts["cookiefile"] = COOKIEFILE
+    if COOKIEFILE_LIVE:
+        opts["cookiefile"] = COOKIEFILE_LIVE
     if POT_PROVIDER_URL:
         # Copied rather than mutated: `extra` belongs to the caller, and the
         # dict inside it would outlive this call.
@@ -94,6 +133,11 @@ def status() -> dict:
         # True means YTDLP_COOKIEFILE was set and pointed at nothing: almost
         # always a mount that didn't happen.
         "cookiefile_missing": COOKIEFILE_MISSING,
+        # The copy yt-dlp is actually handed. Equal to the above when the file
+        # was already writable; null beside a set `cookiefile` means there was
+        # nowhere to put a writable copy, and the cookie is being ignored
+        # rather than crashing every extraction on the way out.
+        "cookiefile_live": COOKIEFILE_LIVE or None,
     }
 
 
