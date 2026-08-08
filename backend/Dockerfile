@@ -37,8 +37,11 @@ RUN uv sync --frozen --no-dev
 
 COPY app ./app
 
+# /app/cache is created here rather than left to the volume: Docker seeds a
+# named volume's ownership from the image's directory, and with no directory
+# to copy it lands root-owned, which appuser cannot write the solver into.
 RUN useradd -u 1001 -m appuser \
-    && mkdir -p /app/downloads /app/data \
+    && mkdir -p /app/downloads /app/data /app/cache \
     && chown -R appuser:appuser /app
 USER appuser
 
