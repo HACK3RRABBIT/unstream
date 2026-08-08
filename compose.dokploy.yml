@@ -1,18 +1,13 @@
-# Unstream as it is actually deployed — one Dokploy stack, one domain.
+# Unstream as deployed — one Dokploy stack, one domain.
 #
 #   unstream.amiralibg.xyz ─▶ Traefik ─▶ frontend (nginx :80) ─/api─▶ api (:8000)
 #
-# This is not the file to start from if you are self-hosting; use
-# docker-compose.yml, which needs no external network, no file mounts and no
-# reverse proxy. This one exists because a public instance has requirements a
-# personal one does not, and because YouTube treats the two very differently
-# (see docs/adr/0005 and the README).
+# Not the file to start from if you are self-hosting: use docker-compose.yml,
+# which needs no external network, no file mounts and no reverse proxy.
 #
-# Everything not set here falls through to the defaults in the code, which are
-# the public-server ones: downloads expire after 24h, disk is capped at 20 GB,
-# and the per-caller limits in backend/app/limits.py are tight. That is on
-# purpose — the settings a stranger could abuse should not be spelled out in
-# two places where one copy can drift.
+# Anything not set here falls through to the defaults in the code, which are
+# the public-server ones. That is deliberate — the settings a stranger could
+# abuse should not exist in two copies that drift.
 
 services:
   frontend:
@@ -22,9 +17,8 @@ services:
       - api
     networks:
       - unstream
-      # Traefik (Dokploy's proxy) reaches the container over this network;
-      # the domain itself is configured in Dokploy's Domains tab. No ports
-      # are published — Traefik terminates TLS and is the only way in.
+      # Traefik reaches the container over this; the domain is set in
+      # Dokploy's Domains tab. No ports published — Traefik is the only way in.
       - dokploy-network
     logging: &logging
       driver: json-file
@@ -42,57 +36,44 @@ services:
   api:
     build: ./backend
     restart: always
-    # Not exposed publicly — only reachable through the frontend nginx proxy
     depends_on:
       - pot-provider
     environment:
       - DOWNLOADS_TTL_HOURS=${DOWNLOADS_TTL_HOURS:-24}
-      # Keep it under whatever the host actually has free.
+      # Keep under what the host actually has free.
       - MAX_DOWNLOADS_GB=${MAX_DOWNLOADS_GB:-20}
-      # Deliberately not ${RATE_LIMITS_ENABLED:-true}. This is the one host
-      # where the limits are load-bearing, and a variable left over in
-      # Dokploy's Environment tab should not be able to turn them off.
+      # Not interpolated on purpose: this is the one host where the limits are
+      # load-bearing, and a leftover variable in Dokploy must not disable them.
       - RATE_LIMITS_ENABLED=true
       - YTDLP_REMOTE_COMPONENTS=${YTDLP_REMOTE_COMPONENTS-ejs:github}
       - YTDLP_CACHE_DIR=/app/cache
       - POT_PROVIDER_URL=${POT_PROVIDER_URL:-http://pot-provider:4416}
-      # Points at the file mount below. Use a throwaway Google account — this
-      # account carries every download the server makes, and YouTube bans
-      # accounts for that.
+      # Use a throwaway Google account: this account carries every download
+      # the server makes, and YouTube bans accounts for that.
       - YTDLP_COOKIEFILE=${YTDLP_COOKIEFILE:-/app/cookies.txt}
-      # Unset means /admin returns 503 and the dashboard does not exist.
       - ADMIN_TOKEN=${ADMIN_TOKEN:-}
       # 210 = Tehran, so "today" on the dashboard matches today here.
       - ANALYTICS_UTC_OFFSET_MINUTES=${ANALYTICS_UTC_OFFSET_MINUTES:-210}
       - ANALYTICS_RETENTION_DAYS=${ANALYTICS_RETENTION_DAYS:-90}
     volumes:
       - downloads:/app/downloads
-      # The only copy of the analytics history. Unlike downloads, not
-      # disposable — see the backup command in the README.
+      # The only copy of the analytics history — unlike downloads, not
+      # disposable. Back it up with SQLite's own .backup, not cp.
       - analytics:/app/data
       - ytdlp-cache:/app/cache
-      # Goes with YTDLP_COOKIEFILE above — the variable without the mount is
-      # the failure this project has already had once, and
-      # /api/admin/extraction is what names it.
+      # Goes with YTDLP_COOKIEFILE above; the variable without the mount is a
+      # failure this project has already had, and /api/admin/extraction names it.
       #
-      # Not optional on this host. YouTube answers this VPS's address with
+      # Not optional on this host: YouTube answers this address with
       # LOGIN_REQUIRED on every client, before a token or a solved challenge
-      # would ever come up, so the two defences above cannot reach the point
-      # where they help. They still have to be there — signing in moves
-      # yt-dlp onto the web clients, which is precisely where the solver and
-      # the token become load-bearing — but on their own they get nowhere.
+      # comes up. The other two defences still have to be here — signing in
+      # moves yt-dlp onto the web clients, which is exactly where they become
+      # load-bearing — but alone they get nowhere.
       #
-      # The path is Dokploy's: a File Mount writes its content to a `files`
-      # directory beside the checkout and leaves it alone on every later
-      # deploy, which is the property that matters. A cookie committed to the
-      # repo instead would be reverted to the committed copy on every pull,
-      # quietly undoing the rotation — and would outlive the decision to make
-      # this repo public.
-      #
-      # Read-write on purpose: YouTube rotates these cookies as they are used
-      # and yt-dlp writes the new ones back, so :ro would let the session
-      # decay to nothing over a few days. The mount is a seed, not the
-      # session — app/ytdlp.py copies it onto the cache volume at boot.
+      # Dokploy's File Mount path, which survives later deploys. A cookie
+      # committed to the repo would be reverted on every pull. Read-write
+      # because YouTube rotates these and yt-dlp saves them back; the mount is
+      # a seed, and app/ytdlp.py copies it onto the cache volume at boot.
       - ../files/cookies.txt:/app/cookies.txt
     networks:
       - unstream
