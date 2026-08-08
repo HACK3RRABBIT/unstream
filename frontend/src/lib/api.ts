@@ -129,7 +129,7 @@ const localizeResult = (result: SearchResult): SearchResult => ({
 })
 
 /** Backend `detail` strings, translated at the same seam as result subtitles.
- *  The wire stays English because the Telegram bot shares it; each surface
+ *  The wire stays English and is translated at the seam; each surface
  *  renders it in its own voice (ADR 0001). `$1` carries the backend's number
  *  through. */
 const ERROR_PHRASES: [RegExp, string][] = [

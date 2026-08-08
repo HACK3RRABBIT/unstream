@@ -2,7 +2,7 @@
 
 Unstream counts its own usage. Events are written to a SQLite file on the `analytics` volume by `backend/app/analytics.py`, and read back through a token-gated `/admin` page in the existing React app. We rejected Plausible, Umami and GA alike: a hosted one costs money or an account, a self-hosted one is a second container and a second database for a project whose whole premise is that it needs neither.
 
-Almost every event is recorded **server-side**, inside endpoints that already run — searches, link resolves, downloads started, and each track's outcome and duration. Only page views and a couple of browser-only moments (PWA install, the share sheet) come from a `sendBeacon` in `frontend/src/lib/analytics.ts`. So the numbers are not something an ad blocker can subtract, the page pays nothing to collect them, and the Telegram bot is counted the day it ships without writing any bot-side tracking — it sends `X-Unstream-Surface: telegram` and every event grows a surface.
+Almost every event is recorded **server-side**, inside endpoints that already run — searches, link resolves, downloads started, and each track's outcome and duration. Only page views and a couple of browser-only moments (PWA install, the share sheet) come from a `sendBeacon` in `frontend/src/lib/analytics.ts`. So the numbers are not something an ad blocker can subtract, and the page pays nothing to collect them.
 
 ## Consequences
 

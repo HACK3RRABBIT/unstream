@@ -18,8 +18,8 @@ Two different things live here, and only one of them is about strangers:
   memory. Those are true of any deployment, so they stay on when the rate
   limiters are off, and are widened rather than disabled — 0 for no limit.
 
-Messages stay English so the Telegram bot can share them; the Farsi UI
-translates at the API seam (`localizeError` in frontend/src/lib/api.ts).
+Messages stay English at the wire; the Farsi UI translates at the API seam
+(`localizeError` in frontend/src/lib/api.ts).
 """
 
 import ipaddress
@@ -56,10 +56,9 @@ FILES_PER_MINUTE = int(os.getenv("RATE_FILES_PER_MINUTE", "60"))
 # A ZIP is the whole album in one request, so it is priced per hour instead.
 ZIPS_PER_HOUR = int(os.getenv("RATE_ZIPS_PER_HOUR", "30"))
 
-# The 100-track cap is the Telegram bot's, unchanged (docs/telegram-bot-spec.md).
-# Its *one active job per user* doesn't port over: the web UI puts a download
-# button on every row, so a strict 1 would 429 the second song someone taps.
-# Three matches the download pool's default worker count in jobs.py.
+# One active job per caller would 429 the second song someone taps, because
+# the UI puts a download button on every row. Three matches the download
+# pool's default worker count in jobs.py.
 #
 # 0 means no limit on either, which is a real thing to want — a discography
 # is one job of several hundred tracks — and not something the rate limiters'
@@ -95,11 +94,6 @@ def _is_internal(host: str) -> bool:
         return ipaddress.ip_address(host).is_private
     except ValueError:
         return False  # not an IP at all — treat as untrusted
-
-
-def surface(request: Request) -> str:
-    """Which client this is. The bot sets the header; browsers don't."""
-    return "telegram" if request.headers.get("x-unstream-surface") == "telegram" else "web"
 
 
 def visitor(request: Request) -> str:
@@ -193,7 +187,6 @@ def enforce(kind: str, request: Request) -> str:
         if kind in _TRACKED:
             analytics.record(
                 "rate_limited",
-                surface=surface(request),
                 visitor=visitor(request),
                 detail=kind,
             )

@@ -2,7 +2,7 @@
 
 Every interesting thing that happens becomes one row in a SQLite table.
 Most events are recorded server-side inside the endpoints that already
-exist, so an ad blocker can't hide them and the Telegram bot is counted
+exist, so an ad blocker can't hide them and the page pays nothing to be
 for free; only page views need the browser to say anything (see
 `/api/collect` in main.py).
 
@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS events (
     ts      INTEGER NOT NULL,   -- unix seconds
     day     TEXT    NOT NULL,   -- YYYY-MM-DD, already offset — group by this
     name    TEXT    NOT NULL,   -- search | resolve | download_start | ...
-    surface TEXT    NOT NULL,   -- web | pwa | telegram
+    surface TEXT    NOT NULL,   -- web | pwa
     visitor TEXT,               -- daily-rotating hash; NULL server-side
     source  TEXT,               -- provider, audio host, referrer host
     detail  TEXT,               -- low-cardinality: quality, device, error class

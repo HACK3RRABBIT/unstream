@@ -87,11 +87,9 @@ class Job:
     # jobs in flight. Never leaves the process — as_dict() omits it, and job
     # ids stay unguessable so anyone holding one can still fetch it.
     owner: str = ""
-    # Analytics only: a hashed, daily-rotating pseudonym and which client
-    # started the job, so a finished track can be attributed without the
-    # download pipeline ever seeing an address.
+    # Analytics only: a hashed, daily-rotating pseudonym, so a finished track
+    # can be attributed without the download pipeline ever seeing an address.
     visitor: str = ""
-    surface: str = "web"
     tracks: dict[str, TrackState] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -194,7 +192,6 @@ def _run_track(job: Job, state: TrackState) -> None:
             state.file_path = path
         analytics.record(
             "track_done",
-            surface=job.surface,
             visitor=job.visitor or None,
             source=_host_of(chosen["url"]),
             detail=job.quality,
@@ -208,7 +205,6 @@ def _run_track(job: Job, state: TrackState) -> None:
             state.error = str(exc)
         analytics.record(
             "track_error",
-            surface=job.surface,
             visitor=job.visitor or None,
             source=_host_of(chosen["url"]),
             detail=analytics.error_class(str(exc)),
@@ -224,7 +220,6 @@ def start(
     quality: str = downloader.DEFAULT_QUALITY,
     owner: str = "",
     visitor: str = "",
-    surface: str = "web",
 ) -> Job:
     job = Job(
         id=uuid.uuid4().hex[:12],
@@ -232,7 +227,6 @@ def start(
         quality=quality,
         owner=owner,
         visitor=visitor,
-        surface=surface,
     )
     # Two different tracks can share "Artist - Title" (playlist duplicates,
     # remastered copies). Concurrent downloads to one filename truncate each

@@ -451,9 +451,9 @@ function InstallTile({ stats }: { stats: Stats }) {
   )
 }
 
-/** Only earns its space once there is more than one client — which is what
- *  happens the day the Telegram bot ships. Until then it renders nothing
- *  rather than a tile that always says "100% web". */
+/** Only earns its space once there is more than one client — installed PWA
+ *  against browser. Until then it renders nothing rather than a tile that
+ *  always says "100% web". */
 function SurfaceTile({ stats }: { stats: Stats }) {
   const surfaces = stats.breakdowns.surfaces
   if (surfaces.length < 2) return null
