@@ -101,9 +101,7 @@ export function Card({
                   onClick={() => setView(mode)}
                   className={clsx(
                     'rounded-[6px] px-2 py-0.5 text-micro capitalize transition',
-                    view === mode
-                      ? 'bg-ink-700 text-ink-100'
-                      : 'text-ink-400 hover:text-ink-300',
+                    view === mode ? 'bg-ink-700 text-ink-100' : 'text-ink-400 hover:text-ink-300',
                   )}
                 >
                   {mode}
@@ -135,10 +133,7 @@ export function DataTable({ head, rows }: { head: string[]; rows: (string | numb
           {rows.map((row, r) => (
             <tr key={r} className="border-t border-ink-800">
               {row.map((cell, i) => (
-                <td
-                  key={i}
-                  className={clsx('py-1.5', i ? 'text-right' : 'text-ink-100')}
-                >
+                <td key={i} className={clsx('py-1.5', i ? 'text-right' : 'text-ink-100')}>
                   {typeof cell === 'number' ? withCommas(cell) : cell}
                 </td>
               ))}
@@ -397,9 +392,7 @@ export function TrendChart({ days, series }: { days: string[]; series: TrendSeri
                 />
                 {s.label}
               </span>
-              <span className="tabular-nums text-ink-100">
-                {withCommas(s.values[active])}
-              </span>
+              <span className="tabular-nums text-ink-100">{withCommas(s.values[active])}</span>
             </div>
           ))}
         </div>
@@ -625,8 +618,6 @@ export function BarList({
 
 export function Empty() {
   return (
-    <div className="grid h-24 place-items-center text-mini text-ink-400">
-      Nothing recorded yet
-    </div>
+    <div className="grid h-24 place-items-center text-mini text-ink-400">Nothing recorded yet</div>
   )
 }
