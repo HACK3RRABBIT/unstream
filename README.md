@@ -8,7 +8,34 @@
   <img src="docs/media/hero.png" alt="Unstream — your music library, as files" />
 </p>
 
-Educational project: paste a **Spotify / Deezer / Apple Music / YouTube / SoundCloud** track, album or playlist URL — or search every catalog at once — and get tagged audio files at the quality you pick (128 / 192 / 320 kbps mp3, or the original stream untouched). No accounts, no API keys, nothing paid.
+<p align="center">
+  <a href="#quick-start"><b>Quick start</b></a> ·
+  <a href="#configuration">Configuration</a> ·
+  <a href="#when-downloads-fail">Troubleshooting</a> ·
+  <a href="README.fa.md">فارسی</a>
+</p>
+
+Paste a **Spotify / Deezer / Apple Music / YouTube / SoundCloud** track, album or playlist URL — or search every catalog at once — and get tagged audio files at the quality you pick (128 / 192 / 320 kbps mp3, or the original stream untouched).
+
+No accounts. No API keys. Nothing paid. You run it, so the files are yours and nobody is standing in between.
+
+> The interface is **Farsi only** — that was a deliberate product decision, not an oversight ([ADR 0001](docs/adr/0001-farsi-only-ui-no-i18n.md)). Everything else here is in English.
+
+## Quick start
+
+You need [Docker](https://docs.docker.com/get-started/get-docker/). Nothing else — no Python, no Node, no ffmpeg on your machine.
+
+```sh
+git clone https://github.com/amiralibg/unstream.git
+cd unstream
+docker compose up -d
+```
+
+Open **<http://localhost:8080>**. Search for something, or paste a link, and hit download.
+
+Finished tracks land in **`./downloads/<job-id>/`** — real files in a real folder, yours to move wherever your music lives. Nothing expires and nothing is cleaned up unless you ask for it.
+
+That's the whole setup. If you want to change something, `cp .env.example .env` and read the comments — every setting is optional and documented there.
 
 <table>
   <tr>
@@ -17,100 +44,96 @@ Educational project: paste a **Spotify / Deezer / Apple Music / YouTube / SoundC
   </tr>
 </table>
 
+### Running it on something small
+
+A Raspberry Pi, a NAS, an old laptop — all fine, and you won't build anything: `docker compose up` pulls prebuilt `linux/amd64` and `linux/arm64` images from GHCR and only falls back to building from source if it can't.
+
+On **Linux**, set the ownership of the files it writes so they belong to you rather than to the container's user:
+
+```sh
+echo "PUID=$(id -u)" >> .env
+echo "PGID=$(id -g)" >> .env
+docker compose up -d
+```
+
+macOS and Windows can skip that — Docker Desktop handles it.
+
 ## How it actually works
 
 Streaming services are DRM-protected, so nothing is downloaded from them directly. Instead:
 
 1. **Metadata** comes from free, keyless providers:
-   - **Spotify embed pages** (`open.spotify.com/embed/…`) — the public iframe widget ships full track lists as JSON; this is how most downloader websites work. Used for pasted Spotify URLs.
+   - **Spotify embed pages** (`open.spotify.com/embed/…`) — the public iframe widget ships full track lists as JSON. Used for pasted Spotify URLs.
    - **Deezer public API** — keyless; powers search (songs, albums, **artists**, playlists), full artist discographies, and Deezer URLs.
    - **iTunes Search API** — keyless; adds Apple Music coverage to search and resolves `music.apple.com` URLs.
-   - **SoundCloud web API** — the site's own `api-v2` endpoints, using a client id scraped from its public JS bundles (the same trick yt-dlp uses). Full search parity with soundcloud.com: tracks, people, albums and playlists; artist profiles resolve to their complete uploads. Go-only (DRM) tracks are filtered out.
-   - **yt-dlp** — reads public YouTube and SoundCloud pages; resolves their URLs (videos, playlists, sets, profiles) and contributes YouTube search results.
-   Search fans out to all of these in parallel and merges the results, deduped by name + artist. There is deliberately no Spotify Web API integration — since 2025 it requires the app owner to hold an active Premium subscription, and this project stays 100% free and keyless.
-2. **yt-dlp** finds the audio: tracks that already point at a YouTube/SoundCloud page download directly; everything else is searched (`ytsearch8:` on "artists - title") picking the result whose duration is closest to the catalog's (rejects live versions and hour-long mixes). Retries exclude broken uploads, and the last attempt searches SoundCloud instead of YouTube.
-3. The best audio stream is downloaded at the **quality** picked in the header — **ffmpeg** encodes mp3 at 128, 192 (default) or 320 kbps; if the converter leaves raw audio behind, a direct ffmpeg pass salvages it. **Original** skips the encode and keeps the upload's own stream (m4a, or opus remuxed out of webm so it can carry tags) — best fidelity, since re-encoding an already-lossy source can only lose more.
-4. **mutagen** embeds tags + cover art into the file, as ID3, MP4 atoms or Vorbis comments depending on what came out.
+   - **SoundCloud web API** — the site's own `api-v2` endpoints, using a client id scraped from its public JS bundles (the same trick yt-dlp uses). Full search parity: tracks, people, albums and playlists. Go-only (DRM) tracks are filtered out.
+   - **yt-dlp** — reads public YouTube and SoundCloud pages; resolves their URLs and contributes YouTube search results.
 
-The FastAPI backend runs downloads on a small thread pool (3 concurrent) and exposes job progress; the React frontend polls it and shows per-track status. A background sweeper runs every 10 minutes: it deletes job folders older than `DOWNLOADS_TTL_HOURS` (default 24), then evicts whatever is still over `MAX_DOWNLOADS_GB` (default 20) oldest-first, so the volume can't fill between expiries. ZIPs are streamed as they're built rather than assembled in memory — a 100-track album costs one chunk, not the whole archive.
+   Search fans out to four of these in parallel and merges the results, deduped by name + artist. There is deliberately no Spotify Web API integration — since 2025 it requires the app owner to hold an active Premium subscription, and this project stays free and keyless.
+2. **yt-dlp** finds the audio: tracks already pointing at a YouTube/SoundCloud page download directly; everything else is searched (`ytsearch8:` on "artists - title") picking the result whose duration is closest to the catalog's, which rejects live versions and hour-long mixes. Retries exclude broken uploads, and the last attempt searches SoundCloud instead of YouTube.
+3. The best audio stream is downloaded at the **quality** you picked — **ffmpeg** encodes mp3 at 128, 192 (default) or 320 kbps. **Original** skips the encode and keeps the upload's own stream (m4a, or opus remuxed out of webm so it can carry tags) — best fidelity, since re-encoding an already-lossy source can only lose more.
+4. **mutagen** embeds tags and cover art, as ID3, MP4 atoms or Vorbis comments depending on what came out.
 
 ```
 frontend (Vite + React + Tailwind)  ──proxy /api──▶  backend (FastAPI)
-                                                      ├─ embed.py                Spotify URL → metadata
-                                                      ├─ deezer.py               search, artists, Deezer URLs
-                                                      ├─ itunes.py               search, Apple Music URLs
-                                                      ├─ ytdlp.py                YouTube/SoundCloud URLs + search
-                                                      ├─ downloader.py           find audio → encode → tags
-                                                      └─ jobs.py                 thread pool + progress + sweeper
+                                                      ├─ embed.py       Spotify URL → metadata
+                                                      ├─ deezer.py      search, artists, Deezer URLs
+                                                      ├─ itunes.py      search, Apple Music URLs
+                                                      ├─ ytdlp.py       YouTube/SoundCloud URLs + search
+                                                      ├─ downloader.py  find audio → encode → tags
+                                                      └─ jobs.py        thread pool + progress + sweeper
 ```
 
-## Setup
+## Configuration
 
-Prereqs: Python 3.12+ with [uv](https://docs.astral.sh/uv/), Node 20+, ffmpeg (`brew install ffmpeg`).
+Everything is optional. `cp .env.example .env` and uncomment what you want — that file documents each setting and is the authority; this is the summary.
 
-No accounts, keys or `.env` needed — every provider is public and keyless. (The one optional variable is `ADMIN_TOKEN`, which unlocks the stats dashboard; it's a password you invent, not a credential from anyone.)
+| Variable | Default (self-hosted) | Does |
+|---|---|---|
+| `UNSTREAM_PORT` | `8080` | Host port for the web UI |
+| `DOWNLOADS_DIR` | `./downloads` | Where finished tracks land. Point it at an external disk or a NAS mount |
+| `PUID` / `PGID` | `1001` | Who owns those files. Use `id -u` / `id -g` on Linux |
+| `DOWNLOADS_TTL_HOURS` | `0` (never) | Hours before a finished download is deleted |
+| `MAX_DOWNLOADS_GB` | `0` (no cap) | Disk ceiling; over it, finished jobs go oldest-first |
+| `DOWNLOAD_WORKERS` | `3` | Tracks downloaded in parallel |
+| `RATE_LIMITS_ENABLED` | `false` | Per-caller rate limits. **Turn on if strangers can reach it** |
+| `MAX_TRACKS_PER_JOB` | `0` (no limit) | Tracks in one job |
+| `ADMIN_TOKEN` | *unset* | Enables the `/admin` dashboard. Unset = it doesn't exist |
 
-**1. Backend**
+The **code's** defaults differ from the compose file's: they assume a server shared with strangers (downloads expire after 24h, disk capped at 20 GB, limits tight). `docker-compose.yml` overrides them toward "this is my machine". See [ADR 0005](docs/adr/0005-open-source-and-self-hostable.md).
 
-```sh
-cd backend
-uv sync
-uv run uvicorn app.main:app --reload --port 8000
-```
+## Can I host this for other people?
 
-**2. Frontend**
+Not on an ordinary VPS, and this is the one thing that works locally and fails on a rented server.
 
-```sh
-cd frontend
-npm install
-npm run dev
-```
+YouTube treats a datacenter address differently from a home one. From a VPS it answers `LOGIN_REQUIRED` at the playability check — before a proof-of-origin token is asked for and before a JS challenge exists to solve — so the defences the image ships cannot reach the point where they'd help. From a home connection none of that happens.
 
-Open <http://localhost:5173>, paste any supported URL (or search by name), hit **Fetch**, then **Download all**. Files land in `backend/downloads/<job-id>/` and can be grabbed per-track or as a ZIP from the UI (auto-deleted after `DOWNLOADS_TTL_HOURS`, default 24).
+Making a public instance work needs egress from a non-datacenter address: a residential or ISP proxy, which costs money. There is no free workaround; if there were, it would be in this repo. SoundCloud is unaffected throughout.
 
-## API
+If you're deploying it anyway — for yourself, behind a tunnel, or with proxied egress — use [`compose.dokploy.yml`](compose.dokploy.yml), which is the live deployment's file, and **set `RATE_LIMITS_ENABLED=true`**. Without accounts, per-IP limits are the only thing between your server and everyone.
 
-| Endpoint | Purpose |
-|---|---|
-| `GET /api/search?q=` | Multi-source search → tracks, albums, artists, playlists |
-| `GET /api/artist/{id}` | Artist page: top tracks + complete discography (Deezer) |
-| `POST /api/resolve` `{url}` | Spotify/Deezer/Apple Music/YouTube/SoundCloud URL → track list |
-| `POST /api/download` `{url, track_ids?, quality?}` | Start a download job, returns `job_id`. `quality` is `128` \| `192` (default) \| `320` \| `original` |
-| `GET /api/jobs/{id}` | Per-track status/progress |
-| `GET /api/jobs?ids=a,b,c` | The same, for several jobs at once — what the UI actually polls. Unknown ids are omitted rather than 404ing |
-| `GET /api/jobs/{id}/tracks/{tid}/file` | Download one finished track (mp3/m4a/opus) |
-| `GET /api/jobs/{id}/zip` | ZIP of all finished tracks |
-| `POST /api/collect` | Page-view beacon (see Analytics) |
-| `GET /api/admin/stats?days=` · `GET /api/admin/events` | Dashboard data, `Authorization: Bearer $ADMIN_TOKEN` |
+## When downloads fail
+
+Check **`GET /api/admin/extraction`** first (needs `ADMIN_TOKEN`). It reports what actually landed in the container and tells "never configured" apart from "configured and still blocked". `js_runtime: null` means nothing else is worth debugging first.
+
+Then, roughly in order of how often it's the answer:
+
+1. **Keep yt-dlp current.** These bypasses ship *inside* yt-dlp releases, so a stale image is a stale workaround. The published images rebuild weekly for exactly this; if you built your own, `docker compose build --pull --no-cache api`.
+2. **The JS challenge solver.** yt-dlp needs both a runtime (deno, in the image) and a script it downloads on first use, which `YTDLP_REMOTE_COMPONENTS` allows. With a runtime and no script it reports `Signature solving failed` and hands back a video with **no audio streams at all**.
+3. **The PO token provider.** The `pot-provider` sidecar mints proof-of-origin tokens some clients are asked for. On by default, free, keyless.
+4. **Cookies**, only if the above aren't enough — and on a home connection they almost never are needed. Use a **throwaway Google account**: every download is attributed to it and YouTube bans accounts for exactly that. Note that authenticating *changes which client yt-dlp picks*, moving it onto the web clients — so cookies without 2 and 3 in place make things worse, not better. See `.env.example` for the mount.
 
 ## Analytics
 
-Unstream counts its own usage, with no third-party service, no cookie and no consent banner — see [ADR 0004](docs/adr/0004-self-hosted-analytics.md). Events go into a SQLite file on the `analytics` volume; a dashboard at **`/admin`** reads them back.
-
-Set `ADMIN_TOKEN` to turn it on. **Without it, `/api/admin/*` returns 503 and the dashboard does not exist** — it can't accidentally end up public.
+Unstream can count its own usage, with no third-party service, no cookie and no consent banner ([ADR 0004](docs/adr/0004-self-hosted-analytics.md)). It is **off unless you set `ADMIN_TOKEN`**, and local either way — events go to a SQLite file on the `analytics` volume and are read back only by `/admin` on your own instance. Nothing is ever sent anywhere.
 
 ```sh
-# a token worth using
-openssl rand -hex 24
+openssl rand -hex 24   # a token worth using
 ```
 
-Then open `/admin`, paste the token once (kept in `localStorage`), and you get visitors, searches, downloads, files actually saved, per-track success rate and median time, PWA installs against the number of people offered one, what people searched for, which links they pasted (and which of them **failed** — a provider climbing there alone is how a Spotify embed change announces itself), which quality they chose, why tracks failed, which cap turned a real request away, and where the traffic came from — plus a **Copy for socials** button that formats the headline numbers for a post.
+A caller is identified by a **daily-rotating hash of IP + user agent** — no address is stored, which also makes "returning visitors" deliberately unmeasurable. The page is `Disallow`ed in `robots.txt` and sets `noindex` on itself.
 
-The page is `Disallow`ed in `robots.txt` and sets `noindex` on itself, so the path stays out of search results whether or not the token is set.
-
-Most of it is recorded server-side inside the endpoints that already run, so ad blockers don't subtract from it and the Telegram bot will be counted for free (it sends `X-Unstream-Surface: telegram`). The only browser-side part is a `sendBeacon` for page views. A caller is identified by a **daily-rotating hash of IP + user agent** — no address is ever stored, which also means "returning visitors" is deliberately unmeasurable.
-
-| Variable | Default | Does |
-|---|---|---|
-| `ADMIN_TOKEN` | *unset* | Enables `/admin`. Unset = 503 |
-| `ANALYTICS_UTC_OFFSET_MINUTES` | 210 in compose, 0 in code | Which day an event counts in (210 = Tehran) |
-| `ANALYTICS_RETENTION_DAYS` | 90 | How long rows are kept |
-| `ANALYTICS_DB_PATH` | `backend/data/analytics.db` | Where the file lives |
-| `RATE_COLLECT_PER_MINUTE` | 30 | Beacons per client, so nobody can inflate the numbers |
-
-> The `analytics` volume is the only copy of this history. Unlike `downloads`, it is **not** disposable.
-
-Which means it's worth copying off the box on a cron. The file is in WAL mode and is being written to while you read it, so plain `cp` can hand you a torn database — use SQLite's own backup, which snapshots a live one consistently:
+The `analytics` volume is the only copy of that history. It's in WAL mode and written to while you read it, so `cp` can hand you a torn database — use SQLite's own backup:
 
 ```sh
 docker compose exec -T api python -c \
@@ -120,53 +143,51 @@ docker compose exec -T api python -c \
   && docker compose cp api:/app/data/backup.db "./analytics-$(date +%F).db"
 ```
 
-## Deploying (Dokploy)
+## API
 
-One compose stack, one domain. nginx in the frontend container serves the built app **and** proxies `/api` to the backend over the internal network — same origin, so no CORS and no separate API domain.
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/search?q=` | Multi-source search → tracks, albums, artists, playlists |
+| `GET /api/artist/{id}` | Artist page: top tracks + complete discography (Deezer) |
+| `POST /api/resolve` `{url}` | Spotify/Deezer/Apple Music/YouTube/SoundCloud URL → track list |
+| `POST /api/download` `{url, track_ids?, quality?}` | Start a job, returns `job_id`. `quality` is `128` \| `192` \| `320` \| `original` |
+| `GET /api/jobs/{id}` | Per-track status/progress |
+| `GET /api/jobs?ids=a,b,c` | The same for several jobs — what the UI polls. Unknown ids are omitted rather than 404ing |
+| `GET /api/jobs/{id}/tracks/{tid}/file` | Download one finished track |
+| `GET /api/jobs/{id}/zip` | ZIP of all finished tracks, streamed as it's built |
+| `GET /api/admin/stats?days=` · `/api/admin/extraction` | Dashboard and diagnostics, `Authorization: Bearer $ADMIN_TOKEN` |
 
+## Development
+
+Prereqs: Python 3.12+ with [uv](https://docs.astral.sh/uv/), Node 20+, ffmpeg (`brew install ffmpeg`).
+
+```sh
+cd backend && uv sync && uv run uvicorn app.main:app --reload --port 8000
+cd frontend && npm install && npm run dev
 ```
-unstream.amiralibg.xyz ──▶ Traefik ──▶ frontend (nginx :80) ──/api──▶ api (uvicorn :8000)
-                                                                        └─ downloads volume
-```
 
-1. Push this repo to GitHub.
-2. Dokploy → **Create Service → Compose**, pick the repo, compose path `./compose.dokploy.yml`. (`./docker-compose.yml` is the self-hosting file — no Traefik, no file mounts, and a published port.)
-3. **Domains tab**: add `unstream.amiralibg.xyz` → service `frontend`, port `80`, HTTPS on (Let's Encrypt).
-4. DNS: `A` record `unstream` → VPS IP.
-5. **Environment tab**: set `ADMIN_TOKEN` to a long random string if you want the `/admin` dashboard (see Analytics). Leave it out and the dashboard stays off — including on launch day, which is the one day the numbers are most worth having. Set `MAX_DOWNLOADS_GB` to something under what the host has free while you're in there.
+Then <http://localhost:5173>. Tests: `cd backend && uv run pytest`.
 
-To run *this* file locally you need Dokploy's network (`docker network create dokploy-network`) and a `files/cookies.txt` beside the checkout. For everyday local use, `docker compose up -d` runs the self-hosting stack instead and needs neither.
+Design decisions live in [`docs/adr/`](docs/adr/) — read those before changing anything they cover.
 
 ## Notes
 
-- Playlists must be public. The embed-page provider even reads Spotify's editorial playlists (which the official API blocks for new apps).
-- The embed pages are an undocumented structure — Spotify can change them any time. If resolving suddenly breaks, that's the first place to look (`backend/app/embed.py`).
-- **YouTube bot-checks datacenter IPs** ("Sign in to confirm you're not a bot") long before it bothers a home connection, so this is the one thing that works locally and fails on a VPS. Three defences, in the order they matter:
+- Playlists must be public. The embed-page provider even reads Spotify's editorial playlists, which the official API blocks for new apps.
+- The embed pages are an undocumented structure — Spotify can change them any time. If resolving suddenly breaks, look at `backend/app/embed.py` first.
+- Rate limits are in-memory and per process. Fine for the single-container stack here; a scaled-out API would need a shared store.
 
-  1. **A JS challenge solver** — a runtime *and* a script, and it needs both. deno is in the API image; the script yt-dlp downloads on first use, but only when `YTDLP_REMOTE_COMPONENTS` asks it to (`ejs:github` by default). This is the one that actually bit: with a runtime and no script, yt-dlp reports `Signature solving failed` and hands back a video carrying **no audio streams at all**. Cached on the `ytdlp-cache` volume so it's fetched once, not every restart.
-  2. **A PO token provider**, on by default. The `pot-provider` service mints the proof-of-origin tokens YouTube demands from the `web`/`web_safari` clients; `POT_PROVIDER_URL` points the API at it. No account, no key.
-  3. **Cookies**, only if the first two aren't enough. Use a **throwaway Google account** — every download the server makes is attributed to it, and YouTube bans accounts for exactly that. Note that authenticating *changes which client yt-dlp picks*: it stops using `android_vr` and moves to the web clients, so cookies without items 1 and 2 in place will make things worse, not better. Export from a private window you then close, or the browser rotates them out from under the file.
+## Licence
 
-     On Dokploy, add it as **Advanced → Volumes → File Mount** (file path `cookies.txt`), and set `YTDLP_COOKIEFILE=/app/cookies.txt` in the Environment tab. Keep it out of git: yt-dlp writes rotated cookies back, so a committed copy would be reverted to the snapshot on every pull.
+[MIT](LICENSE). The bundled [Vazirmatn](https://github.com/rastikerdar/vazirmatn) typeface is under the SIL Open Font License 1.1 — see `frontend/public/fonts/OFL.txt`.
 
-     The mount is a **seed, not the session**. Dokploy writes File Mounts as root while the container runs as `appuser`, so yt-dlp can read that file but not save to it — and it saves on close, which turns a working extraction into a `PermissionError` and a 500 *after* the download already succeeded. So it is copied onto the cache volume at boot and the rotation happens there, re-seeded whenever you edit the mount. `cookiefile_live` on `/api/admin/extraction` is the copy actually in use.
+## Legal
 
-  Check what actually landed in the container with `GET /api/admin/extraction` — it reports all four settings plus which JS runtime is on `PATH`, which is how you tell "mount never happened" from "mounted and still blocked". A `YTDLP_COOKIEFILE` pointing at nothing is ignored rather than failing every extraction, so it is otherwise invisible. `js_runtime: null` means item 1 is dead and nothing else is worth debugging first.
+This project is a technical exercise in APIs, media pipelines and background jobs, and a tool for getting at music you already have the right to.
 
-  Keep yt-dlp current too (`uv lock --upgrade-package yt-dlp` + rebuild) — these bypasses ship *in* yt-dlp releases, so a frozen lockfile is a frozen workaround. **"Links that failed" and "Why tracks failed" on the dashboard are where all of this shows up first.**
+**Only download what you have the rights to.** Copyright law is yours to comply with, and running your own instance means the responsibility is yours too.
 
-  If it still fails, the IP itself is burnt, and the only reliable fix left is egress from a non-datacenter address — which costs money. SoundCloud is unaffected throughout.
-- Old job folders are cleaned automatically after `DOWNLOADS_TTL_HOURS` (default 24, set it in the environment to change).
-- There are no accounts, so anything that costs real resources is capped per client IP in `backend/app/limits.py` — in-memory and per process, which is enough for the single-container stack above but would need a shared store if the API were ever scaled out. All the defaults are environment variables:
+Unstream is not affiliated with, endorsed by, or connected to Spotify, Deezer, Apple, YouTube or SoundCloud. Those names are used only to describe what the software reads. No DRM is circumvented: nothing is downloaded from any streaming service, and audio comes from public YouTube and SoundCloud pages via yt-dlp.
 
-  | Variable | Default | Caps |
-  |---|---|---|
-  | `RATE_SEARCH_PER_MINUTE` | 15 | Searches (four providers fan out per call — the most expensive read) |
-  | `RATE_RESOLVE_PER_MINUTE` | 30 | Link opens and artist pages |
-  | `RATE_DOWNLOADS_PER_HOUR` | 20 | Download jobs started |
-  | `RATE_FILES_PER_MINUTE` | 60 | Finished files served — no CPU, all of the bandwidth |
-  | `RATE_ZIPS_PER_HOUR` | 30 | ZIPs, which are a whole album per request |
-  | `MAX_ACTIVE_JOBS_PER_CLIENT` | 3 | Jobs running at once — matches the download pool's worker count |
-  | `MAX_TRACKS_PER_JOB` | 100 | Tracks in one job, same cap the Telegram bot agreed on |
-- Disk is capped separately from time: `MAX_DOWNLOADS_GB` (default 20) is the ceiling the 24h TTL doesn't give you, since three workers can land hundreds of tracks an hour and nothing expires for a day. Over it, finished jobs go oldest-first. Running jobs are never touched, so the per-client caps above are what bound *that* case.
-- Only download music you have the rights to. This project exists to learn the mechanics of APIs, media pipelines and background jobs.
+---
+
+Built by [amiralibgi](https://x.com/_amiralibgi) and [yazdanctx](https://x.com/yazdanctx).
