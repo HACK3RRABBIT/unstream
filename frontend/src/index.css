@@ -1,87 +1,82 @@
 @import 'tailwindcss';
 
-/* Peyda FaNum, self-hosted (see docs/adr/0002). The four weights the UI
-   actually uses (400/500/600/700) are preloaded from index.html — those
-   hrefs must stay byte-identical to the url()s here or the browser
+/* Vazirmatn FD, self-hosted (see docs/adr/0002). The FD cut is what renders
+   ASCII digits as Persian numerals; the plain cut does not. The four weights
+   the UI actually uses (400/500/600/700) are preloaded from index.html —
+   those hrefs must stay byte-identical to the url()s here or the browser
    downloads each font twice. */
 @font-face {
-  font-family: 'Peyda';
+  font-family: 'Vazirmatn';
   font-weight: 100;
   font-display: swap;
-  src: url('/fonts/PeydaFaNumWeb-Thin.woff2') format('woff2');
+  src: url('/fonts/Vazirmatn-FD-Thin.woff2') format('woff2');
 }
 @font-face {
-  font-family: 'Peyda';
+  font-family: 'Vazirmatn';
   font-weight: 200;
   font-display: swap;
-  src: url('/fonts/PeydaFaNumWeb-ExtraLight.woff2') format('woff2');
+  src: url('/fonts/Vazirmatn-FD-ExtraLight.woff2') format('woff2');
 }
 @font-face {
-  font-family: 'Peyda';
+  font-family: 'Vazirmatn';
   font-weight: 300;
   font-display: swap;
-  src: url('/fonts/PeydaFaNumWeb-Light.woff2') format('woff2');
+  src: url('/fonts/Vazirmatn-FD-Light.woff2') format('woff2');
 }
 @font-face {
-  font-family: 'Peyda';
+  font-family: 'Vazirmatn';
   font-weight: 400;
   font-display: swap;
-  src: url('/fonts/PeydaFaNumWeb-Regular.woff2') format('woff2');
+  src: url('/fonts/Vazirmatn-FD-Regular.woff2') format('woff2');
 }
 @font-face {
-  font-family: 'Peyda';
+  font-family: 'Vazirmatn';
   font-weight: 500;
   font-display: swap;
-  src: url('/fonts/PeydaFaNumWeb-Medium.woff2') format('woff2');
+  src: url('/fonts/Vazirmatn-FD-Medium.woff2') format('woff2');
 }
 @font-face {
-  font-family: 'Peyda';
+  font-family: 'Vazirmatn';
   font-weight: 600;
   font-display: swap;
-  src: url('/fonts/PeydaFaNumWeb-SemiBold.woff2') format('woff2');
+  src: url('/fonts/Vazirmatn-FD-SemiBold.woff2') format('woff2');
 }
 @font-face {
-  font-family: 'Peyda';
+  font-family: 'Vazirmatn';
   font-weight: 700;
   font-display: swap;
-  src: url('/fonts/PeydaFaNumWeb-Bold.woff2') format('woff2');
+  src: url('/fonts/Vazirmatn-FD-Bold.woff2') format('woff2');
 }
 @font-face {
-  font-family: 'Peyda';
+  font-family: 'Vazirmatn';
   font-weight: 800;
   font-display: swap;
-  src: url('/fonts/PeydaFaNumWeb-ExtraBold.woff2') format('woff2');
+  src: url('/fonts/Vazirmatn-FD-ExtraBold.woff2') format('woff2');
 }
 @font-face {
-  font-family: 'Peyda';
+  font-family: 'Vazirmatn';
   font-weight: 900;
   font-display: swap;
-  src: url('/fonts/PeydaFaNumWeb-Black.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'Peyda';
-  font-weight: 950;
-  font-display: swap;
-  src: url('/fonts/PeydaFaNumWeb-ExtraBlack.woff2') format('woff2');
+  src: url('/fonts/Vazirmatn-FD-Black.woff2') format('woff2');
 }
 
-/* Metric-tuned fallback so the one-time cold-visit swap from the system
-   font to Peyda causes no layout shift. Numbers were measured with
-   fontTools: mean Persian-glyph advance of Peyda vs Tahoma gives the
-   size-adjust; ascent/descent are Peyda's hhea metrics (975/411 at
-   upm 1000) divided by that size-adjust. */
+/* Metric-tuned fallback so the one-time cold-visit swap from the system font
+   to Vazirmatn causes no layout shift. Measured with fontTools: mean
+   Persian-glyph advance of Vazirmatn vs Tahoma gives the size-adjust;
+   ascent/descent are Vazirmatn's hhea metrics (2100/1100 at upm 2048)
+   divided by that size-adjust. */
 @font-face {
-  font-family: 'Peyda Fallback';
+  font-family: 'Vazirmatn Fallback';
   src: local('Tahoma');
-  size-adjust: 98.16%;
-  ascent-override: 99.32%;
-  descent-override: 41.87%;
+  size-adjust: 98.45%;
+  ascent-override: 104.15%;
+  descent-override: 54.55%;
   line-gap-override: 0%;
 }
 
 @theme {
-  --font-display: 'Peyda', 'Peyda Fallback', system-ui, sans-serif;
-  --font-sans: 'Peyda', 'Peyda Fallback', system-ui, sans-serif;
+  --font-display: 'Vazirmatn', 'Vazirmatn Fallback', system-ui, sans-serif;
+  --font-sans: 'Vazirmatn', 'Vazirmatn Fallback', system-ui, sans-serif;
 
   /* Green-tinted dark neutrals */
   --color-ink-950: #0b0d0a;
