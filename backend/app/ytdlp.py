@@ -12,6 +12,7 @@ page instead of running a YouTube search for a match.
 
 import os
 import re
+import shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -22,16 +23,31 @@ from .models import Collection, ProviderError, SearchResult, Track
 
 # YouTube bot-checks datacenter IPs ("Sign in to confirm you're not a bot")
 # long before it bothers a home connection, which is why downloads can work
-# locally and fail on a VPS. Two independent answers to that, both optional
-# and both configured from the environment, so a server that starts failing
-# needs a restart rather than a release.
+# locally and fail on a VPS. Three answers to that, all configured from the
+# environment, so a server that starts failing needs a restart rather than a
+# release.
 #
-# The first is a proof-of-origin token provider: a sidecar that mints the
+# The first is the JS challenge solver. YouTube's player hands out challenges
+# that have to be *executed* to turn a format into a URL, and yt-dlp needs two
+# things to do it: a JavaScript runtime (deno, in the Dockerfile) and the
+# solver script itself, which it declines to fetch unless asked. Without the
+# script the runtime alone is useless — yt-dlp reports "Signature solving
+# failed" and returns a video with no audio streams on it. It is off by
+# default upstream because it downloads code at runtime; that trade is worth
+# making here and nowhere near the trade the cookie below asks for.
+REMOTE_COMPONENTS = os.getenv("YTDLP_REMOTE_COMPONENTS", "ejs:github")
+
+# The second is a proof-of-origin token provider: a sidecar that mints the
 # tokens YouTube wants from clients it trusts, with no account and no API key
 # behind it. bgutil-ytdlp-pot-provider is installed as a yt-dlp plugin (see
 # pyproject.toml) and sits inert until this names a provider to ask, which is
 # what keeps a local checkout working with nothing running beside it.
 POT_PROVIDER_URL = os.getenv("POT_PROVIDER_URL", "").rstrip("/")
+
+# Where the solver script and player caches land. Worth a volume: without one
+# every container restart re-downloads them on the first extraction of the
+# day, which is slow and noisy rather than broken.
+CACHE_DIR = os.getenv("YTDLP_CACHE_DIR", "")
 
 # The second is a cookies.txt exported from a signed-in browser. It works
 # where tokens alone don't, at the cost of tying every download to one
@@ -52,6 +68,10 @@ if COOKIEFILE_MISSING:
 def base_opts(**extra) -> dict:
     """Options every yt-dlp call in the project shares."""
     opts = {"quiet": True, "no_warnings": True, **extra}
+    if REMOTE_COMPONENTS:
+        opts["remote_components"] = REMOTE_COMPONENTS.split(",")
+    if CACHE_DIR:
+        opts["cachedir"] = CACHE_DIR
     if COOKIEFILE:
         opts["cookiefile"] = COOKIEFILE
     if POT_PROVIDER_URL:
@@ -66,12 +86,24 @@ def base_opts(**extra) -> dict:
 def status() -> dict:
     """What the anti-bot configuration actually resolved to, for /api/admin."""
     return {
+        "remote_components": REMOTE_COMPONENTS or None,
+        "js_runtime": _js_runtime(),
         "pot_provider_url": POT_PROVIDER_URL or None,
+        "cache_dir": CACHE_DIR or None,
         "cookiefile": COOKIEFILE or None,
         # True means YTDLP_COOKIEFILE was set and pointed at nothing: almost
         # always a mount that didn't happen.
         "cookiefile_missing": COOKIEFILE_MISSING,
     }
+
+
+def _js_runtime() -> str | None:
+    """Which JS runtime is on PATH, if any — None means challenges can't be
+    solved and YouTube will hand back videos with no audio on them."""
+    for runtime in ("deno", "bun", "node", "quickjs"):
+        if shutil.which(runtime):
+            return runtime
+    return None
 
 
 _YOUTUBE_RE = re.compile(
