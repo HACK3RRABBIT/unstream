@@ -1,14 +1,36 @@
+# Unstream, self-hosted.
+#
+#   docker compose up -d   →   http://localhost:8080
+#
+# Everything here works on a fresh clone with no .env file and no accounts.
+# Copy .env.example to .env only when you want to change something.
+#
+# The defaults below are deliberately not the ones in the code. The code
+# defaults protect a server whose disk and bandwidth are shared with
+# strangers; this file is for the opposite situation — your machine, your
+# music — so downloads are kept forever and the per-caller limits are set
+# where one enthusiastic person will never meet them.
+#
+# Deploying this publicly is a different file and, mostly, a bad idea:
+# see compose.dokploy.yml and the "Can I host this for other people?"
+# section of the README.
+
 services:
   frontend:
+    # Prebuilt, with the source build as the fallback: compose pulls this if
+    # it exists and builds ./frontend if it doesn't, so a clone works before
+    # the first release is published and a plain `docker compose up` never
+    # runs a Vite build on someone's NAS. `--build` still forces local.
+    image: ghcr.io/amiralibg/unstream-frontend:latest
     build: ./frontend
-    restart: always
+    restart: unless-stopped
+    ports:
+      # Host port only. nginx serves the built app and proxies /api to the
+      # api service over the compose network, so this is the single port
+      # anything needs to reach — the API is not published separately.
+      - "${UNSTREAM_PORT:-8080}:80"
     depends_on:
       - api
-    networks:
-      - unstream
-      # Traefik (Dokploy's proxy) reaches the container over this network;
-      # the domain itself is configured in Dokploy's Domains tab.
-      - dokploy-network
     logging: &logging
       driver: json-file
       options:
@@ -18,91 +40,97 @@ services:
   # Mints the proof-of-origin tokens YouTube asks datacenter IPs for. Free,
   # keyless, and stateless — it talks to Google on its own and holds nothing
   # worth persisting, so it gets no volume and is safe to recreate at will.
-  # Never published to a port: only `api` on the internal network calls it.
+  #
+  # From a home connection you almost certainly do not need this. It is here
+  # because it costs nothing when it is not needed, and because the day
+  # YouTube starts asking your address for a token is not a day you want to
+  # spend reading the README.
   pot-provider:
     image: brainicism/bgutil-ytdlp-pot-provider:latest
-    restart: always
-    networks:
-      - unstream
+    restart: unless-stopped
     logging: *logging
 
   api:
+    # As above. This is the image worth not building: a deno release download
+    # and a Python lockfile resolve, on hardware chosen for being quiet.
+    image: ghcr.io/amiralibg/unstream-api:latest
     build: ./backend
-    restart: always
-    # Not exposed publicly — only reachable through the frontend nginx proxy
+    restart: unless-stopped
     depends_on:
       - pot-provider
     environment:
-      # How long finished downloads stay on disk before the sweeper deletes them.
-      - DOWNLOADS_TTL_HOURS=${DOWNLOADS_TTL_HOURS:-24}
-      # The hard ceiling the TTL alone does not give you: over this, the
-      # sweeper evicts finished jobs oldest-first. Keep it under whatever the
-      # host actually has free.
-      - MAX_DOWNLOADS_GB=${MAX_DOWNLOADS_GB:-20}
+      # --- Keeping what you downloaded -------------------------------------
+      # 0 = never delete. The code defaults to deleting after 24 hours, which
+      # is right for a public server and wrong for a folder you browse.
+      - DOWNLOADS_TTL_HOURS=${DOWNLOADS_TTL_HOURS:-0}
+      # 0 = no disk ceiling. Your disk filling up is your business; a shared
+      # server's is not, which is why the code default is 20 GB.
+      - MAX_DOWNLOADS_GB=${MAX_DOWNLOADS_GB:-0}
+
+      # --- Limits ----------------------------------------------------------
+      # The per-caller rate limits price one stranger's share of a server you
+      # are paying for. There are no strangers here, so they are off — one
+      # switch rather than seven numbers to raise. Wrong admin tokens are
+      # still counted either way; that guard is not about fair shares.
+      # Turn this back on for anything reachable by someone you don't know.
+      - RATE_LIMITS_ENABLED=${RATE_LIMITS_ENABLED:-false}
+      # These are a different class and stay meaningful: they bound threads
+      # and memory rather than anyone's share. 0 = no limit, which is what a
+      # 900-track discography in one job needs. The worker count below is
+      # the real bound on what actually runs at once.
+      - MAX_ACTIVE_JOBS_PER_CLIENT=${MAX_ACTIVE_JOBS_PER_CLIENT:-0}
+      - MAX_TRACKS_PER_JOB=${MAX_TRACKS_PER_JOB:-0}
+      # Tracks downloaded in parallel. Raising it finishes a long album
+      # sooner and gets you bot-checked sooner, in that order.
+      - DOWNLOAD_WORKERS=${DOWNLOAD_WORKERS:-3}
+
+      # --- Getting audio out of YouTube ------------------------------------
       # Lets yt-dlp fetch the JS challenge solver it needs to turn a format
-      # into a URL. Without this it has a runtime and nothing to run in it,
+      # into a URL. Without it yt-dlp has a runtime and nothing to run in it,
       # and YouTube hands back videos with no audio streams on them. Set to
-      # an empty string to refuse the runtime download and accept that.
+      # an empty string to refuse the download and accept that.
       - YTDLP_REMOTE_COMPONENTS=${YTDLP_REMOTE_COMPONENTS-ejs:github}
       # Keeps that solver and the player caches across restarts.
       - YTDLP_CACHE_DIR=/app/cache
-      # The sidecar above. Unset it to turn tokens off and go back to plain
-      # anonymous extraction — which is what a local checkout does, since
-      # nothing is listening on this name outside compose.
+      # The sidecar above. Unset it for plain anonymous extraction.
       - POT_PROVIDER_URL=${POT_PROVIDER_URL:-http://pot-provider:4416}
-      # The fallback for when tokens alone don't satisfy YouTube. Point it at
-      # the file mounted below; an unset or missing path is ignored. Use a
-      # throwaway Google account — this account carries every download the
-      # server makes, and YouTube bans accounts for that.
+      # Almost nobody self-hosting needs this: YouTube bot-checks datacenter
+      # addresses long before it bothers a home connection. If you do, point
+      # it at a cookies file you have mounted in — see .env.example. Unset or
+      # missing is ignored rather than failing every extraction.
       - YTDLP_COOKIEFILE=${YTDLP_COOKIEFILE:-}
-      # Unset (the default) means /admin returns 503 and the dashboard does
-      # not exist. Set it to a long random string to turn analytics on.
+
+      # --- Who the files belong to -----------------------------------------
+      # The user id the server runs as, and therefore the owner of everything
+      # it writes into DOWNLOADS_DIR below. 1001 is the image's own user,
+      # which is correct until that directory is a folder on your disk that
+      # you also want to open — then use your own: `id -u` and `id -g`.
+      # macOS and Windows can leave these alone; Docker Desktop maps
+      # ownership for you.
+      - PUID=${PUID:-1001}
+      - PGID=${PGID:-1001}
+
+      # --- Analytics -------------------------------------------------------
+      # Off unless you set a token. Nothing is sent anywhere either way: the
+      # numbers are counted into a SQLite file on the analytics volume below
+      # and only ever read back by /admin on this instance.
       - ADMIN_TOKEN=${ADMIN_TOKEN:-}
-      # Which day an event is counted in. 0 = UTC; 210 = Tehran, so "today"
-      # on the dashboard matches today here.
-      - ANALYTICS_UTC_OFFSET_MINUTES=${ANALYTICS_UTC_OFFSET_MINUTES:-210}
+      - ANALYTICS_UTC_OFFSET_MINUTES=${ANALYTICS_UTC_OFFSET_MINUTES:-0}
       - ANALYTICS_RETENTION_DAYS=${ANALYTICS_RETENTION_DAYS:-90}
     volumes:
-      - downloads:/app/downloads
-      # Separate from downloads: that volume is disposable, this one is the
-      # only copy of the history and must survive a redeploy.
+      # A real folder, not a named volume, because the whole point of running
+      # this yourself is that the files are yours — finished tracks appear in
+      # ./downloads/<job-id>/ and you can open them without going through the
+      # ZIP button. Point it anywhere: an external disk, a NAS mount, the
+      # folder your music player already watches.
+      - ${DOWNLOADS_DIR:-./downloads}:/app/downloads
+      # These two stay named volumes. Neither is anything you would open by
+      # hand: one is the analytics database, the other is a cache yt-dlp
+      # manages, and both only ever want to be exactly where they were.
       - analytics:/app/data
-      # The JS challenge solver yt-dlp downloads on first use, kept so it is
-      # fetched once rather than after every restart.
       - ytdlp-cache:/app/cache
-      # Goes with YTDLP_COOKIEFILE=/app/cookies.txt above — the variable
-      # without the mount is the failure this project has already had once,
-      # and /api/admin/extraction is what names it.
-      #
-      # Not optional any more. YouTube answers this VPS's address with
-      # LOGIN_REQUIRED on every client, before a token or a solved challenge
-      # would ever come up, so the two defences above cannot reach the point
-      # where they help. They still have to be there — signing in moves
-      # yt-dlp onto the web clients, which is precisely where the solver and
-      # the token become load-bearing — but on their own they get nowhere.
-      #
-      # The path is Dokploy's: a File Mount writes its content to a `files`
-      # directory beside the checkout and leaves it alone on every later
-      # deploy, which is the property that matters. A cookie committed to
-      # the repo instead would be reverted to the committed copy each time
-      # Dokploy pulls, quietly undoing the rotation below — and would
-      # outlive any decision to make this repo public. Locally, point it at
-      # ./cookies.txt instead.
-      #
-      # Read-write on purpose: YouTube rotates these cookies as they are
-      # used and yt-dlp writes the new ones back, so :ro would let the
-      # session decay to nothing over a few days.
-      - ../files/cookies.txt:/app/cookies.txt
-    networks:
-      - unstream
     logging: *logging
 
-networks:
-  unstream:
-  dokploy-network:
-    external: true
-
 volumes:
-  downloads:
   analytics:
   ytdlp-cache:

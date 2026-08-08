@@ -1,6 +1,22 @@
 .DS_Store
 
-# A signed-in browser session for YouTube, in a public repo. The compose file
-# points YTDLP_COOKIEFILE at this path, so it is the one that gets dropped here
-# by hand and swept up by the next `git add -A`.
+# Local settings. .env.example is the tracked copy and holds no secrets;
+# this one holds whatever you put in it, including ADMIN_TOKEN.
+.env
+
+# Where docker-compose.yml puts finished tracks by default. Someone's music,
+# in other words — never the repo's business.
+downloads/
+
+# Compose merges this automatically, and it is where a self-hoster mounts a
+# cookie file or repoints a volume at their own disk. Personal by nature.
+docker-compose.override.yml
+
+# A signed-in browser session for YouTube, in a public repo. YTDLP_COOKIEFILE
+# points at this path, so it is the one that gets dropped here by hand and
+# swept up by the next `git add -A`.
 cookies.txt
+
+# Dokploy writes File Mounts here, beside the checkout — including the
+# cookie file compose.dokploy.yml mounts.
+files/

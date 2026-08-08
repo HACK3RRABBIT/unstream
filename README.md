@@ -130,12 +130,12 @@ unstream.amiralibg.xyz ──▶ Traefik ──▶ frontend (nginx :80) ──/a
 ```
 
 1. Push this repo to GitHub.
-2. Dokploy → **Create Service → Compose**, pick the repo, compose path `./docker-compose.yml`.
+2. Dokploy → **Create Service → Compose**, pick the repo, compose path `./compose.dokploy.yml`. (`./docker-compose.yml` is the self-hosting file — no Traefik, no file mounts, and a published port.)
 3. **Domains tab**: add `unstream.amiralibg.xyz` → service `frontend`, port `80`, HTTPS on (Let's Encrypt).
 4. DNS: `A` record `unstream` → VPS IP.
 5. **Environment tab**: set `ADMIN_TOKEN` to a long random string if you want the `/admin` dashboard (see Analytics). Leave it out and the dashboard stays off — including on launch day, which is the one day the numbers are most worth having. Set `MAX_DOWNLOADS_GB` to something under what the host has free while you're in there.
 
-Local run of the same stack: `docker compose up --build` (add a port mapping override for `frontend`, or use Dokploy's network by creating it: `docker network create dokploy-network`).
+To run *this* file locally you need Dokploy's network (`docker network create dokploy-network`) and a `files/cookies.txt` beside the checkout. For everyday local use, `docker compose up -d` runs the self-hosting stack instead and needs neither.
 
 ## Notes
 
