@@ -70,22 +70,29 @@ services:
       # The JS challenge solver yt-dlp downloads on first use, kept so it is
       # fetched once rather than after every restart.
       - ytdlp-cache:/app/cache
-      # Uncomment together with YTDLP_COOKIEFILE=/app/cookies.txt above —
-      # the variable without the mount is the failure this project has
-      # already had once, and /api/admin/extraction is what names it.
+      # Goes with YTDLP_COOKIEFILE=/app/cookies.txt above — the variable
+      # without the mount is the failure this project has already had once,
+      # and /api/admin/extraction is what names it.
       #
-      # The path is Dokploy's: a File Mount there writes its content to a
-      # `files` directory beside the checkout and leaves it alone on every
-      # later deploy, which is the property that matters. A cookie committed
-      # to the repo instead would be reverted to the committed copy each
-      # time Dokploy pulls, quietly undoing the rotation below — and would
+      # Not optional any more. YouTube answers this VPS's address with
+      # LOGIN_REQUIRED on every client, before a token or a solved challenge
+      # would ever come up, so the two defences above cannot reach the point
+      # where they help. They still have to be there — signing in moves
+      # yt-dlp onto the web clients, which is precisely where the solver and
+      # the token become load-bearing — but on their own they get nowhere.
+      #
+      # The path is Dokploy's: a File Mount writes its content to a `files`
+      # directory beside the checkout and leaves it alone on every later
+      # deploy, which is the property that matters. A cookie committed to
+      # the repo instead would be reverted to the committed copy each time
+      # Dokploy pulls, quietly undoing the rotation below — and would
       # outlive any decision to make this repo public. Locally, point it at
       # ./cookies.txt instead.
       #
       # Read-write on purpose: YouTube rotates these cookies as they are
       # used and yt-dlp writes the new ones back, so :ro would let the
       # session decay to nothing over a few days.
-      # - ../files/cookies.txt:/app/cookies.txt
+      - ../files/cookies.txt:/app/cookies.txt
     networks:
       - unstream
     logging: *logging
