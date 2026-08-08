@@ -577,3 +577,17 @@ def admin_events(request: Request, limit: int = 200) -> dict:
     """Raw event feed — for confirming the wiring works, not for reading."""
     require_admin(request)
     return {"events": analytics.recent(limit)}
+
+
+@app.get("/api/admin/extraction")
+def admin_extraction(request: Request) -> dict:
+    """What the anti-bot settings resolved to inside the container.
+
+    Both of them are mounts and environment variables rather than code, so
+    the failure they share is arriving at neither: YouTube answers "sign in
+    to confirm you're not a bot" the same way whether the provider is
+    unreachable, the cookie file never got mounted, or both are fine and the
+    IP is simply burnt. This says which of those it is.
+    """
+    require_admin(request)
+    return ytdlp.status()

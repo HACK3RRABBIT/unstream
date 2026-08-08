@@ -22,13 +22,30 @@ from .models import Collection, ProviderError, SearchResult, Track
 
 # YouTube bot-checks datacenter IPs ("Sign in to confirm you're not a bot")
 # long before it bothers a home connection, which is why downloads can work
-# locally and fail on a VPS. Pointing this at a cookies.txt exported from a
-# signed-in browser is the documented fix, so it lives in the environment: a
-# server that starts failing needs a mounted file and a restart, not a
-# release. A path that isn't there is ignored rather than passed on — a stale
-# variable would otherwise fail every extraction the process ever makes.
+# locally and fail on a VPS. Two independent answers to that, both optional
+# and both configured from the environment, so a server that starts failing
+# needs a restart rather than a release.
+#
+# The first is a proof-of-origin token provider: a sidecar that mints the
+# tokens YouTube wants from clients it trusts, with no account and no API key
+# behind it. bgutil-ytdlp-pot-provider is installed as a yt-dlp plugin (see
+# pyproject.toml) and sits inert until this names a provider to ask, which is
+# what keeps a local checkout working with nothing running beside it.
+POT_PROVIDER_URL = os.getenv("POT_PROVIDER_URL", "").rstrip("/")
+
+# The second is a cookies.txt exported from a signed-in browser. It works
+# where tokens alone don't, at the cost of tying every download to one
+# account — YouTube bans accounts for exactly this, so it wants a throwaway,
+# not a real one, and the file wants a read-write mount because YouTube
+# rotates these cookies and yt-dlp writes the new ones back.
+#
+# A path that isn't there is ignored rather than passed on — a stale variable
+# would otherwise fail every extraction the process ever makes. That failure
+# used to be silent, which made a missing mount look exactly like a mount
+# that wasn't helping; status() below is how an operator tells them apart.
 COOKIEFILE = os.getenv("YTDLP_COOKIEFILE", "")
-if COOKIEFILE and not Path(COOKIEFILE).is_file():
+COOKIEFILE_MISSING = bool(COOKIEFILE) and not Path(COOKIEFILE).is_file()
+if COOKIEFILE_MISSING:
     COOKIEFILE = ""
 
 
@@ -37,7 +54,24 @@ def base_opts(**extra) -> dict:
     opts = {"quiet": True, "no_warnings": True, **extra}
     if COOKIEFILE:
         opts["cookiefile"] = COOKIEFILE
+    if POT_PROVIDER_URL:
+        # Copied rather than mutated: `extra` belongs to the caller, and the
+        # dict inside it would outlive this call.
+        args = dict(opts.get("extractor_args") or {})
+        args["youtubepot-bgutilhttp"] = {"base_url": [POT_PROVIDER_URL]}
+        opts["extractor_args"] = args
     return opts
+
+
+def status() -> dict:
+    """What the anti-bot configuration actually resolved to, for /api/admin."""
+    return {
+        "pot_provider_url": POT_PROVIDER_URL or None,
+        "cookiefile": COOKIEFILE or None,
+        # True means YTDLP_COOKIEFILE was set and pointed at nothing: almost
+        # always a mount that didn't happen.
+        "cookiefile_missing": COOKIEFILE_MISSING,
+    }
 
 
 _YOUTUBE_RE = re.compile(

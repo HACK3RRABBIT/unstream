@@ -141,7 +141,17 @@ Local run of the same stack: `docker compose up --build` (add a port mapping ove
 
 - Playlists must be public. The embed-page provider even reads Spotify's editorial playlists (which the official API blocks for new apps).
 - The embed pages are an undocumented structure — Spotify can change them any time. If resolving suddenly breaks, that's the first place to look (`backend/app/embed.py`).
-- On a VPS, YouTube sometimes bot-checks datacenter IPs ("Sign in to confirm you're not a bot"). If downloads start failing there while working locally, set **`YTDLP_COOKIEFILE`** to a `cookies.txt` exported from a signed-in browser (mount it read-only; `docker-compose.yml` has the line commented out ready to go) — no code change, just a restart. A path that doesn't exist is ignored rather than failing every extraction. The other fix is updating yt-dlp (`uv lock --upgrade-package yt-dlp` + rebuild); do that every month or two anyway, since old versions stop working as YouTube changes. **"Links that failed" and "Why tracks failed" on the dashboard are where this shows up first.**
+- **YouTube bot-checks datacenter IPs** ("Sign in to confirm you're not a bot") long before it bothers a home connection, so this is the one thing that works locally and fails on a VPS. Three defences, in the order they matter:
+
+  1. **A PO token provider**, on by default. The `pot-provider` service in `docker-compose.yml` mints the proof-of-origin tokens YouTube demands from the `web`/`web_safari` clients; `POT_PROVIDER_URL` points the API at it. No account, no key. Without it those clients return *only images* — no audio stream at all.
+  2. **A JavaScript runtime** (deno, in the API image). YouTube's player hands out challenges that must be executed to get a stream URL. With no runtime, yt-dlp silently falls back to `android_vr` — the one client needing neither a token nor JS, and the first one a flagged IP gets challenged on.
+  3. **Cookies**, only if the first two aren't enough. Set `YTDLP_COOKIEFILE` and uncomment the mount. Use a **throwaway Google account**: every download the server makes is attributed to it, and YouTube bans accounts for exactly that. Mount it **read-write** — YouTube rotates these cookies in use and yt-dlp writes the new ones back, so `:ro` lets the session rot. Export from a private window you then close, or the browser keeps rotating them out from under the file.
+
+  Check what actually landed in the container with `GET /api/admin/extraction` — it reports the provider URL and whether the cookie path resolved, which is how you tell "mount never happened" from "mounted and still blocked". A `YTDLP_COOKIEFILE` pointing at nothing is ignored rather than failing every extraction, so it is otherwise invisible.
+
+  Keep yt-dlp current too (`uv lock --upgrade-package yt-dlp` + rebuild) — these bypasses ship *in* yt-dlp releases, so a frozen lockfile is a frozen workaround. **"Links that failed" and "Why tracks failed" on the dashboard are where all of this shows up first.**
+
+  If it still fails, the IP itself is burnt, and the only reliable fix left is egress from a non-datacenter address — which costs money. SoundCloud is unaffected throughout.
 - Old job folders are cleaned automatically after `DOWNLOADS_TTL_HOURS` (default 24, set it in the environment to change).
 - There are no accounts, so anything that costs real resources is capped per client IP in `backend/app/limits.py` — in-memory and per process, which is enough for the single-container stack above but would need a shared store if the API were ever scaled out. All the defaults are environment variables:
 
