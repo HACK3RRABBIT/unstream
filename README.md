@@ -19,7 +19,7 @@ Paste a **Spotify / Deezer / Apple Music / YouTube / SoundCloud** track, album o
 
 No accounts. No API keys. Nothing paid. You run it, so the files are yours and nobody is standing in between.
 
-> The interface is **Farsi only** — that was a deliberate product decision, not an oversight ([ADR 0001](docs/adr/0001-farsi-only-ui-no-i18n.md)). Everything else here is in English.
+> The interface is **Farsi only** — that was a deliberate product decision, not an oversight ([why](docs/DESIGN.md#farsi-only)). Everything else here is in English.
 
 ## Quick start
 
@@ -100,7 +100,7 @@ Everything is optional. `cp .env.example .env` and uncomment what you want — t
 | `MAX_TRACKS_PER_JOB` | `0` (no limit) | Tracks in one job |
 | `ADMIN_TOKEN` | *unset* | Enables the `/admin` dashboard. Unset = it doesn't exist |
 
-The **code's** defaults differ from the compose file's: they assume a server shared with strangers (downloads expire after 24h, disk capped at 20 GB, limits tight). `docker-compose.yml` overrides them toward "this is my machine". See [ADR 0005](docs/adr/0005-open-source-and-self-hostable.md).
+The **code's** defaults differ from the compose file's: they assume a server shared with strangers (downloads expire after 24h, disk capped at 20 GB, limits tight). `docker-compose.yml` overrides them toward "this is my machine". See [the design notes](docs/DESIGN.md#self-hosting).
 
 ## Can I host this for other people?
 
@@ -125,7 +125,7 @@ Then, roughly in order of how often it's the answer:
 
 ## Analytics
 
-Unstream can count its own usage, with no third-party service, no cookie and no consent banner ([ADR 0004](docs/adr/0004-self-hosted-analytics.md)). It is **off unless you set `ADMIN_TOKEN`**, and local either way — events go to a SQLite file on the `analytics` volume and are read back only by `/admin` on your own instance. Nothing is ever sent anywhere.
+Unstream can count its own usage, with no third-party service, no cookie and no consent banner ([how it works](docs/DESIGN.md#analytics)). It is **off unless you set `ADMIN_TOKEN`**, and local either way — events go to a SQLite file on the `analytics` volume and are read back only by `/admin` on your own instance. Nothing is ever sent anywhere.
 
 ```sh
 openssl rand -hex 24   # a token worth using
@@ -168,7 +168,7 @@ cd frontend && npm install && npm run dev
 
 Then <http://localhost:5173>. Tests: `cd backend && uv run pytest`.
 
-Design decisions live in [`docs/adr/`](docs/adr/) — read those before changing anything they cover.
+The decisions worth knowing before you change anything are in [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## Notes
 

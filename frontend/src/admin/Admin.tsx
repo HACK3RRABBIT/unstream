@@ -1,6 +1,6 @@
 /** The stats dashboard, at /admin.
  *
- *  English and left-to-right on purpose: ADR 0001 makes the *product*
+ *  English and left-to-right on purpose: docs/DESIGN.md makes the *product*
  *  Farsi-only, and this is not the product — it is the one page only the
  *  owner sees, whose screenshots are meant to travel.
  *

@@ -1,6 +1,6 @@
 @import 'tailwindcss';
 
-/* Vazirmatn FD, self-hosted (see docs/adr/0002). The FD cut is what renders
+/* Vazirmatn FD, self-hosted (see docs/DESIGN.md). The FD cut is what renders
    ASCII digits as Persian numerals; the plain cut does not. The four weights
    the UI actually uses (400/500/600/700) are preloaded from index.html —
    those hrefs must stay byte-identical to the url()s here or the browser

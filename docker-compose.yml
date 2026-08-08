@@ -3,7 +3,7 @@
 # Works on a fresh clone with no .env. The defaults here are not the ones in
 # the code — the code protects a server shared with strangers, this file
 # assumes your machine and your music. See compose.dokploy.yml for the other
-# case, and docs/adr/0005 for why they differ.
+# case, and docs/DESIGN.md for why they differ.
 
 services:
   frontend:

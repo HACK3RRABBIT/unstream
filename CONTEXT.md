@@ -1,6 +1,6 @@
 # Unstream
 
-A web app for searching songs, albums and playlists — or pasting a Spotify/Deezer link — and downloading them as tagged MP3 files. The UI is Farsi-only (see `docs/adr/0001`); this glossary fixes the canonical Farsi rendering of each domain term so the copy stays consistent.
+A web app for searching songs, albums and playlists — or pasting a Spotify/Deezer link — and downloading them as tagged MP3 files. The UI is Farsi-only (see `docs/DESIGN.md`); this glossary fixes the canonical Farsi rendering of each domain term so the copy stays consistent.
 
 ## Language
 

@@ -103,7 +103,7 @@ export interface ArtistDetail {
 const client = axios.create({ baseURL: '/api' })
 
 /** The backend composes result subtitles in English ("5 releases",
- *  "by X · 40 tracks"); the UI is Farsi-only (docs/adr/0001), so the known
+ *  "by X · 40 tracks"); the UI is Farsi-only (docs/DESIGN.md), so the known
  *  phrases are rewritten here at the API seam rather than forking the
  *  backend's response for one client. Unmatched parts (artist names, years)
  *  pass through untouched. */
@@ -130,7 +130,7 @@ const localizeResult = (result: SearchResult): SearchResult => ({
 
 /** Backend `detail` strings, translated at the same seam as result subtitles.
  *  The wire stays English and is translated at the seam; each surface
- *  renders it in its own voice (ADR 0001). `$1` carries the backend's number
+ *  renders it in its own voice (docs/DESIGN.md). `$1` carries the backend's number
  *  through. */
 const ERROR_PHRASES: [RegExp, string][] = [
   [/^Too many searches — wait (\d+)s/, 'یه کم تند رفتی — $1 ثانیه صبر کن و دوباره جستجو کن.'],
