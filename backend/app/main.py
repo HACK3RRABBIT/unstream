@@ -305,7 +305,7 @@ def download(body: DownloadRequest, request: Request) -> dict:
     client = limits.enforce("download", request)
     # Before resolving: a caller at their limit shouldn't get a provider fetch
     # out of the request that turns them away.
-    if jobs.active_count(client) >= limits.MAX_ACTIVE_JOBS:
+    if limits.MAX_ACTIVE_JOBS > 0 and jobs.active_count(client) >= limits.MAX_ACTIVE_JOBS:
         raise HTTPException(
             status_code=429,
             detail="Too many downloads at once — wait for one to finish.",
@@ -322,7 +322,7 @@ def download(body: DownloadRequest, request: Request) -> dict:
         tracks = [t for t in tracks if t.id in wanted]
     if not tracks:
         raise HTTPException(status_code=400, detail="No tracks to download")
-    if len(tracks) > limits.MAX_TRACKS_PER_JOB:
+    if limits.MAX_TRACKS_PER_JOB > 0 and len(tracks) > limits.MAX_TRACKS_PER_JOB:
         raise HTTPException(
             status_code=400,
             detail=f"Too many tracks — {limits.MAX_TRACKS_PER_JOB} at a time at most.",
