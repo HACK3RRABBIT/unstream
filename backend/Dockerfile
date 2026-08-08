@@ -5,8 +5,29 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 # ffmpeg for audio conversion, dumb-init for clean signal handling
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg dumb-init \
+    && apt-get install -y --no-install-recommends ffmpeg dumb-init ca-certificates curl unzip \
     && rm -rf /var/lib/apt/lists/*
+
+# A JavaScript runtime, because YouTube's player now hands out challenges that
+# have to be *run* to get a stream URL. yt-dlp shells out to one of deno / bun
+# / node / quickjs to do that and ships the solver script itself; with none
+# installed it silently falls back to the one client that asks no questions
+# (android_vr), which is also the client a datacenter IP gets bot-checked on
+# first. That fallback is why this works from a laptop and 502s from a VPS.
+ARG DENO_VERSION=v2.9.5
+ARG TARGETARCH
+RUN set -eux; \
+    case "${TARGETARCH:-amd64}" in \
+        amd64) DENO_ARCH=x86_64-unknown-linux-gnu ;; \
+        arm64) DENO_ARCH=aarch64-unknown-linux-gnu ;; \
+        *) echo "no deno build for ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/deno.zip \
+        "https://github.com/denoland/deno/releases/download/${DENO_VERSION}/deno-${DENO_ARCH}.zip"; \
+    unzip -q /tmp/deno.zip -d /usr/local/bin; \
+    chmod 755 /usr/local/bin/deno; \
+    rm /tmp/deno.zip; \
+    deno --version
 
 WORKDIR /app
 
