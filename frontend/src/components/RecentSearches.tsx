@@ -1,4 +1,6 @@
 import { Link2, Search, X } from 'lucide-react'
+import clsx from 'clsx'
+import { faNumerals, useMessages } from '../lib/i18n'
 import type { RecentSearch } from '../lib/recent'
 
 interface Props {
@@ -11,17 +13,18 @@ interface Props {
  *  otherwise offers nothing to click. Worth most on a phone, where retyping an
  *  album name is the expensive part. */
 export function RecentSearches({ items, onPick, onClear }: Props) {
+  const m = useMessages()
   if (items.length === 0) return null
 
   return (
     <div className="mt-6 animate-fade-up [animation-delay:280ms]">
       <div className="flex items-center gap-2">
-        <h2 className="text-micro font-semibold text-ink-400">آخرین جستجوها</h2>
+        <h2 className="text-micro font-semibold text-ink-400">{m.recent.heading}</h2>
         <button
           onClick={onClear}
           className="tap-target grid size-5 place-items-center rounded text-ink-600 transition hover:text-ink-300"
-          aria-label="پاک کردن آخرین جستجوها"
-          title="پاک کردن آخرین جستجوها"
+          aria-label={m.recent.clear}
+          title={m.recent.clear}
         >
           <X className="size-3.5" />
         </button>
@@ -45,7 +48,9 @@ export function RecentSearches({ items, onPick, onClear }: Props) {
               ) : (
                 <Search className="size-3.5 shrink-0 text-ink-600" />
               )}
-              <span className="truncate">{item.isLink ? linkLabel(item.input) : item.input}</span>
+              <span className={clsx('truncate', faNumerals(item.input))}>
+                {item.isLink ? linkLabel(item.input) : item.input}
+              </span>
             </button>
           </li>
         ))}

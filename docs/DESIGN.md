@@ -3,8 +3,9 @@
 The decisions in here are load-bearing: things that look like mistakes until you know the reason, and things that will quietly break if changed without one. The [README](../README.md) covers what the project does and how to run it.
 
 - [The shape of it](#the-shape-of-it)
-- [Farsi only, no i18n layer](#farsi-only)
+- [Farsi first, with a language layer](#farsi-only)
 - [One self-hosted typeface](#typeface)
+- [Which digits a number gets](#digits)
 - [Analytics, recorded server-side](#analytics)
 - [Run it yourself](#self-hosting)
 
@@ -31,16 +32,22 @@ Jobs live in memory, not a database. A restart loses in-flight progress and that
 
 <a id="farsi-only"></a>
 
-## Farsi only, no i18n layer
+## Farsi first, with a language layer
 
-The frontend targets Persian speakers. All UI copy is written directly in Farsi in the components — no i18n framework, no strings file, no language switcher. A bilingual toggle was rejected because it doubles the copy surface and adds a dependency to a ~10-component app with a single audience.
+The frontend targets Persian speakers, and Farsi is still the default — `UNSTREAM_DEFAULT_LOCALE` decides what a first-time visitor gets, and unset means `fa`. What changed is that the copy is no longer welded into the components: each language is one dictionary under `frontend/src/lib/locales/`, and a picker in the header switches between them at run time, direction included.
 
-- The register is informal-but-clean spoken Persian (محاوره‌ی مرتب): spoken-register verbs, English loanwords in Persian script where they are the natural word («دانلود»، «پلی‌لیست»), no slang. Error and destructive-action copy is one notch calmer than the rest.
-- **The hero `h1` and all `<head>` metadata** (title, meta description, OG/Twitter, JSON-LD, manifest) use neutral *written* Persian instead, because those surfaces target organic search and Persian search queries are written-register («دانلود موزیک», not «موزیک دانلود کن»). Everything rendered in-app below the h1 stays محاوره.
-- The brand is **«آنستریم»** in all user-facing copy. Latin "Unstream" survives only in developer-facing places: the repo, package names, cache keys, code comments.
-- **Backend and axios error strings surface in English on purpose** (`apiError` in `frontend/src/lib/api.ts`). Translating them client-side was considered and rejected. Do not "fix" this without a decision.
-- Backend-composed result *subtitles* ("5 releases", "by X · 40 tracks") are the exception: `localizeSubtitle` rewrites them to Farsi at the API seam, so the backend response stays English. **New subtitle phrases added in the backend must be added to that map too**, or they reach the UI in English.
-- The `/admin` dashboard is English and LTR — the only surface that is. This governs the product, and that page is not the product: it is owner-facing and its screenshots are meant to travel.
+This reverses an earlier decision ("no i18n framework, no strings file, no language switcher", on the grounds that a toggle doubles the copy surface for a single-audience app). The doubling is real; what bought it back is that the *dictionary is the type*. `Messages` is derived from `locales/en.ts`, so a language that omits a key — or gets a counting function's arity wrong — fails `tsc`, not the page. There is no framework and no dependency: a context, a plain object, and functions where a string needs a number.
+
+- **Adding a language** is two edits: copy `locales/en.ts`, translate it, and add a line to `LOCALES` in `lib/i18n.tsx`. Nothing else in the app enumerates locales.
+- **Direction comes from the locale; digits do not.** `dir` drives `<html dir>` and everything logical (`ps-`/`pe-`/`ms-`/`start-`/`end-`) follows it. Digits are decided per string instead — see [the digit rule](#digits) — because content and chrome mix inside one list.
+- **Plural rules live in the locale.** Persian does not agree a noun after a numeral and English does, so counted phrases are functions (`trackCount(n)`) rather than one shared pluraliser that has to know about every language.
+- **Copy that wraps an element** is split into `…Before` / `…After` halves. Word order around a `<kbd>` or a highlighted query is the translator's problem, not the component's.
+- The register for Farsi is informal-but-clean spoken Persian (محاوره‌ی مرتب): spoken-register verbs, English loanwords in Persian script where they are the natural word («دانلود»، «پلی‌لیست»), no slang. Error and destructive-action copy is one notch calmer than the rest.
+- **The hero `h1` and all `<head>` metadata** (title, meta description, OG/Twitter, JSON-LD, manifest) use neutral *written* Persian instead, because those surfaces target organic search and Persian search queries are written-register («دانلود موزیک», not «موزیک دانلود کن»). Everything rendered in-app below the h1 stays محاوره. The head is re-applied from the active dictionary on every switch (`applyDocumentLocale`), so a shared link carries the language its sharer was reading; a crawler that does not run JavaScript still sees `index.html`'s static copy, which is the default language's.
+- The brand is **«آنستریم»** in Farsi copy and **"Unstream"** in English — both live in `app.name`, so no component spells either.
+- **Backend `detail` strings are rewritten client-side**, per locale, in `apiError` (`frontend/src/lib/api.ts`). The wire stays terse English; each dictionary supplies the sentence. **A new error string in the backend needs an entry there**, or callers fall through to the generic per-status message.
+- Backend-composed result *subtitles* ("5 releases", "by X · 40 tracks") go through each locale's `subtitle(part)` at **render** time, not when the response lands — that is what lets a language switch re-translate results already on screen without refetching. **New subtitle phrases added in the backend must be added to those maps**, or they reach the UI in English.
+- The `/admin` dashboard is English and LTR regardless of the picker. It governs the product, and that page is not the product: it is owner-facing and its screenshots are meant to travel.
 
 `CONTEXT.md` fixes the canonical Farsi rendering of each domain term. Copy changes should agree with it.
 
@@ -50,14 +57,31 @@ The frontend targets Persian speakers. All UI copy is written directly in Farsi 
 
 A single self-hosted Persian typeface serves both `--font-display` and `--font-sans`; heading contrast comes from weight, not family. Self-hosting — preload, `font-display: swap`, a metric-tuned fallback — exists to make font loading effectively instant, so reintroducing any third-party font request defeats the point.
 
-It must be a **Farsi-digit cut**: one that renders ASCII digits as Persian numerals (۱۲۳) from the font itself, so nothing in the app has to transliterate numbers.
+Both cuts of it ship. Which one an element gets is decided by [the digit rule](#digits), not by the document's language.
 
-The font is **Vazirmatn FD** ([SIL OFL 1.1](https://github.com/rastikerdar/vazirmatn), by Saber Rastikerdar). It replaced Peyda FaNum, which is a commercial font from fontiran.com — survivable while the repo was private, a licensing problem the moment open-sourcing came up, since publishing would have handed a paid font to everyone who cloned it. Estedad was the other candidate and lost on mechanics: its releases ship no FD build, only a generator script. `OFL.txt` travels with the fonts because the licence requires it.
+The font is **Vazirmatn** ([SIL OFL 1.1](https://github.com/rastikerdar/vazirmatn), by Saber Rastikerdar), in its plain and FD cuts. It replaced Peyda FaNum, which is a commercial font from fontiran.com — survivable while the repo was private, a licensing problem the moment open-sourcing came up, since publishing would have handed a paid font to everyone who cloned it. Estedad was the other candidate and lost on mechanics: its releases ship no FD build, only a generator script. `OFL.txt` travels with the fonts because the licence requires it.
 
-- The FD cut turns digits Persian app-wide — durations, bitrates, and digits inside English song titles ("24K Magic" → "۲۴K Magic"). Deliberate. Do not swap in the plain cut without a decision.
-- Nine weights are registered, four (400/500/600/700) preloaded. A new weight class in the design needs its preload added.
-- **Preload `href`s must match the CSS `url()`s exactly**, or browsers download every font twice.
+- Two families, `Vazirmatn` (plain, the document default) and `Vazirmatn FD` (Farsi digits, opt-in via the `font-fa` utility). Same design and same metrics — digits are the only difference — so this is one typeface in two cuts, and the single-family rule above still holds.
+- Four weights each (400/500/600/700), which is everything the UI uses. **A new weight class needs adding to both families** and preloading, or it silently falls back for one of them.
+- Only the plain cut is preloaded, since it renders almost everything. The FD cut is fetched on demand — a Farsi UI does not need it for its own copy (see the digit rule) and pulls it only when Persian-script *content* appears.
+- **Preload `href`s must match the CSS `url()`s exactly**, or browsers download every font twice. `sw.template.js` precaches the same four files, and `cache.addAll` rejects atomically — one stale filename there and the service worker never installs at all.
 - The fallback's `size-adjust` / `ascent-override` / `descent-override` are measured, not guessed: mean Persian-glyph advance against Tahoma for the size-adjust, then the font's hhea metrics (2100/1100 at upm 2048) divided by it. **Changing the typeface means re-measuring them**, or the no-layout-shift guarantee quietly stops holding.
+
+<a id="digits"></a>
+
+## Which digits a number gets
+
+The rule: **a quantity the UI states gets the reader's digits; a name keeps its own.**
+
+`۱۲ آهنگ` is Farsi speaking, so it is Persian. `24K Magic` is a title, `MP3` and `m4a` are names of things, and none of them become `۲۴K Magic` or `MP۳` just because the surrounding chrome is Farsi. Bitrates are quantities (`۳۲۰` in Farsi, `320` in English); file extensions are names and never converted.
+
+Three mechanisms, in order of how much they know:
+
+1. **Numbers the UI composes** — counts, indices, durations, percentages, ETAs — go through `app.num` in the dictionary. Farsi maps ASCII digits to Persian there; English is the identity. Numbers rendered inline in a component use `m.app.num(...)` for the same reason.
+2. **Provider content** — track titles, artist and album names, a pasted query — gets `faNumerals(text)`, which returns the `font-fa` class when the *text itself* is Persian script. A Persian title's digits should be Persian and an English one's should not, and the two sit in the same list, so the string decides. This is the same reasoning as the `dir="auto"` on those nodes, and it belongs on exactly those nodes.
+3. **Everything else** inherits the plain cut and is left alone.
+
+This replaces an earlier arrangement where the FD cut was the document default and rewrote every digit on the page. That was one mechanism doing all three jobs, and it could not tell a count from a title: it is why "24K Magic" rendered as "۲۴K Magic". Note what it means for a *new* surface — a number you interpolate straight into JSX will come out in Latin digits in both languages. That is a bug in Farsi; route it through `m.app.num`.
 
 <a id="analytics"></a>
 

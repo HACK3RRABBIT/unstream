@@ -1,15 +1,9 @@
 import { useMemo, useState, type CSSProperties } from 'react'
-import {
-  ChevronLeft,
-  Disc3,
-  ListMusic,
-  LoaderCircle,
-  MicVocal,
-  Music2,
-  SearchX,
-} from 'lucide-react'
+import { Disc3, ListMusic, LoaderCircle, MicVocal, Music2, SearchX } from 'lucide-react'
 import clsx from 'clsx'
 import type { ResultKind, SearchResult, Source } from '../lib/api'
+import { faNumerals, localizeSubtitle, useDirectional, useMessages } from '../lib/i18n'
+import type { Messages } from '../lib/locales/en'
 import { QuickDownload } from './QuickDownload'
 
 interface Props {
@@ -28,14 +22,17 @@ const SOURCE_META: Record<Source, { label: string; dot: string }> = {
   soundcloud: { label: 'SoundCloud', dot: 'bg-[#ff7700]' },
 }
 
-/** `noun` is the singular — Persian counts and «…های بیشتر» need it, and it
- *  can't be derived from the plural label. */
+/** How many of each kind the "All" tab previews, and which icon heads its
+ *  section. The wording lives in the dictionaries under `results.kinds`, keyed
+ *  by the same `kind` — plurals and counting rules belong to the language. */
 const KINDS = [
-  { kind: 'track', label: 'آهنگ‌ها', noun: 'آهنگ', icon: Music2, preview: 6 },
-  { kind: 'artist', label: 'آرتیست‌ها', noun: 'آرتیست', icon: MicVocal, preview: 6 },
-  { kind: 'album', label: 'آلبوم‌ها', noun: 'آلبوم', icon: Disc3, preview: 8 },
-  { kind: 'playlist', label: 'پلی‌لیست‌ها', noun: 'پلی‌لیست', icon: ListMusic, preview: 4 },
+  { kind: 'track', icon: Music2, preview: 6 },
+  { kind: 'artist', icon: MicVocal, preview: 6 },
+  { kind: 'album', icon: Disc3, preview: 8 },
+  { kind: 'playlist', icon: ListMusic, preview: 4 },
 ] as const
+
+const kindCopy = (kind: ResultKind, m: Messages) => m.results.kinds[kind]
 
 type Tab = 'all' | ResultKind
 
@@ -62,6 +59,7 @@ function TrackList({
   downloadable?: boolean
   onPick: Props['onPick']
 }) {
+  const m = useMessages()
   return (
     <ul className="stagger">
       {items.map((item, i) => (
@@ -90,8 +88,19 @@ function TrackList({
                 direction and the subtitle follows it, so a Persian track
                 doesn't sit right-aligned above a left-aligned artist. */}
             <div className="min-w-0 flex-1" dir="auto">
-              <p className="truncate text-body font-medium text-ink-100">{item.name}</p>
-              {item.subtitle && <p className="truncate text-mini text-ink-400">{item.subtitle}</p>}
+              <p
+                className={clsx(
+                  'truncate text-body font-medium text-ink-100',
+                  faNumerals(item.name),
+                )}
+              >
+                {item.name}
+              </p>
+              {item.subtitle && (
+                <p className="truncate text-mini text-ink-400">
+                  {localizeSubtitle(item.subtitle, m)}
+                </p>
+              )}
             </div>
             <SourceBadge source={item.source} />
           </button>
@@ -111,6 +120,7 @@ function CardGrid({
   round?: boolean
   onPick: Props['onPick']
 }) {
+  const m = useMessages()
   return (
     <ul
       className={clsx(
@@ -156,13 +166,14 @@ function CardGrid({
               className={clsx(
                 'mt-2 truncate text-mini font-medium text-ink-100 transition-colors group-hover:text-lime-flash',
                 round && 'text-center',
+                faNumerals(item.name),
               )}
             >
               {item.name}
             </p>
             {item.subtitle && (
               <p className={clsx('truncate text-xs text-ink-400', round && 'text-center')}>
-                {item.subtitle}
+                {localizeSubtitle(item.subtitle, m)}
               </p>
             )}
           </button>
@@ -174,6 +185,8 @@ function CardGrid({
 
 export function SearchResults({ query, results, hasMore, loadingMore, onLoadMore, onPick }: Props) {
   const [tab, setTab] = useState<Tab>('all')
+  const m = useMessages()
+  const { ForwardChevron, forwardNudge } = useDirectional()
 
   const grouped = useMemo(() => {
     const map = new Map<ResultKind, SearchResult[]>()
@@ -190,11 +203,10 @@ export function SearchResults({ query, results, hasMore, loadingMore, onLoadMore
       <section className="rounded-panel border border-ink-700 bg-ink-900 px-5 py-14 text-center">
         <SearchX className="mx-auto size-7 text-ink-600" />
         <p className="mt-3 text-body font-medium text-ink-100">
-          چیزی برای <span dir="auto">«{query}»</span> پیدا نشد
+          {m.results.emptyBefore} <span dir="auto">{m.app.quote(query)}</span>{' '}
+          {m.results.emptyAfter}
         </p>
-        <p className="mx-auto mt-1.5 max-w-xs text-mini text-ink-400">
-          فقط اسم آرتیست رو امتحان کن، املا رو یه چک بکن، یا به‌جاش لینک آلبوم رو پیست کن.
-        </p>
+        <p className="mx-auto mt-1.5 max-w-xs text-mini text-ink-400">{m.results.emptyHint}</p>
       </section>
     )
   }
@@ -207,26 +219,26 @@ export function SearchResults({ query, results, hasMore, loadingMore, onLoadMore
     <section className="overflow-hidden rounded-panel border border-ink-700 bg-ink-900">
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 px-5 pt-4">
         <h2 className="truncate text-body font-medium text-ink-100">
-          نتایج برای{' '}
+          {m.results.resultsFor}{' '}
           <span className="text-lime-flash" dir="auto">
             {query}
           </span>
         </h2>
         <p aria-live="polite" className="text-mini text-ink-400 tabular-nums">
-          {results.length} نتیجه{hasMore && ' تا الان'}
+          {m.results.count(results.length, hasMore)}
         </p>
       </div>
 
       <nav
-        aria-label="فیلتر نتایج"
+        aria-label={m.results.filter}
         className="flex flex-wrap items-center gap-1.5 border-b border-ink-800 px-4 py-3"
       >
         {(
           [
-            { kind: 'all', label: 'همه', count: results.length },
-            ...sections.map(({ kind, label }) => ({
+            { kind: 'all', label: m.results.all, count: results.length },
+            ...sections.map(({ kind }) => ({
               kind,
-              label,
+              label: kindCopy(kind, m).label,
               count: grouped.get(kind)!.length,
             })),
           ] as { kind: Tab; label: string; count: number }[]
@@ -249,7 +261,7 @@ export function SearchResults({ query, results, hasMore, loadingMore, onLoadMore
                 tab === kind ? 'text-lime-ink/70' : 'text-ink-400',
               )}
             >
-              {count}
+              {m.app.num(count)}
             </span>
           </button>
         ))}
@@ -257,7 +269,7 @@ export function SearchResults({ query, results, hasMore, loadingMore, onLoadMore
 
       {sections
         .filter(({ kind }) => tab === 'all' || tab === kind)
-        .map(({ kind, label, icon: Icon, preview }) => {
+        .map(({ kind, icon: Icon, preview }) => {
           const items = grouped.get(kind)!
           const shown = tab === 'all' ? items.slice(0, preview) : items
           const hidden = items.length - shown.length
@@ -266,15 +278,17 @@ export function SearchResults({ query, results, hasMore, loadingMore, onLoadMore
               <div className="flex items-baseline justify-between px-5 pt-4 pb-2">
                 <h3 className="flex items-center gap-2 text-micro font-semibold text-ink-400">
                   <Icon className="size-3.5" />
-                  {label}
+                  {kindCopy(kind, m).label}
                 </h3>
                 {hidden > 0 && (
                   <button
                     onClick={() => setTab(kind)}
                     className="group flex items-center gap-0.5 text-xs font-medium text-lime-flash transition hover:text-lime-soft"
                   >
-                    نمایش همه‌ی {items.length} تا
-                    <ChevronLeft className="size-3.5 transition-transform duration-200 group-hover:-translate-x-0.5" />
+                    {m.results.showAll(items.length)}
+                    <ForwardChevron
+                      className={clsx('size-3.5 transition-transform duration-200', forwardNudge)}
+                    />
                   </button>
                 )}
               </div>
@@ -297,19 +311,18 @@ export function SearchResults({ query, results, hasMore, loadingMore, onLoadMore
           {loadingMore ? (
             <span className="flex items-center gap-2 text-mini text-ink-400">
               <LoaderCircle className="size-3.5 animate-spin text-lime-flash" />
-              در حال جستجوی عمیق‌تر…
+              {m.results.searchingDeeper}
             </span>
           ) : hasMore ? (
             <button
               onClick={onLoadMore}
               className="rounded-full border border-ink-700 px-4 py-1.5 text-mini font-medium text-ink-300 transition duration-200 hover:border-ink-600 hover:text-ink-100 active:scale-[0.97]"
             >
-              {activeKind.noun}‌های بیشتر
+              {kindCopy(activeKind.kind, m).more}
             </button>
           ) : (
             <span className="text-mini text-ink-400">
-              همین بود — {grouped.get(activeKind.kind)?.length ?? 0} {activeKind.noun} از همه‌ی
-              منبع‌ها.
+              {kindCopy(activeKind.kind, m).exhausted(grouped.get(activeKind.kind)?.length ?? 0)}
             </span>
           )}
         </div>

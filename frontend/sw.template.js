@@ -12,13 +12,15 @@ const SHELL = [
   '/',
   '/index.html',
   '/manifest.webmanifest',
-  // The four preloaded Peyda weights — cached so the app-shell works
+  // The four preloaded Vazirmatn weights — cached so the app-shell works
   // offline in the right typeface. Served immutable by nginx, so these
   // re-installs hit the HTTP cache, not the network.
-  '/fonts/PeydaFaNumWeb-Regular.woff2',
-  '/fonts/PeydaFaNumWeb-Medium.woff2',
-  '/fonts/PeydaFaNumWeb-SemiBold.woff2',
-  '/fonts/PeydaFaNumWeb-Bold.woff2',
+  // These must exist: addAll() rejects atomically, and a single 404 here means
+  // the worker never installs and nothing is cached at all.
+  '/fonts/Vazirmatn-Regular.woff2',
+  '/fonts/Vazirmatn-Medium.woff2',
+  '/fonts/Vazirmatn-SemiBold.woff2',
+  '/fonts/Vazirmatn-Bold.woff2',
 ]
 
 self.addEventListener('install', (event) => {

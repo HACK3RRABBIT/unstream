@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type RefObject } from 'react'
-import { ArrowLeft, LoaderCircle, Search } from 'lucide-react'
+import { LoaderCircle, Search } from 'lucide-react'
 import clsx from 'clsx'
 import { isCatalogUrl } from '../lib/api'
+import { useDirectional, useLocale, useMessages } from '../lib/i18n'
 
 interface Props {
   loading: boolean
@@ -16,6 +17,9 @@ interface Props {
 export function UrlForm({ loading, onSubmit, className, inputRef, focusPulse = 0 }: Props) {
   const [input, setInput] = useState('')
   const isUrl = isCatalogUrl(input)
+  const m = useMessages()
+  const { dir } = useLocale()
+  const { Forward, forwardNudge } = useDirectional()
 
   // Focus on arrival is a desktop courtesy and a mobile ambush — on a phone it
   // summons the keyboard over the hero. `autoFocus` has no way to ask, so it's
@@ -72,12 +76,19 @@ export function UrlForm({ loading, onSubmit, className, inputRef, focusPulse = 0
         value={input}
         onChange={(e) => setInput(e.target.value)}
         dir="auto"
-        placeholder="آهنگ، آلبوم یا آرتیست جستجو کن — یا لینک اسپاتیفای / دیزر / یوتیوب / ساندکلاد رو پیست کن"
+        placeholder={m.form.placeholder}
         spellCheck={false}
-        // `dir="auto"` shapes a Latin query left-to-right (or "fadaei" comes
-        // out reversed) but also flips where the line starts, dragging it to
-        // the far side of an RTL form. `text-right` keeps the alignment.
-        className="min-w-0 flex-1 bg-transparent text-right text-body text-ink-100 placeholder:text-ink-600 placeholder-shown:[direction:rtl] focus:outline-none"
+        className={clsx(
+          'min-w-0 flex-1 bg-transparent text-body text-ink-100 placeholder:text-ink-600 focus:outline-none',
+          // `dir="auto"` shapes the query by its own script — necessary, or a
+          // Latin query in an RTL field comes out reversed. But it also decides
+          // where the line starts, which would drag a query to the far side of
+          // the form. So alignment is pinned to the *UI's* side physically:
+          // `text-start` would resolve against dir="auto" and defeat the point.
+          // An empty `dir="auto"` field falls back to LTR, so RTL locales also
+          // need the placeholder's own direction stated.
+          dir === 'rtl' ? 'text-right placeholder-shown:[direction:rtl]' : 'text-left',
+        )}
       />
       <button
         type="submit"
@@ -92,12 +103,12 @@ export function UrlForm({ loading, onSubmit, className, inputRef, focusPulse = 0
         {loading ? (
           <>
             <LoaderCircle className="size-4 animate-spin" />
-            {isUrl ? 'در حال باز کردن…' : 'در حال جستجو…'}
+            {isUrl ? m.form.opening : m.form.searching}
           </>
         ) : (
           <>
-            {isUrl ? 'باز کن' : 'جستجو'}
-            <ArrowLeft className="size-4 transition-transform duration-200 group-hover:-translate-x-0.5" />
+            {isUrl ? m.form.open : m.form.search}
+            <Forward className={clsx('size-4 transition-transform duration-200', forwardNudge)} />
           </>
         )}
       </button>
