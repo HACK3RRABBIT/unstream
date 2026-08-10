@@ -39,7 +39,6 @@ export function RecentSearches({ items, onPick, onClear }: Props) {
           <li key={item.input} className="shrink-0 snap-start sm:shrink">
             <button
               onClick={() => onPick(item.input)}
-              dir="auto"
               title={item.input}
               className="tap-target flex max-w-[68vw] items-center gap-1.5 rounded-btn border border-ink-700 bg-ink-900 px-3 py-2 text-mini text-ink-300 transition duration-200 hover:border-ink-600 hover:text-ink-100 active:scale-[0.98] sm:max-w-[15rem]"
             >
@@ -48,7 +47,7 @@ export function RecentSearches({ items, onPick, onClear }: Props) {
               ) : (
                 <Search className="size-3.5 shrink-0 text-ink-600" />
               )}
-              <span className={clsx('truncate', faNumerals(item.input))}>
+              <span className={clsx('truncate', faNumerals(item.input))} dir="auto">
                 {item.isLink ? linkLabel(item.input) : item.input}
               </span>
             </button>

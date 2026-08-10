@@ -2,7 +2,13 @@ import { useMemo, useState, type CSSProperties } from 'react'
 import { Disc3, ListMusic, LoaderCircle, MicVocal, Music2, SearchX } from 'lucide-react'
 import clsx from 'clsx'
 import type { ResultKind, SearchResult, Source } from '../lib/api'
-import { faNumerals, localizeSubtitle, useDirectional, useMessages } from '../lib/i18n'
+import {
+  faNumerals,
+  localizeSubtitle,
+  useDirectional,
+  useMessages,
+  useStartAlign,
+} from '../lib/i18n'
 import type { Messages } from '../lib/locales/en'
 import { QuickDownload } from './QuickDownload'
 
@@ -60,6 +66,7 @@ function TrackList({
   onPick: Props['onPick']
 }) {
   const m = useMessages()
+  const startAlign = useStartAlign()
   return (
     <ul className="stagger">
       {items.map((item, i) => (
@@ -87,7 +94,7 @@ function TrackList({
             {/* dir on the wrapper, not the lines: the title picks the
                 direction and the subtitle follows it, so a Persian track
                 doesn't sit right-aligned above a left-aligned artist. */}
-            <div className="min-w-0 flex-1" dir="auto">
+            <div className={clsx('min-w-0 flex-1', startAlign)} dir="auto">
               <p
                 className={clsx(
                   'truncate text-body font-medium text-ink-100',
@@ -121,6 +128,7 @@ function CardGrid({
   onPick: Props['onPick']
 }) {
   const m = useMessages()
+  const startAlign = useStartAlign()
   return (
     <ul
       className={clsx(
@@ -134,7 +142,7 @@ function CardGrid({
         <li key={item.dedup_key} style={stagger(i)}>
           <button
             onClick={() => onPick(item)}
-            className="group w-full text-start focus-visible:outline-none"
+            className={clsx('group w-full focus-visible:outline-none', startAlign)}
             dir="auto"
           >
             <div

@@ -12,7 +12,7 @@ import {
 import clsx from 'clsx'
 import { jobZipUrl, trackFileUrl, qualityLabel, type Job, type JobTrack } from '../lib/api'
 import { useDownloads, type DownloadEntry } from '../lib/downloads'
-import { faNumerals, useMessages } from '../lib/i18n'
+import { faNumerals, useMessages, useStartAlign } from '../lib/i18n'
 import { ShareTrack } from './ShareTrack'
 
 /** Working, but with no percentage to report — these get a travelling band
@@ -42,6 +42,7 @@ function TrackLine({
   showBar?: boolean
 }) {
   const m = useMessages()
+  const startAlign = useStartAlign()
   const track = entry.tracks.find((t) => t.id === state.id)
   const title = track ? track.title : state.id
   const available = state.status === 'done' && !entry.expired
@@ -68,6 +69,7 @@ function TrackLine({
           'min-w-0 flex-1 truncate text-mini',
           state.status === 'error' ? 'text-ink-400' : 'text-ink-100',
           faNumerals(title),
+          startAlign,
         )}
         title={state.error ?? title}
         dir="auto"
@@ -132,6 +134,7 @@ function TrackLine({
 function JobCard({ entry, capped = true }: { entry: DownloadEntry; capped?: boolean }) {
   const { dismiss } = useDownloads()
   const m = useMessages()
+  const startAlign = useStartAlign()
   const job = entry.job
   const done = job?.done ?? 0
   const failed = job?.failed ?? 0
@@ -159,17 +162,21 @@ function JobCard({ entry, capped = true }: { entry: DownloadEntry; capped?: bool
           <div className="size-9 shrink-0 rounded-ctl bg-ink-800" />
         )}
         <div className="min-w-0 flex-1">
-          {/* The name needs `dir="auto"` to shape its own punctuation, but the
-              progress line under it is always in the UI's language — so the two
-              would sit on opposite edges whenever they disagree. `dir` goes on
-              an inner span instead: the paragraph keeps the document's
-              direction, so `text-start` is the UI's start edge and both lines
-              line up. (`text-start` on the same node as `dir="auto"` would
-              resolve against the name and defeat this.) */}
-          <p className="truncate text-start text-mini font-medium text-ink-100">
-            <span dir="auto" className={faNumerals(entry.name)}>
-              {entry.name}
-            </span>
+          {/* The name needs `dir="auto"` to shape its own punctuation and to
+              truncate at its own end, but the progress line under it is always
+              in the UI's language — so the two would sit on opposite edges
+              whenever they disagree. Alignment is stated physically for that
+              reason; `text-start` here would resolve against the name and
+              defeat it. */}
+          <p
+            className={clsx(
+              'truncate text-mini font-medium text-ink-100',
+              faNumerals(entry.name),
+              startAlign,
+            )}
+            dir="auto"
+          >
+            {entry.name}
           </p>
           <p className="text-xs text-ink-400 tabular-nums">
             {expired ? (

@@ -4,7 +4,7 @@ import { Archive, Check, Download, Link2, LoaderCircle, Music2, X } from 'lucide
 import clsx from 'clsx'
 import { apiError, jobZipUrl, type Collection, type JobTrack } from '../lib/api'
 import { useDownloads } from '../lib/downloads'
-import { faNumerals, useMessages } from '../lib/i18n'
+import { faNumerals, useMessages, useStartAlign } from '../lib/i18n'
 import { useToast } from '../lib/toast'
 import { TrackRow } from './TrackRow'
 
@@ -15,6 +15,7 @@ interface Props {
 
 export function CollectionView({ url, collection }: Props) {
   const m = useMessages()
+  const startAlign = useStartAlign()
   // Downloads live in the global store, so they keep running (and stay
   // visible in the dock) when the user navigates to another search.
   // A collection can spawn several jobs for the same URL — one "Download
@@ -127,6 +128,7 @@ export function CollectionView({ url, collection }: Props) {
             className={clsx(
               'mt-1 truncate font-display text-2xl font-bold',
               faNumerals(collection.name),
+              startAlign,
             )}
             dir="auto"
           >

@@ -31,6 +31,19 @@ export const LOCALES: LocaleDefinition[] = [
   { code: 'fa', label: 'فارسی', dir: 'rtl', messages: fa },
 ]
 
+/** Physical alignment of the UI's own start edge — `text-right` under RTL.
+ *
+ *  For blocks that carry `dir="auto"`: content there decides direction, which
+ *  is what keeps a mixed-script title shaped correctly *and* truncating at its
+ *  own end. But direction also drives `text-align: start`, so an English title
+ *  in an RTL row would align to the row's end — the edge that moves with the
+ *  source badge, leaving a ragged column. Alignment is therefore stated
+ *  physically, from the UI's direction rather than the text's, which is the one
+ *  thing about the pair that must not vary row to row. */
+export function useStartAlign(): string {
+  return useLocale().dir === 'rtl' ? 'text-right' : 'text-left'
+}
+
 /** Persian/Arabic script, used to judge which numerals a *piece of text* wants. */
 const PERSIAN_SCRIPT = /[؀-ۿ]/
 

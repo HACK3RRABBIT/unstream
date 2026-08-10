@@ -2,7 +2,7 @@ import type { CSSProperties } from 'react'
 import { Check, Download, LoaderCircle, Pause, Play, TriangleAlert } from 'lucide-react'
 import clsx from 'clsx'
 import { trackFileUrl, type JobTrack, type Track } from '../lib/api'
-import { faNumerals, useMessages } from '../lib/i18n'
+import { faNumerals, useMessages, useStartAlign } from '../lib/i18n'
 import { togglePreview, usePlayingPreviewId, usePreviewLoading } from '../lib/preview'
 import { ShareTrack } from './ShareTrack'
 
@@ -54,6 +54,7 @@ export function TrackRow({
   style,
 }: Props) {
   const m = useMessages()
+  const startAlign = useStartAlign()
   const status = state?.status
   const active =
     status === 'searching' ||
@@ -106,7 +107,7 @@ export function TrackRow({
           <div className="size-10 shrink-0 rounded-ctl bg-ink-800" />
         )}
 
-        <div className="min-w-0 flex-1" dir="auto">
+        <div className={clsx('min-w-0 flex-1', startAlign)} dir="auto">
           <p
             className={clsx(
               'truncate text-body font-medium transition-colors',

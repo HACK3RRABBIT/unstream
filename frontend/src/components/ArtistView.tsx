@@ -2,7 +2,7 @@ import type { CSSProperties } from 'react'
 import { Disc3, MicVocal, Music2 } from 'lucide-react'
 import clsx from 'clsx'
 import type { ArtistDetail, SearchResult } from '../lib/api'
-import { faNumerals, localizeSubtitle, useMessages } from '../lib/i18n'
+import { faNumerals, localizeSubtitle, useMessages, useStartAlign } from '../lib/i18n'
 import { QuickDownload } from './QuickDownload'
 
 interface Props {
@@ -12,6 +12,7 @@ interface Props {
 
 export function ArtistView({ artist, onPick }: Props) {
   const m = useMessages()
+  const startAlign = useStartAlign()
   return (
     <section className="overflow-hidden rounded-panel border border-ink-700 bg-ink-900">
       <div className="flex flex-wrap items-center gap-5 border-b border-ink-800 p-5 sm:p-6">
@@ -81,7 +82,7 @@ export function ArtistView({ artist, onPick }: Props) {
                       <Music2 className="size-4 text-ink-400" />
                     </div>
                   )}
-                  <div className="min-w-0 flex-1" dir="auto">
+                  <div className={clsx('min-w-0 flex-1', startAlign)} dir="auto">
                     <p
                       className={clsx(
                         'truncate text-body font-medium text-ink-100',
@@ -115,7 +116,7 @@ export function ArtistView({ artist, onPick }: Props) {
               <li key={album.id} style={{ '--i': i } as CSSProperties}>
                 <button
                   onClick={() => onPick(album)}
-                  className="group w-full text-start focus-visible:outline-none"
+                  className={clsx('group w-full focus-visible:outline-none', startAlign)}
                   dir="auto"
                 >
                   <div className="relative aspect-square overflow-hidden rounded-btn bg-ink-800 ring-1 ring-ink-700/60 transition duration-300 group-hover:-translate-y-1 group-hover:ring-ink-600 group-focus-visible:ring-2 group-focus-visible:ring-lime-flash">
@@ -141,7 +142,7 @@ export function ArtistView({ artist, onPick }: Props) {
                     {album.name}
                   </p>
                   {album.subtitle && (
-                    <p className="truncate text-xs text-ink-400" dir="auto">
+                    <p className={clsx('truncate text-xs text-ink-400', startAlign)} dir="auto">
                       {localizeSubtitle(album.subtitle, m)}
                     </p>
                   )}
