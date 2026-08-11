@@ -1,9 +1,8 @@
 import type { CSSProperties } from 'react'
-import { Check, Download, LoaderCircle, Pause, Play, TriangleAlert } from 'lucide-react'
+import { Captions, Check, Download, LoaderCircle, Pause, Play, TriangleAlert } from 'lucide-react'
 import clsx from 'clsx'
 import { trackFileUrl, type JobTrack, type Track } from '../lib/api'
 import { togglePreview, usePlayingPreviewId, usePreviewLoading } from '../lib/preview'
-import { MusicNoteIcon } from '../icons'
 import { ShareTrack } from './ShareTrack'
 
 interface Props {
@@ -137,7 +136,7 @@ export function TrackRow({
               aria-label={`متن آهنگ ${track.title}`}
               className="tap-target grid size-8 shrink-0 place-items-center rounded-ctl border border-ink-700 text-ink-400 transition duration-200 hover:border-lime-flash/50 hover:text-lime-flash active:scale-90 pointer-fine:opacity-60 pointer-fine:group-hover:opacity-100"
             >
-              <MusicNoteIcon className="size-4" />
+              <Captions className="size-4" />
             </button>
           )}
 
