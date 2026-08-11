@@ -18,6 +18,10 @@ export interface LocaleDefinition {
   code: string
   /** Endonym — a language is listed the way its own speakers write it. */
   label: string
+  /** The endonym abbreviated to fit a header segment, in its own script.
+   *  Written out rather than sliced from `label`: where a language shortens
+   *  itself is a fact about that language. */
+  short: string
   dir: Dir
   messages: Messages
 }
@@ -27,8 +31,8 @@ export interface LocaleDefinition {
  *  in the app enumerates locales, and `Messages` makes a half-translated
  *  dictionary a compile error rather than a run-time blank. */
 export const LOCALES: LocaleDefinition[] = [
-  { code: 'en', label: 'English', dir: 'ltr', messages: en },
-  { code: 'fa', label: 'فارسی', dir: 'rtl', messages: fa },
+  { code: 'en', label: 'English', short: 'EN', dir: 'ltr', messages: en },
+  { code: 'fa', label: 'فارسی', short: 'فا', dir: 'rtl', messages: fa },
 ]
 
 /** Physical alignment of the UI's own start edge — `text-right` under RTL.
