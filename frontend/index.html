@@ -1,4 +1,8 @@
 <!doctype html>
+<!-- The build's own default, and what the document renders as before React
+     mounts. The active language is chosen at run time (UNSTREAM_DEFAULT_LOCALE,
+     or the visitor's saved pick) and applied to these two attributes before
+     first paint — see src/lib/i18n.tsx. -->
 <html lang="fa" dir="rtl">
   <head>
     <meta charset="UTF-8" />
@@ -8,6 +12,10 @@
          to an edge (the dock FAB, toasts, the footer) pads itself with them. -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 
+    <!-- Static, and in the build's default language: crawlers and social
+         scrapers read the HTML without running the app, so these cannot follow
+         the runtime locale. Translate them alongside UNSTREAM_DEFAULT_LOCALE if
+         you change which language an instance leads with. -->
     <title>دانلود موزیک، آلبوم و پلی‌لیست از اسپاتیفای و یوتیوب | آنستریم</title>
     <meta
       name="description"
@@ -64,9 +72,40 @@
       }
     </script>
 
-    <!-- Self-hosted Vazirmatn FD (docs/DESIGN.md): preload exactly the weights the UI
-         uses. hrefs must match the url()s in index.css byte-for-byte, and font
-         preloads need crossorigin even same-origin, or they download twice. -->
+    <!-- Self-hosted Vazirmatn (docs/DESIGN.md): the four weights the UI uses from
+         the plain cut that is the document default, plus the FD regular — Farsi
+         is the default language, and without it every Persian title swaps digit
+         shapes after first paint. The remaining FD weights are fetched on demand.
+         hrefs must match the url()s in index.css byte-for-byte, and font preloads
+         need crossorigin even same-origin, or they download twice. -->
+    <link
+      rel="preload"
+      as="font"
+      type="font/woff2"
+      href="/fonts/Vazirmatn-Regular.woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      as="font"
+      type="font/woff2"
+      href="/fonts/Vazirmatn-Medium.woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      as="font"
+      type="font/woff2"
+      href="/fonts/Vazirmatn-SemiBold.woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      as="font"
+      type="font/woff2"
+      href="/fonts/Vazirmatn-Bold.woff2"
+      crossorigin
+    />
     <link
       rel="preload"
       as="font"
@@ -74,30 +113,15 @@
       href="/fonts/Vazirmatn-FD-Regular.woff2"
       crossorigin
     />
-    <link
-      rel="preload"
-      as="font"
-      type="font/woff2"
-      href="/fonts/Vazirmatn-FD-Medium.woff2"
-      crossorigin
-    />
-    <link
-      rel="preload"
-      as="font"
-      type="font/woff2"
-      href="/fonts/Vazirmatn-FD-SemiBold.woff2"
-      crossorigin
-    />
-    <link
-      rel="preload"
-      as="font"
-      type="font/woff2"
-      href="/fonts/Vazirmatn-FD-Bold.woff2"
-      crossorigin
-    />
   </head>
   <body>
     <div id="root"></div>
+    <!-- Runtime config, generated from the container's environment at start-up
+         (frontend/docker-entrypoint.d/). A classic script, so it runs before
+         the deferred module below and the app can read the configured default
+         locale synchronously. Not present in the repo; served in dev by a Vite
+         middleware, so nothing 404s. -->
+    <script src="/config.js"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

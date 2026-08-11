@@ -4,6 +4,7 @@ import clsx from 'clsx'
 import { trackFileUrl } from '../lib/api'
 import { trackShare } from '../lib/analytics'
 import { canShareFiles, shareFilename, shareTrackFile } from '../lib/share'
+import { useMessages } from '../lib/i18n'
 import { useToast } from '../lib/toast'
 
 interface Props {
@@ -21,6 +22,7 @@ interface Props {
  *  feature probe and not a guess at the platform. */
 export function ShareTrack({ jobId, trackId, title, ext, size = 'row' }: Props) {
   const { push } = useToast()
+  const m = useMessages()
   const [busy, setBusy] = useState(false)
 
   if (!canShareFiles()) return null
@@ -35,10 +37,9 @@ export function ShareTrack({ jobId, trackId, title, ext, size = 'row' }: Props) 
         `audio/${ext === 'mp3' ? 'mpeg' : ext}`,
       )
       trackShare(outcome)
-      if (outcome === 'unsupported')
-        push('این مرورگر اشتراک‌گذاری فایل رو پشتیبانی نمی‌کنه', 'info')
+      if (outcome === 'unsupported') push(m.share.unsupported, 'info')
     } catch {
-      push('فایل برای اشتراک‌گذاری آماده نشد', 'error')
+      push(m.share.failed, 'error')
     } finally {
       setBusy(false)
     }
@@ -49,8 +50,8 @@ export function ShareTrack({ jobId, trackId, title, ext, size = 'row' }: Props) 
     <button
       onClick={handleClick}
       disabled={busy}
-      title={`اشتراک‌گذاری یا ذخیره‌ی ${title}`}
-      aria-label={`اشتراک‌گذاری ${title}`}
+      title={m.share.action(title)}
+      aria-label={m.share.actionShort(title)}
       className={clsx(
         'tap-target grid shrink-0 place-items-center rounded-ctl border border-ink-600 text-ink-300 transition duration-200 hover:border-lime-flash/50 hover:text-lime-flash active:scale-90 disabled:opacity-50',
         compact ? 'size-5' : 'size-8',

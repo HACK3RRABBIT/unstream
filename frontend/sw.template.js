@@ -12,13 +12,18 @@ const SHELL = [
   '/',
   '/index.html',
   '/manifest.webmanifest',
-  // The four preloaded Peyda weights — cached so the app-shell works
-  // offline in the right typeface. Served immutable by nginx, so these
-  // re-installs hit the HTTP cache, not the network.
-  '/fonts/PeydaFaNumWeb-Regular.woff2',
-  '/fonts/PeydaFaNumWeb-Medium.woff2',
-  '/fonts/PeydaFaNumWeb-SemiBold.woff2',
-  '/fonts/PeydaFaNumWeb-Bold.woff2',
+  // The preloaded Vazirmatn weights — cached so the app-shell works offline in
+  // the right typeface. Served immutable by nginx, so these re-installs hit the
+  // HTTP cache, not the network.
+  // These must exist: addAll() rejects atomically, and a single 404 here means
+  // the worker never installs and nothing is cached at all.
+  '/fonts/Vazirmatn-Regular.woff2',
+  '/fonts/Vazirmatn-Medium.woff2',
+  '/fonts/Vazirmatn-SemiBold.woff2',
+  '/fonts/Vazirmatn-Bold.woff2',
+  // Plus the FD regular, for the same reason it is preloaded: Persian titles
+  // would otherwise swap digit shapes after first paint.
+  '/fonts/Vazirmatn-FD-Regular.woff2',
 ]
 
 self.addEventListener('install', (event) => {
@@ -51,6 +56,11 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return
   // Job data must always be live.
   if (url.pathname.startsWith('/api/') || url.pathname === '/health') return
+  // So must the runtime config: it is written from the environment when the
+  // container starts, so caching it means a changed UNSTREAM_DEFAULT_LOCALE
+  // needs two page loads to reach a returning visitor — the stale copy on the
+  // first, the new one only after the revalidation lands.
+  if (url.pathname === '/config.js') return
 
   // Navigations: network-first, so a new release lands on the very next
   // load; the cached shell is the offline fallback.

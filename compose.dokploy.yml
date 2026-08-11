@@ -15,6 +15,10 @@ services:
     restart: always
     depends_on:
       - api
+    environment:
+      # Language a first-time visitor gets: `fa` or `en`. Read at container
+      # start, so changing it is a redeploy and not a rebuild.
+      - UNSTREAM_DEFAULT_LOCALE=${UNSTREAM_DEFAULT_LOCALE:-fa}
     networks:
       - unstream
       # Traefik reaches the container over this; the domain is set in

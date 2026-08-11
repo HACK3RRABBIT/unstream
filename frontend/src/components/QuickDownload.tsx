@@ -2,12 +2,14 @@ import { useState } from 'react'
 import { ArrowDownToLine, Check, LoaderCircle, TriangleAlert } from 'lucide-react'
 import { apiError, type SearchResult } from '../lib/api'
 import { useDownloads } from '../lib/downloads'
+import { useMessages } from '../lib/i18n'
 import { useToast } from '../lib/toast'
 
 /** One-click "add to download list" button for a track row in any list. */
 export function QuickDownload({ result }: { result: SearchResult }) {
   const { startFromResult, entryForUrl, quality } = useDownloads()
   const { push } = useToast()
+  const m = useMessages()
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -23,9 +25,9 @@ export function QuickDownload({ result }: { result: SearchResult }) {
     setPending(true)
     try {
       await startFromResult(result)
-      push(`«${result.name}» رفت تو صف`)
+      push(m.quick.queued(result.name))
     } catch (err) {
-      const message = apiError(err)
+      const message = apiError(err, m)
       setError(message)
       push(message, 'error')
     } finally {
@@ -41,14 +43,14 @@ export function QuickDownload({ result }: { result: SearchResult }) {
       title={
         error ??
         (done
-          ? 'دانلود شده — تو لیستته'
+          ? m.quick.done
           : queued
-            ? 'در حال دانلود…'
+            ? m.quick.running
             : quality === 'original'
-              ? 'دانلود بدون انکود دوباره'
-              : `دانلود با ${quality} kbps`)
+              ? m.quick.original
+              : m.quick.kbps(quality))
       }
-      aria-label={`دانلود ${result.name}`}
+      aria-label={m.quick.download(result.name)}
       className="tap-target grid size-8 shrink-0 place-items-center rounded-ctl border border-ink-700 text-ink-400 transition duration-200 pointer-fine:opacity-60 pointer-fine:group-hover:opacity-100 hover:border-lime-flash/50 hover:text-lime-flash active:scale-90"
     >
       {error ? (

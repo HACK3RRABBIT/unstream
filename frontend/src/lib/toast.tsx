@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react'
 import { CircleAlert, CircleCheck, Info, X } from 'lucide-react'
 import clsx from 'clsx'
+import { useMessages } from './i18n'
 
 export type ToastKind = 'success' | 'error' | 'info'
 
@@ -32,6 +33,7 @@ const KIND_ICON = {
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([])
   const nextId = useRef(1)
+  const m = useMessages()
 
   const dismiss = useCallback((id: number) => {
     setToasts((prev) => prev.map((t) => (t.id === id ? { ...t, leaving: true } : t)))
@@ -91,7 +93,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             )}
             <button
               onClick={() => dismiss(toast.id)}
-              aria-label="بستن اعلان"
+              aria-label={m.notify.close}
               className="tap-target grid size-5 shrink-0 place-items-center rounded text-ink-400 transition hover:text-ink-100"
             >
               <X className="size-3.5" />

@@ -2,6 +2,7 @@ import type { CSSProperties } from 'react'
 import { Check, Download, LoaderCircle, Pause, Play, TriangleAlert } from 'lucide-react'
 import clsx from 'clsx'
 import { trackFileUrl, type JobTrack, type Track } from '../lib/api'
+import { faNumerals, useMessages, useStartAlign } from '../lib/i18n'
 import { togglePreview, usePlayingPreviewId, usePreviewLoading } from '../lib/preview'
 import { ShareTrack } from './ShareTrack'
 
@@ -21,17 +22,9 @@ interface Props {
   style?: CSSProperties
 }
 
-function formatDuration(ms: number): string {
+function formatDuration(ms: number, num: (v: number | string) => string): string {
   const s = Math.round(ms / 1000)
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
-}
-
-const STAGE_LABEL: Record<string, string> = {
-  queued: 'تو صف',
-  searching: 'در حال جستجو…',
-  downloading: 'در حال دانلود',
-  tagging: 'در حال تگ زدن…',
-  retrying: 'تلاش دوباره…',
+  return `${num(Math.floor(s / 60))}:${num(String(s % 60).padStart(2, '0'))}`
 }
 
 /** Three bouncing bars shown in place of the row number while previewing. */
@@ -60,6 +53,8 @@ export function TrackRow({
   onToggleSelect,
   style,
 }: Props) {
+  const m = useMessages()
+  const startAlign = useStartAlign()
   const status = state?.status
   const active =
     status === 'searching' ||
@@ -80,7 +75,7 @@ export function TrackRow({
             onClick={onToggleSelect}
             role="checkbox"
             aria-checked={selected}
-            aria-label={`انتخاب ${track.title}`}
+            aria-label={m.track.select(track.title)}
             className={clsx(
               'tap-target grid size-5 shrink-0 place-items-center rounded-[6px] border transition-all duration-150 active:scale-90',
               selected
@@ -95,7 +90,7 @@ export function TrackRow({
         )}
 
         <span className="w-6 shrink-0 text-end font-display text-mini tabular-nums text-ink-600">
-          {isCurrentPreview ? <Equalizer /> : index}
+          {isCurrentPreview ? <Equalizer /> : m.app.num(index)}
         </span>
 
         {track.cover_url ? (
@@ -112,27 +107,35 @@ export function TrackRow({
           <div className="size-10 shrink-0 rounded-ctl bg-ink-800" />
         )}
 
-        <div className="min-w-0 flex-1" dir="auto">
+        <div className={clsx('min-w-0 flex-1', startAlign)} dir="auto">
           <p
             className={clsx(
               'truncate text-body font-medium transition-colors',
+              faNumerals(track.title),
               isCurrentPreview ? 'text-lime-flash' : 'text-ink-100',
             )}
           >
             {track.title}
           </p>
-          <p className="truncate text-mini text-ink-400">{track.artists.join(', ')}</p>
+          <p
+            className={clsx(
+              'truncate text-mini text-ink-400',
+              faNumerals(track.artists.join(', ')),
+            )}
+          >
+            {track.artists.join(', ')}
+          </p>
         </div>
 
         <div className="flex shrink-0 items-center gap-3">
           {track.preview_url && (
             <button
               onClick={() => togglePreview(track.id, track.preview_url!)}
-              title={isCurrentPreview ? 'توقف پیش‌نمایش' : 'پخش ۳۰ ثانیه پیش‌نمایش'}
+              title={isCurrentPreview ? m.track.previewStop : m.track.previewPlay}
               aria-label={
                 isCurrentPreview
-                  ? `توقف پیش‌نمایش ${track.title}`
-                  : `پخش ۳۰ ثانیه از ${track.title}`
+                  ? m.track.previewStopFor(track.title)
+                  : m.track.previewPlayFor(track.title)
               }
               className={clsx(
                 'tap-target grid size-8 shrink-0 place-items-center rounded-ctl border transition duration-200 active:scale-90',
@@ -157,7 +160,7 @@ export function TrackRow({
               title={state?.error ?? undefined}
             >
               <TriangleAlert className="size-3.5" />
-              ناموفق
+              {m.track.failed}
             </span>
           ) : status === 'done' && jobId ? (
             <>
@@ -184,20 +187,21 @@ export function TrackRow({
                 status !== 'downloading' && 'animate-breathe',
               )}
             >
-              {STAGE_LABEL[status!]}
-              {status === 'downloading' && ` ${Math.round((state?.progress ?? 0) * 100)}%`}
+              {m.stages[status as keyof typeof m.stages]}
+              {status === 'downloading' &&
+                ` ${m.app.num(Math.round((state?.progress ?? 0) * 100))}%`}
             </span>
           ) : (
             <>
               <span className="text-mini text-ink-400 tabular-nums">
-                {track.duration_ms > 0 ? formatDuration(track.duration_ms) : '—'}
+                {track.duration_ms > 0 ? formatDuration(track.duration_ms, m.app.num) : '—'}
               </span>
               {onDownload && (
                 <button
                   onClick={onDownload}
                   disabled={downloading}
-                  title={downloading ? 'در حال شروع دانلود…' : 'دانلود این آهنگ'}
-                  aria-label={`دانلود ${track.title}`}
+                  title={downloading ? m.track.startingDownload : m.track.download}
+                  aria-label={m.track.downloadFor(track.title)}
                   aria-busy={downloading}
                   className={clsx(
                     'tap-target grid size-8 shrink-0 place-items-center rounded-ctl border transition duration-200 active:scale-90',
