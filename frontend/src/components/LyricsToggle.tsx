@@ -1,6 +1,7 @@
 import { Captions, CaptionsOff } from 'lucide-react'
 import clsx from 'clsx'
 import { useDownloads } from '../lib/downloads'
+import { useMessages } from '../lib/i18n'
 
 /** Switch for whether new downloads embed lyrics in their tags.
  *
@@ -18,19 +19,18 @@ import { useDownloads } from '../lib/downloads'
  */
 export function LyricsToggle({ className }: { className?: string }) {
   const { embedLyrics, setEmbedLyrics } = useDownloads()
+  const m = useMessages()
 
   return (
     <div className={clsx('flex items-center gap-2', className)}>
-      <span className="hidden text-micro font-semibold text-ink-400 sm:inline">متن</span>
+      <span className="hidden text-micro font-semibold text-ink-400 sm:inline">
+        {m.lyrics.embed.label}
+      </span>
       <div className="flex items-center gap-0.5 rounded-ctl border border-ink-800 bg-ink-900 p-0.5">
         <button
           aria-pressed={embedLyrics}
-          aria-label="ذخیره‌ی متن آهنگ داخل فایل دانلودی"
-          title={
-            embedLyrics
-              ? 'متن آهنگ داخل فایل دانلودی ذخیره میشه'
-              : 'متن آهنگ داخل فایل دانلودی ذخیره نمیشه'
-          }
+          aria-label={m.lyrics.embed.action}
+          title={embedLyrics ? m.lyrics.embed.on : m.lyrics.embed.off}
           onClick={() => setEmbedLyrics(!embedLyrics)}
           className={clsx(
             // Matches a quality segment's box exactly, so the two strips line

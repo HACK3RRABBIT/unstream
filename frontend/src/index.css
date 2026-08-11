@@ -106,13 +106,19 @@
 
   --color-danger: #f0705f;
 
-  /* Type ramp — meta / control / content / headings. Nothing off-scale. */
+  /* Type ramp — meta / control / content / reading / headings. Nothing
+     off-scale. */
   --text-micro: 0.6875rem; /* 11px — uppercase eyebrows */
   --text-micro--line-height: 1.4;
   --text-mini: 0.8125rem; /* 13px — secondary + meta */
   --text-mini--line-height: 1.45;
   --text-body: 0.9375rem; /* 15px — row titles, buttons, prose */
   --text-body--line-height: 1.5;
+  /* 18px — the lyric sheet, the one surface here that is read rather than
+     operated. Leading is generous because Persian ascenders and descenders
+     need more room than the 1.5 the UI sizes use. */
+  --text-lyric: 1.125rem;
+  --text-lyric--line-height: 2;
 
   /* Radius vocabulary — exactly three values, plus full. */
   --radius-ctl: 8px; /* checkboxes, chips, thumbnails, icon buttons */
@@ -132,6 +138,38 @@
   --animate-focus-pulse: focus-pulse 0.55s var(--ease-out-expo);
   --animate-sheet-in: sheet-in 0.34s var(--ease-out-expo) both;
   --animate-scrim-in: scrim-in 0.25s ease-out both;
+  --animate-verse-in: verse-in 0.55s var(--ease-out-expo) both;
+  --animate-wash-in: wash-in 0.7s var(--ease-out-expo) both;
+
+  /* A verse arriving: longer travel and a resolving blur, so the words settle
+     into focus rather than sliding in like a list row. Affordable because it
+     runs on a handful of elements, never a list. */
+  @keyframes verse-in {
+    from {
+      opacity: 0;
+      transform: translateY(14px);
+      filter: blur(5px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+      filter: blur(0);
+    }
+  }
+
+  /* The cover art behind the lyrics header. Never settles below scale(1.2):
+     a 40px blur fades out at the image's own edges, so the picture must be
+     bigger than the box or the wash ends in four visible soft corners. */
+  @keyframes wash-in {
+    from {
+      opacity: 0;
+      transform: scale(1.35);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1.2);
+    }
+  }
 
   /* The sheet rises from the edge it is anchored to. */
   @keyframes sheet-in {
@@ -372,6 +410,13 @@ body {
 .stagger > * {
   animation: rise 0.4s var(--ease-out-expo) both;
   animation-delay: calc(min(var(--i, 0), 14) * 28ms);
+}
+
+/* The same, at the slower beat a reading surface wants. Capped at 8 so a
+   twenty-verse song's last stanza doesn't arrive late. */
+.stagger-verses > * {
+  animation: verse-in 0.55s var(--ease-out-expo) both;
+  animation-delay: calc(min(var(--i, 0), 8) * 70ms);
 }
 
 @media (prefers-reduced-motion: reduce) {

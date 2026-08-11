@@ -198,6 +198,40 @@ const en = {
     downloadFor: (title: string) => `Download ${title}`,
   },
 
+  lyrics: {
+    label: 'Lyrics',
+    dialog: (title: string) => `Lyrics for ${title}`,
+    open: (title: string) => `Show the lyrics for ${title}`,
+    copy: 'Copy the lyrics',
+    copied: 'Lyrics copied',
+    copyFailed: "Couldn't copy the lyrics",
+    close: 'Close the lyrics',
+    retry: 'Try again',
+    /** Footer credit. The source names themselves are proper nouns and are
+     *  not translated. */
+    source: 'Source',
+    /** The sources didn't answer — worth a retry. */
+    unavailable: {
+      title: "Couldn't reach the lyrics sources",
+      hint: 'They may be busy, or blocked from here. Give it a moment and try again.',
+    },
+    /** The sources answered and none of them has this song. No retry: asking
+     *  the same question again gets the same answer. */
+    absent: {
+      title: 'No lyrics for this one',
+      hint: "Either the catalogs don't carry it yet, or the track is filed under a different name.",
+    },
+    /** The preference, not the sheet: whether a finished download gets the
+     *  words written into its tags. Its own label, because the header is
+     *  narrow and it has to fit beside "Quality". */
+    embed: {
+      label: 'Lyrics',
+      action: 'Save the lyrics inside the downloaded file',
+      on: 'Lyrics are saved inside the downloaded file',
+      off: 'Lyrics are not saved inside the downloaded file',
+    },
+  },
+
   dock: {
     heading: 'Downloads',
     close: 'Close the downloads panel',

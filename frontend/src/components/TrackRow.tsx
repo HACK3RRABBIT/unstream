@@ -135,8 +135,8 @@ export function TrackRow({
           {onLyrics && (
             <button
               onClick={onLyrics}
-              title="متن آهنگ"
-              aria-label={`متن آهنگ ${track.title}`}
+              title={m.lyrics.label}
+              aria-label={m.lyrics.open(track.title)}
               className="tap-target grid size-8 shrink-0 place-items-center rounded-ctl border border-ink-700 text-ink-400 transition duration-200 hover:border-lime-flash/50 hover:text-lime-flash active:scale-90 pointer-fine:opacity-60 pointer-fine:group-hover:opacity-100"
             >
               <Captions className="size-4" />
