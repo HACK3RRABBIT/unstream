@@ -32,7 +32,7 @@ from mutagen.id3 import APIC, ID3, TALB, TDRC, TIT2, TPE1, TPE2, TRCK, USLT
 from mutagen.mp4 import MP4, MP4Cover
 from yt_dlp import YoutubeDL
 
-from . import lyrics
+from . import analytics, lyrics
 from .models import Track
 from .ytdlp import base_opts
 
@@ -356,17 +356,24 @@ def _find_lyrics(track: Track) -> str | None:
     """Best-effort lyrics for embedding. Never raises, never blocks a download.
 
     Same contract as cover art: nice to have, silent when it fails.
+
+    The outcome is counted here and not only at the API, because embedding is
+    where most lookups happen: an album asks once per track, while the sheet is
+    opened one song at a time. Anything that is not a clear found-or-absent
+    counts as "unavailable" — including a bug in here, which is the honest
+    reading, since what it means is that we did not get an answer.
     """
+    artist = ", ".join(track.artists)
+    outcome, plain = "unavailable", None
     try:
-        found = lyrics.fetch(
-            ", ".join(track.artists),
-            track.title,
-            track.album,
-            track.duration_ms / 1000,
-        )
+        found = lyrics.fetch(artist, track.title, track.album, track.duration_ms / 1000)
+        outcome = "found" if found else "absent"
+        plain = found.plain if found else None
     except Exception:
-        return None
-    return found.plain if found else None
+        pass  # a lyric is never worth failing a download over
+    # `record` swallows its own errors, so counting cannot cost a download.
+    analytics.record("lyrics_embed", detail=outcome, label=f"{artist} - {track.title}")
+    return plain
 
 
 def download_track(

@@ -28,7 +28,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.error import HTTPError
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 LRCLIB_API = "https://lrclib.net/api"
@@ -41,6 +41,8 @@ GENIUS_USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
+# Last resort: keyless, plain text only, and unverifiable. See _fetch_lyrics_ovh.
+LYRICS_OVH_API = "https://api.lyrics.ovh/v1"
 REQUEST_TIMEOUT = 5.0
 
 DB_PATH = Path(
@@ -63,6 +65,16 @@ _LRC_META_RE = re.compile(r"^\[[a-z]+:")
 # it stops being "this song". Looser than the downloader's 20 s because lyrics
 # catalogs key on title, and a remastered or live take can run long.
 MAX_DURATION_DRIFT = 60
+
+# The same bound for a hit whose name and artist both match exactly. Wider,
+# because an exact name is real evidence and remasters legitimately run a few
+# seconds long.
+MAX_EXACT_DRIFT = 90
+
+# Shortest answer worth trusting from a source with nothing to check it
+# against. Only applied to lyrics.ovh — LRCLIB hits are verified by duration,
+# and a genuinely short song there is fine.
+MIN_PLAUSIBLE_CHARS = 120
 
 
 @dataclass
@@ -113,6 +125,37 @@ def detect_lang(text: str) -> str:
 # care. Also stripped from the cache key so the two forms share one row.
 _ARABIC_MARKS_RE = re.compile(r"[\u064B-\u065F\u0670\u06D6-\u06ED\u0640]")
 
+# Several Persian letters have an Arabic twin that looks near-identical on
+# screen but carries a different codepoint, and catalogs mix them constantly:
+# "\u06A9\u06CC" typed with Arabic kaf and yeh is a different string from the Persian
+# spelling, with nothing to see. Folding the twins is what lets one song have
+# one cache key instead of two that each half-miss.
+#
+# ZWNJ is deleted rather than spaced. Persian writes compounds with it
+# ("\u0645\u06CC\u200C\u062E\u0648\u0627\u0645") and catalogs routinely omit it ("\u0645\u06CC\u062E\u0648\u0627\u0645"); turning it into a
+# space leaves those two disagreeing, while removing it makes them identical.
+# The cost is that an explicit space ("\u0628\u0686\u0647 \u0647\u0627") no longer matches \u2014 a rarer
+# spelling, and a misspelling, so it is the right side to lose.
+_ARABIC_FOLD = str.maketrans(
+    {
+        "\u064A": "\u06CC",  # Arabic yeh        -> Farsi yeh
+        "\u0649": "\u06CC",  # alef maksura      -> Farsi yeh
+        "\u0643": "\u06A9",  # Arabic kaf        -> keheh
+        "\u0622": "\u0627",  # alef madda        -> alef
+        "\u0623": "\u0627",  # alef + hamza above
+        "\u0625": "\u0627",  # alef + hamza below
+        "\u0629": "\u0647",  # teh marbuta       -> heh
+        "\u200C": "",  # ZWNJ
+        "\u200D": "",  # ZWJ
+        "\u200E": "",  # LTR mark
+        "\u200F": "",  # RTL mark
+        # Both digit families read as the ASCII digit they mean, so "\u06F7" and
+        # "\u0667" and "7" are one number.
+        **{chr(0x0660 + n): str(n) for n in range(10)},  # Arabic-Indic
+        **{chr(0x06F0 + n): str(n) for n in range(10)},  # Persian
+    }
+)
+
 
 def _normalize(artist: str, title: str) -> str:
     """Cache key: the pair lowercased, punctuation collapsed."""
@@ -126,14 +169,172 @@ def _squash(text: str) -> str:
     Used for comparing names across catalogs, where a Persian song appears as
     "گل یخ" in one place and "Gole Yakh - گُلِ یَخ" in another — stripping
     non-ASCII would turn both into empty strings and match anything.
+
+    Arabic-script letters are folded to their Persian twins first, so the same
+    word spelled either way compares equal \u2014 see `_ARABIC_FOLD`.
     """
-    text = _ARABIC_MARKS_RE.sub("", text)
+    text = _ARABIC_MARKS_RE.sub("", text).translate(_ARABIC_FOLD)
     return re.sub(r"[^a-z0-9\u0600-\u06ff]+", " ", text.lower()).strip()
+
+
+# Decorations a catalog hangs off a title that no lyrics database keys on:
+# a parenthesised qualifier, or a trailing " - Remastered 2013" style suffix.
+# Only suffixes are stripped, never a leading segment, because "(What's the
+# Story) Morning Glory" is the title.
+#
+# The optional year is not decoration: catalogs write both "- Remastered 2011"
+# and "- 2013 Remaster", and without it the second shape sails straight past.
+_DECORATION = (
+    r"(?:\d{4}\s+)?(?:feat|ft|with|remaster|remastered|live|acoustic|radio edit|"
+    r"single version|album version|bonus track|deluxe|explicit|mono|stereo)\b"
+)
+_TITLE_PAREN_RE = re.compile(rf"\s*[\(\[]\s*{_DECORATION}[^\)\]]*[\)\]]", re.IGNORECASE)
+_TITLE_SUFFIX_RE = re.compile(rf"\s+-\s+{_DECORATION}.*$", re.IGNORECASE)
+
+# A run of Arabic-script text, used to split a mixed-script string. iTunes
+# hands back titles like "Gole Yakh  گل یخ" — one field, both scripts.
+_ARABIC_RUN_RE = re.compile(r"[؀-ۿݐ-ݿࢠ-ࣿ]+")
+_LATIN_RE = re.compile(r"[A-Za-z]")
+
+
+def _strip_decorations(title: str) -> str:
+    """The title without "(feat. X)" / " - 2013 Remaster" style trimmings."""
+    stripped = _TITLE_SUFFIX_RE.sub("", _TITLE_PAREN_RE.sub("", title))
+    return stripped.strip(" -–—") or title
+
+
+def _primary_artist(artist: str) -> str:
+    """Just the first credited artist. Lyrics catalogs file a song under one."""
+    for sep in (",", " & ", " feat. ", " ft. ", " featuring ", " x ", " with "):
+        if sep in artist:
+            artist = artist.split(sep)[0]
+    return artist.strip()
+
+
+def _latin_part(text: str) -> str:
+    """The Latin half of a mixed-script string, or "" if there isn't one.
+
+    Measured: LRCLIB stores "Gole Yakh", and asking it for the whole of
+    "Gole Yakh  گل یخ" returns nothing. The Latin half is the half it knows.
+    """
+    if not _ARABIC_RUN_RE.search(text) or not _LATIN_RE.search(text):
+        return ""
+    return re.sub(r"\s{2,}", " ", _ARABIC_RUN_RE.sub(" ", text)).strip(" -–—,")
+
+
+# How many distinct LRCLIB searches one lookup may cost. A miss pays the full
+# bill, and an album download pays it per track, so this is deliberately
+# small — the variants are ordered most-likely-first and cut off here.
+MAX_VARIANTS = 4
+
+
+def _query_variants(artist: str, title: str, duration_s: float = 0) -> list[tuple[str, str]]:
+    """(artist, title) pairs to try against LRCLIB, most likely first.
+
+    Each is a real shape our own providers return, not a guess:
+      - as given — Latin catalogs answer here and never go further
+      - decorations stripped — "Levitating (feat. DaBaby)" -> "Levitating"
+      - primary artist only — "Drake, 21 Savage" -> "Drake"
+      - the Latin half of a mixed-script field — iTunes' "Gole Yakh  گل یخ"
+      - title alone, when the artist is the part LRCLIB cannot read
+
+    The last one needs the duration. Deezer files songs under a Persian-script
+    artist with a Latin title ("محسن چاوشی" / "Be Khoda") and LRCLIB has the
+    title but not the pair, so dropping the artist is the only way in — and it
+    is also the variant most able to return a different artist's song of the
+    same name, which a duration is the only remaining evidence against.
+
+    Transliterating Persian into Latin looks like the obvious fix here and does
+    not work; see docs/DESIGN.md before trying it.
+    """
+    out: list[tuple[str, str]] = []
+
+    def add(a: str, t: str) -> None:
+        pair = (a.strip(), t.strip())
+        if pair[1] and pair not in out:
+            out.append(pair)
+
+    bare = _strip_decorations(title)
+    primary = _primary_artist(artist)
+    latin_title = _latin_part(title)
+    latin_artist = _latin_part(artist)
+
+    add(artist, title)
+    add(artist, bare)
+    add(primary, bare)
+    if latin_title:
+        add(latin_artist or primary, latin_title)
+    elif latin_artist:
+        add(latin_artist, bare)
+    # Unreadable artist, readable title, and a duration to check the answer.
+    if duration_s and _ARABIC_RUN_RE.search(artist) and not _ARABIC_RUN_RE.search(bare):
+        add("", bare)
+    return out[:MAX_VARIANTS]
 
 
 # Genius prefixes Persian songs with an auto header like
 # [متن آهنگ «گل یخ» از کوروش یغمایی] — bookkeeping, not a lyric.
 _GENIUS_SONG_HEADER_RE = re.compile(r"^\[متن آهنگ[^\]]*\]\s*$")
+
+
+# --------------------------------------------------------------------------
+# circuit breaker
+#
+# A source that is refusing us will not change its mind within one album
+# download, and asking anyway is not free: Genius answers 403 in ~1.7 s and
+# lyrics.ovh does not answer Persian queries at all, it burns the whole
+# REQUEST_TIMEOUT. Per track, per album. So after BREAKER_THRESHOLD consecutive
+# failures a source is skipped until BREAKER_COOLDOWN passes, then one request
+# is let through to see whether it is back — recovery needs no restart and no
+# configuration.
+#
+# Skipping still counts as degraded. A source we declined to ask is one that
+# might have had the song, so the answer stays "unavailable" rather than
+# hardening into "this song has no lyrics".
+
+BREAKER_THRESHOLD = 3
+BREAKER_COOLDOWN = 900  # seconds
+
+
+@dataclass
+class _Breaker:
+    failures: int = 0
+    opened_at: float = 0.0
+
+
+_breakers: dict[str, _Breaker] = {}
+_breaker_lock = threading.Lock()
+
+
+def _breaker_allows(name: str) -> bool:
+    """False while `name` is being rested after repeated failures."""
+    with _breaker_lock:
+        breaker = _breakers.get(name)
+        if breaker is None or breaker.failures < BREAKER_THRESHOLD:
+            return True
+        if time.time() - breaker.opened_at >= BREAKER_COOLDOWN:
+            # Half-open: let one request decide whether the source is back.
+            breaker.failures = BREAKER_THRESHOLD - 1
+            return True
+        return False
+
+
+def _breaker_record(name: str, ok: bool) -> None:
+    with _breaker_lock:
+        breaker = _breakers.setdefault(name, _Breaker())
+        if ok:
+            breaker.failures = 0
+            breaker.opened_at = 0.0
+            return
+        breaker.failures += 1
+        if breaker.failures >= BREAKER_THRESHOLD:
+            breaker.opened_at = time.time()
+
+
+def reset_breakers() -> None:
+    """Forget every source's failure history — a person retrying asks for this."""
+    with _breaker_lock:
+        _breakers.clear()
 
 
 # --------------------------------------------------------------------------
@@ -180,6 +381,19 @@ def _ensure_schema() -> None:
 # Distinguishes "nothing cached" from "cached as a miss", which is the whole
 # point of caching misses: None already means "no lyrics" to callers.
 _NOT_CACHED = object()
+# And a third: cached as "we could not reach the sources". Short-lived, so an
+# album download pays one lookup instead of one per track, without an outage
+# hardening into a week of "this song has no lyrics".
+_UNAVAILABLE = object()
+
+# The `found` column carries three states rather than a boolean. Reusing the
+# existing INTEGER is what lets this ship without a migration: rows written by
+# the old code are already 1 or 0 and still mean exactly what they meant.
+_FOUND, _ABSENT, _UNREACHABLE = 1, 0, -1
+
+# How long a cached "unreachable" stays trusted. Minutes, not the week a real
+# miss gets: the point is to survive one album, not to remember an outage.
+UNAVAILABLE_TTL_MINUTES = 15
 
 
 def _read(key: str):
@@ -193,15 +407,20 @@ def _read(key: str):
         return _NOT_CACHED
     if row is None:
         return _NOT_CACHED
-    plain, synced, source, found, fetched_at = row
-    if found:
+    plain, synced, source, state, fetched_at = row
+    age = time.time() - fetched_at
+    if state == _FOUND:
         return Lyrics(plain=plain, synced=synced, source=source)
-    if time.time() - fetched_at < MISS_TTL_HOURS * 3600:
+    if state == _UNREACHABLE:
+        return _UNAVAILABLE if age < UNAVAILABLE_TTL_MINUTES * 60 else _NOT_CACHED
+    if age < MISS_TTL_HOURS * 3600:
         return None
     return _NOT_CACHED
 
 
-def _write(key: str, found: Lyrics | None) -> None:
+def _write(key: str, found: Lyrics | None, state: int | None = None) -> None:
+    if state is None:
+        state = _FOUND if found else _ABSENT
     try:
         with _lock, _connect() as conn:
             conn.execute(
@@ -218,7 +437,7 @@ def _write(key: str, found: Lyrics | None) -> None:
                     found.plain if found else "",
                     found.synced if found else "",
                     found.source if found else "",
-                    1 if found else 0,
+                    state,
                     int(time.time()),
                 ),
             )
@@ -234,7 +453,7 @@ def _get_json(path: str, params: dict, user_agent: str = USER_AGENT) -> object:
     """GET a JSON endpoint. None when the honest answer is "no lyrics";
     raises LyricsUnavailable for anything that might work on a retry."""
     request = Request(
-        f"{path}?{urlencode(params)}",
+        f"{path}?{urlencode(params)}" if params else path,
         headers={"User-Agent": user_agent, "Accept": "application/json"},
     )
     try:
@@ -274,7 +493,12 @@ def _pick(results: list, title: str, artist: str, duration_s: float) -> Lyrics |
         ) == wanted_artist
         drift = abs((item.get("duration") or 0) - duration_s) if duration_s else 0
         # Without a duration there is no drift to measure — accept any name.
-        if not exact and duration_s and drift > MAX_DURATION_DRIFT:
+        # An exact *name* match is not an exact song: "Bohemian Rhapsody - Live
+        # Aid" names the same song as the studio cut and shares none of its
+        # timing. A take minutes away from the one we downloaded is a different
+        # take, and its words are worse than no words. Hence exact matches get
+        # a wider bound here, not an exemption.
+        if duration_s and drift > (MAX_EXACT_DRIFT if exact else MAX_DURATION_DRIFT):
             continue
         # Exact matches sort by duration proximity; non-exact ones by drift.
         score = (0, drift) if exact else (1, drift)
@@ -419,10 +643,35 @@ def _fetch_genius(artist: str, title: str) -> Lyrics | None:
     return None
 
 
-def _fetch_remote(artist: str, title: str, album: str, duration_s: float) -> Lyrics | None:
-    # LRCLIB first: structured, synced lyrics, one request. The /get endpoint
-    # keys on all four fields and rejects a missing duration, so without one
-    # we go straight to its fuzzy search.
+def _fetch_lyrics_ovh(artist: str, title: str) -> Lyrics | None:
+    """lyrics.ovh — keyless, plain text only, no duration or album to match on.
+
+    Third in line precisely because it cannot be verified: it answers on an
+    artist/title pair and hands back a blob, so there is no way to tell a
+    right answer from a confident wrong one. Only reached once the two
+    catalogs that *can* be checked have both said no.
+    """
+    for candidate_artist in dict.fromkeys([_primary_artist(artist), artist]):
+        if not candidate_artist:
+            continue
+        data = _get_json(
+            f"{LYRICS_OVH_API}/{quote(candidate_artist, safe='')}/{quote(title, safe='')}",
+            {},
+        )
+        if isinstance(data, dict):
+            plain = (data.get("lyrics") or "").strip()
+            # Its short answers are near-always junk — a truncated entry or an
+            # "instrumental" note — and with nothing to verify against, length
+            # is the only signal available. A real lyric clears this easily.
+            if len(plain) >= MIN_PLAUSIBLE_CHARS:
+                return Lyrics(plain=plain, synced="", source="lyrics-ovh")
+    return None
+
+
+def _fetch_lrclib(artist: str, title: str, album: str, duration_s: float) -> Lyrics | None:
+    """LRCLIB, asked up to MAX_VARIANTS ways. The only source with synced LRC."""
+    # The /get endpoint keys on all four fields and rejects a missing duration,
+    # so without one we go straight to the fuzzy search.
     if duration_s:
         exact = _get_json(
             LRCLIB_API + "/get",
@@ -438,30 +687,93 @@ def _fetch_remote(artist: str, title: str, album: str, duration_s: float) -> Lyr
             if found is not None:
                 return found
 
-    results = _get_json(
-        LRCLIB_API + "/search", {"track_name": title, "artist_name": artist}
-    )
-    if isinstance(results, list):
-        found = _pick(results, title, artist, duration_s)
+    for variant_artist, variant_title in _query_variants(artist, title, duration_s):
+        params = {"track_name": variant_title}
+        if variant_artist:
+            # Sent only when we have one: an empty artist_name is a filter
+            # LRCLIB still applies, not one it ignores.
+            params["artist_name"] = variant_artist
+        results = _get_json(LRCLIB_API + "/search", params)
+        if isinstance(results, list):
+            # Scored against the variant we asked for, not the original: a hit
+            # for "Levitating" is not a bad match just because we set out
+            # looking for "Levitating (feat. DaBaby)".
+            found = _pick(results, variant_title, variant_artist, duration_s)
+            if found is not None:
+                return found
+    return None
+
+
+def _fetch_remote(artist: str, title: str, album: str, duration_s: float) -> Lyrics | None:
+    """Every source in turn, best-verified first.
+
+    An unreachable source does not end the search — it is noted and the next
+    one is asked. Genius sits in front of lyrics.ovh and Genius is the one that
+    gets itself blocked, so letting its 403 propagate would cost us the source
+    behind it too.
+
+    If any source failed to *answer*, as opposed to answering "no", the result
+    is LyricsUnavailable rather than None — a bad afternoon must never be
+    written into the cache as a week of "this song has no lyrics".
+    """
+    degraded = False
+    for name, source in (
+        ("lrclib", lambda: _fetch_lrclib(artist, title, album, duration_s)),
+        ("genius", lambda: _fetch_genius(artist, title)),
+        ("lyrics-ovh", lambda: _fetch_lyrics_ovh(artist, title)),
+    ):
+        if not _breaker_allows(name):
+            degraded = True  # not asked is not the same as answered "no"
+            continue
+        try:
+            found = source()
+        except LyricsUnavailable:
+            _breaker_record(name, ok=False)
+            degraded = True
+            continue
+        _breaker_record(name, ok=True)
         if found is not None:
             return found
+    if degraded:
+        raise LyricsUnavailable("no lyrics source could be reached")
+    return None
 
-    # LRCLIB missed (most likely a Persian-script title it keys romanized).
-    return _fetch_genius(artist, title)
 
+def fetch(
+    artist: str, title: str, album: str, duration_s: float, force: bool = False
+) -> Lyrics | None:
+    """Lyrics for a track, from the cache, LRCLIB, Genius, then lyrics.ovh.
 
-def fetch(artist: str, title: str, album: str, duration_s: float) -> Lyrics | None:
-    """Lyrics for a track, from the cache, LRCLIB, then Genius. None = absent.
+    None means the sources answered and none of them has this song.
+    LyricsUnavailable means they did not answer, which is a different fact and
+    must stay a different fact: callers report it separately so a source outage
+    is never counted or shown as "this song has no lyrics".
 
-    Transient failures raise LyricsUnavailable and are left uncached, so a
-    network blip degrades to "no lyrics this time" instead of poisoning the
-    cache for a week.
+    Both are cached, on very different clocks. A miss keeps MISS_TTL_HOURS
+    because a song that has no lyrics today will not have them next Tuesday
+    either. An outage keeps UNAVAILABLE_TTL_MINUTES, which is long enough that
+    an album pays for one lookup instead of one per track, and short enough
+    that a source coming back is noticed almost immediately.
+
+    `force` skips only the cached *outage* — never a hit, never a real miss.
+    It exists for the retry button: serving a person the same cached refusal
+    they just asked us to reconsider would make the button a decoration. Batch
+    callers leave it alone and keep the protection.
     """
     _ensure_schema()
     key = _normalize(artist, title)
     cached = _read(key)
+    if cached is _UNAVAILABLE:
+        if not force:
+            raise LyricsUnavailable("sources were unreachable a moment ago")
+        cached = _NOT_CACHED
+        reset_breakers()  # the person asking is also asking us to re-test
     if cached is not _NOT_CACHED:
         return cached
-    found = _fetch_remote(artist, title, album, duration_s)
+    try:
+        found = _fetch_remote(artist, title, album, duration_s)
+    except LyricsUnavailable:
+        _write(key, None, state=_UNREACHABLE)
+        raise
     _write(key, found)
     return found

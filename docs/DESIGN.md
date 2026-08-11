@@ -17,7 +17,7 @@ frontend (Vite + React + Tailwind)  ──proxy /api──▶  backend (FastAPI)
                                                       ├─ itunes.py      search, Apple Music URLs
                                                       ├─ soundcloud.py  search + SoundCloud URLs
                                                       ├─ ytdlp.py       YouTube/SoundCloud URLs + search
-                                                      ├─ lyrics.py      LRCLIB lyrics, cached in SQLite
+                                                      ├─ lyrics.py      lyrics, 3 sources, cached in SQLite
                                                       ├─ downloader.py  find audio → encode → tags
                                                       ├─ jobs.py        thread pool + progress + sweeper
                                                       ├─ limits.py      per-caller budgets
@@ -30,7 +30,45 @@ Every metadata provider is public and keyless — no account, no API key, nothin
 
 Lyrics follow the same rule. They come from **LRCLIB** (lrclib.net) first — a keyless catalog with plain text plus time-synced LRC — falling back to **Genius** when LRCLIB misses. The two-source split exists because LRCLIB keys Persian songs by romanized titles, so a catalog that hands the app Persian script can never match them; Genius's internal search API answers Persian queries and its song pages carry the lyrics. LRCLIB answers almost all English songs and Genius never hears about them. Genius is page-scraping, so it is the fragile member: if it starts answering 403s or changing its markup, the feature degrades to LRCLIB coverage — which is the same "a keyless source can rot" trade the rest of the app already makes with YouTube. Synced lyrics are fetched and cached but *not rendered* in v1 — the UI shows plain text. They are stored now so a karaoke-style view later is a frontend change only.
 
-Lyrics are **nice-to-have, like cover art**: the lookup is wrapped so a failed fetch can never fail a download, and the SQLite cache (next to `analytics.db`) caches misses too so a track that has no lyrics doesn't get re-asked every download. Embedding into files is a user preference (the «متن آهنگ» toggle in the header) and is off-by-nothing — on by default, per job, captured at job start like quality.
+**Genius is currently answering 403 to everything** — internal API, public search and song pages alike, on every header shape tried. That is the predicted rot above, arrived. While it lasts, a Persian-script title has no source that can read it, and the coverage work below exists to route around that rather than wait.
+
+It is kept rather than deleted because the block is very likely per-address: this project ships to be self-hosted, and `docs/DESIGN.md` already documents the same asymmetry for YouTube. Genius may answer fine from someone else's machine, and it is the only source that can read Persian script at all — so the fix is to stop *paying* for a blocked source, not to remove it.
+
+### Resting a source that is refusing us
+
+A source that has failed `BREAKER_THRESHOLD` times in a row is skipped for `BREAKER_COOLDOWN`, then allowed one request through to see whether it is back. No restart, no configuration, no flag to remember to unset.
+
+This is worth real money. Measured on a Persian album, per track:
+
+| | before | after |
+|---|---|---|
+| first few tracks | ~9.0 s | ~9.0 s (tripping the breakers) |
+| every track after | ~9.0 s | **~1.9 s** |
+| downloading it again | ~9.0 s | **~0 s** (cached) |
+
+Two sources are being rested there, not one. Genius's 403 takes ~1.7 s to come back — a Cloudflare block page is not a fast refusal — and **lyrics.ovh does not answer Persian queries at all, it times out at the full `REQUEST_TIMEOUT`**, which made it the more expensive of the two. What is left is LRCLIB, which is the source doing real work.
+
+Skipping a rested source still yields `unavailable`, never `absent`: a source we declined to ask might have had the song.
+
+The outage cache is what makes the re-download free, and it is the reason `fetch` takes `force`. An outage is remembered for `UNAVAILABLE_TTL_MINUTES` so an album pays one lookup rather than one per track — but a person who has just been told "couldn't reach the sources" and presses retry is exactly the caller that cache must not apply to, or the button is a decoration. `refresh=1` on the endpoint sets it, and it also clears the breakers. It bypasses **only** a cached outage: a hit and a real miss are both real answers and are served from cache regardless.
+
+A third source, **lyrics.ovh**, sits behind both. It is keyless like the others but is the only one whose answer cannot be *checked*: no duration, no album, no synced text — an artist/title pair in, a blob out. So it is last, it is refused below `MIN_PLAUSIBLE_CHARS` (its short answers are near-always truncated junk), and the sheet names its source in the footer. A wrong lyric from it is embedded permanently in a file, which is why it is ordered behind the two that can be verified rather than merged in with them.
+
+### Telling "no lyrics" apart from "couldn't ask"
+
+`fetch` returns `None` when the sources answered and none has the song; it raises `LyricsUnavailable` when they did not answer. The API turns that into `status: found | absent | unavailable`, and the UI gives `unavailable` its own copy and a retry.
+
+These were one value until it was measured. With Genius blocked, every Persian lookup reported "this song has no lyrics" — in the sheet *and* in the `lyrics_view` analytics event. The numbers that should have revealed the outage were the numbers concealing it, so a total source failure was indistinguishable from a catalog gap. **Do not collapse these two again.** `lyrics_embed` records the same three outcomes from the download path, which is where most lookups actually happen — an album asks once per track, while the sheet is opened one song at a time.
+
+### Matching, and what does not work
+
+LRCLIB is asked up to `MAX_VARIANTS` ways, because our own providers hand back several shapes of the same song: decorations to strip (`Levitating (feat. DaBaby)`), a joined artist list to reduce to its first credit, and mixed-script fields — iTunes returns `"Gole Yakh  گل یخ"` as one string. Where the artist is Persian script and the title is Latin (Deezer does this), the artist is dropped and the title searched alone — the only variant that can return a different artist's song of the same name, which is why it requires a duration to verify against and is skipped without one.
+
+**Transliteration was tried and rejected.** It looks like the obvious fix for Persian coverage and it does not work: LRCLIB's search is exact, not fuzzy. Its own `Gole Yakh` returns zero results for `Gol Yakh`, and `Kourosh Yaghmaei` returns zero for `Kurosh Yaghmai`. A transliterator would have to reproduce one particular informal romanization letter for letter. Don't rebuild this.
+
+An exact title match is **not** exempt from the duration check. It used to be, and a 355-second request for `Bohemian Rhapsody - Live Aid` came back with a 514-character fragment of a different recording at full confidence — which then got embedded in the file. `MAX_EXACT_DRIFT` is wider than `MAX_DURATION_DRIFT`, not absent.
+
+Lyrics are **nice-to-have, like cover art**: the lookup is wrapped so a failed fetch can never fail a download, and the SQLite cache (next to `analytics.db`) caches misses too so a track that has no lyrics doesn't get re-asked every download. Misses are cached; `unavailable` never is. Embedding into files is a user preference (the «متن آهنگ» toggle in the header) and is off-by-nothing — on by default, per job, captured at job start like quality.
 
 Jobs live in memory, not a database. A restart loses in-flight progress and that is an accepted trade: the files on disk are the durable artifact, and a queue would be a second stateful service for a project whose premise is that it needs none.
 
@@ -77,7 +115,7 @@ Almost every event is recorded **server-side**, inside endpoints that already ru
 - Writes go through a bounded queue drained by one thread and are **dropped when it is full**. Analytics can lose events; it can never slow down or fail a download. Every `record()` swallows its own errors, and an unwritable volume disables the subsystem rather than breaking startup.
 - **`ADMIN_TOKEN` is the project's only secret.** Unset, `/api/admin/*` returns 503 and the dashboard does not exist — it cannot accidentally end up public. Failed token attempts are rate-limited and that guard is not configurable.
 - Rows are kept `ANALYTICS_RETENTION_DAYS` (90), swept hourly by the same writer thread. Counters live in one process, exactly like `limits.py` — fine for the single container, a rethink if the API is ever scaled out.
-- The **`analytics` volume is the only copy of the history**. Unlike `downloads` it is not disposable; losing it loses every number the project has had. The README has the SQLite-safe backup command.
+- The **`analytics` volume is the only copy of the history**. Unlike `downloads` it is not disposable; losing it loses every number the project has had. The README has the SQLite-safe backup command. `lyrics.db` shares the volume and *is* disposable — it is a cache, and throwing it away costs one slow afternoon, not any history.
 
 <a id="self-hosting"></a>
 
