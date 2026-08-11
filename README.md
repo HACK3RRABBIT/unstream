@@ -71,6 +71,7 @@ Streaming services are DRM-protected, so nothing is downloaded from them directl
    - **LRCLIB** — keyless lyric catalog, first pick for lyrics shown in the app and embedded into downloads, and the only source with time-synced LRC. It is asked several ways, because catalogs hand back the same song under a joined artist list, a `(feat. …)` title or a mixed-script one. **Genius** and **lyrics.ovh** follow when it misses. A source that starts refusing us is rested automatically rather than retried per track — see [DESIGN.md](docs/DESIGN.md#the-shape-of-it).
 
    Search fans out to four of these in parallel and merges the results, deduped by name + artist. There is deliberately no Spotify Web API integration — since 2025 it requires the app owner to hold an active Premium subscription, and this project stays free and keyless.
+
 2. **yt-dlp** finds the audio: tracks already pointing at a YouTube/SoundCloud page download directly; everything else is searched (`ytsearch8:` on "artists - title") picking the result whose duration is closest to the catalog's, which rejects live versions and hour-long mixes. Retries exclude broken uploads, and the last attempt searches SoundCloud instead of YouTube.
 3. The best audio stream is downloaded at the **quality** you picked — **ffmpeg** encodes mp3 at 128, 192 (default) or 320 kbps. **Original** skips the encode and keeps the upload's own stream (m4a, or opus remuxed out of webm so it can carry tags) — best fidelity, since re-encoding an already-lossy source can only lose more.
 4. **mutagen** embeds tags and cover art (and lyrics, when the user wants them and a source has them), as ID3, MP4 atoms or Vorbis comments depending on what came out.
@@ -90,24 +91,24 @@ frontend (Vite + React + Tailwind)  ──proxy /api──▶  backend (FastAPI)
 
 Everything is optional. `cp .env.example .env` and uncomment what you want — that file documents each setting and is the authority; this is the summary.
 
-| Variable | Default (self-hosted) | Does |
-|---|---|---|
-| `UNSTREAM_PORT` | `8080` | Host port for the web UI |
-| `UNSTREAM_DEFAULT_LOCALE` | `fa` | Language a first-time visitor gets: `fa` or `en`. Read at container start, so no rebuild |
-| `DOWNLOADS_DIR` | `./downloads` | Where finished tracks land. Point it at an external disk or a NAS mount |
-| `PUID` / `PGID` | `1001` | Who owns those files. Use `id -u` / `id -g` on Linux |
-| `DOWNLOADS_TTL_HOURS` | `0` (never) | Hours before a finished download is deleted |
-| `MAX_DOWNLOADS_GB` | `0` (no cap) | Disk ceiling; over it, finished jobs go oldest-first |
-| `DOWNLOAD_WORKERS` | `3` | Tracks downloaded in parallel |
-| `RATE_LIMITS_ENABLED` | `false` | Per-caller rate limits. **Turn on if strangers can reach it** |
-| `MAX_TRACKS_PER_JOB` | `0` (no limit) | Tracks in one job |
-| `ADMIN_TOKEN` | *unset* | Enables the `/admin` dashboard. Unset = it doesn't exist |
+| Variable                  | Default (self-hosted) | Does                                                                                     |
+| ------------------------- | --------------------- | ---------------------------------------------------------------------------------------- |
+| `UNSTREAM_PORT`           | `8080`                | Host port for the web UI                                                                 |
+| `UNSTREAM_DEFAULT_LOCALE` | `fa`                  | Language a first-time visitor gets: `fa` or `en`. Read at container start, so no rebuild |
+| `DOWNLOADS_DIR`           | `./downloads`         | Where finished tracks land. Point it at an external disk or a NAS mount                  |
+| `PUID` / `PGID`           | `1001`                | Who owns those files. Use `id -u` / `id -g` on Linux                                     |
+| `DOWNLOADS_TTL_HOURS`     | `0` (never)           | Hours before a finished download is deleted                                              |
+| `MAX_DOWNLOADS_GB`        | `0` (no cap)          | Disk ceiling; over it, finished jobs go oldest-first                                     |
+| `DOWNLOAD_WORKERS`        | `3`                   | Tracks downloaded in parallel                                                            |
+| `RATE_LIMITS_ENABLED`     | `false`               | Per-caller rate limits. **Turn on if strangers can reach it**                            |
+| `MAX_TRACKS_PER_JOB`      | `0` (no limit)        | Tracks in one job                                                                        |
+| `ADMIN_TOKEN`             | _unset_               | Enables the `/admin` dashboard. Unset = it doesn't exist                                 |
 
 The **code's** defaults differ from the compose file's: they assume a server shared with strangers (downloads expire after 24h, disk capped at 20 GB, limits tight). `docker-compose.yml` overrides them toward "this is my machine". See [the design notes](docs/DESIGN.md#self-hosting).
 
 ### Language
 
-Farsi (right-to-left) and English (left-to-right). Anyone can switch from the picker in the header and their choice is remembered in their own browser; `UNSTREAM_DEFAULT_LOCALE` only decides what someone who hasn't chosen yet sees.
+Farsi (right-to-left) and English (left-to-right). Anyone can switch from the picker — in the header on a wide screen, in the settings sheet on a phone — and their choice is remembered in their own browser; `UNSTREAM_DEFAULT_LOCALE` only decides what someone who hasn't chosen yet sees.
 
 ```sh
 echo "UNSTREAM_DEFAULT_LOCALE=en" >> .env
@@ -134,10 +135,10 @@ Check **`GET /api/admin/extraction`** first (needs `ADMIN_TOKEN`). It reports wh
 
 Then, roughly in order of how often it's the answer:
 
-1. **Keep yt-dlp current.** These bypasses ship *inside* yt-dlp releases, so a stale image is a stale workaround. The published images rebuild weekly for exactly this; if you built your own, `docker compose build --pull --no-cache api`.
+1. **Keep yt-dlp current.** These bypasses ship _inside_ yt-dlp releases, so a stale image is a stale workaround. The published images rebuild weekly for exactly this; if you built your own, `docker compose build --pull --no-cache api`.
 2. **The JS challenge solver.** yt-dlp needs both a runtime (deno, in the image) and a script it downloads on first use, which `YTDLP_REMOTE_COMPONENTS` allows. With a runtime and no script it reports `Signature solving failed` and hands back a video with **no audio streams at all**.
 3. **The PO token provider.** The `pot-provider` sidecar mints proof-of-origin tokens some clients are asked for. On by default, free, keyless.
-4. **Cookies**, only if the above aren't enough — and on a home connection they almost never are needed. Use a **throwaway Google account**: every download is attributed to it and YouTube bans accounts for exactly that. Note that authenticating *changes which client yt-dlp picks*, moving it onto the web clients — so cookies without 2 and 3 in place make things worse, not better. See `.env.example` for the mount.
+4. **Cookies**, only if the above aren't enough — and on a home connection they almost never are needed. Use a **throwaway Google account**: every download is attributed to it and YouTube bans accounts for exactly that. Note that authenticating _changes which client yt-dlp picks_, moving it onto the web clients — so cookies without 2 and 3 in place make things worse, not better. See `.env.example` for the mount.
 
 ## Analytics
 
@@ -161,17 +162,17 @@ docker compose exec -T api python -c \
 
 ## API
 
-| Endpoint | Purpose |
-|---|---|
-| `GET /api/search?q=` | Multi-source search → tracks, albums, artists, playlists |
-| `GET /api/artist/{id}` | Artist page: top tracks + complete discography (Deezer) |
-| `POST /api/resolve` `{url}` | Spotify/Deezer/Apple Music/YouTube/SoundCloud URL → track list |
-| `POST /api/download` `{url, track_ids?, quality?}` | Start a job, returns `job_id`. `quality` is `128` \| `192` \| `320` \| `original` |
-| `GET /api/jobs/{id}` | Per-track status/progress |
-| `GET /api/jobs?ids=a,b,c` | The same for several jobs — what the UI polls. Unknown ids are omitted rather than 404ing |
-| `GET /api/jobs/{id}/tracks/{tid}/file` | Download one finished track |
-| `GET /api/jobs/{id}/zip` | ZIP of all finished tracks, streamed as it's built |
-| `GET /api/admin/stats?days=` · `/api/admin/extraction` | Dashboard and diagnostics, `Authorization: Bearer $ADMIN_TOKEN` |
+| Endpoint                                               | Purpose                                                                                   |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| `GET /api/search?q=`                                   | Multi-source search → tracks, albums, artists, playlists                                  |
+| `GET /api/artist/{id}`                                 | Artist page: top tracks + complete discography (Deezer)                                   |
+| `POST /api/resolve` `{url}`                            | Spotify/Deezer/Apple Music/YouTube/SoundCloud URL → track list                            |
+| `POST /api/download` `{url, track_ids?, quality?}`     | Start a job, returns `job_id`. `quality` is `128` \| `192` \| `320` \| `original`         |
+| `GET /api/jobs/{id}`                                   | Per-track status/progress                                                                 |
+| `GET /api/jobs?ids=a,b,c`                              | The same for several jobs — what the UI polls. Unknown ids are omitted rather than 404ing |
+| `GET /api/jobs/{id}/tracks/{tid}/file`                 | Download one finished track                                                               |
+| `GET /api/jobs/{id}/zip`                               | ZIP of all finished tracks, streamed as it's built                                        |
+| `GET /api/admin/stats?days=` · `/api/admin/extraction` | Dashboard and diagnostics, `Authorization: Bearer $ADMIN_TOKEN`                           |
 
 ## Development
 
@@ -196,7 +197,7 @@ The decisions worth knowing before you change anything are in [`docs/DESIGN.md`]
 
 ## Licence
 
-[MIT](LICENSE). The bundled [Vazirmatn](https://github.com/rastikerdar/vazirmatn) typeface is under the SIL Open Font License 1.1 — see `frontend/public/fonts/OFL.txt`.
+[MIT](LICENSE). The bundled [Vazirmatn](https://github.com/rastikerdar/vazirmatn) and [Inter](https://github.com/rsms/inter) typefaces are under the SIL Open Font License 1.1 — see `frontend/public/fonts/OFL-Vazirmatn.txt` and `OFL-Inter.txt`.
 
 ## Legal
 

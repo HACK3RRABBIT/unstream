@@ -1,6 +1,8 @@
 # Unstream
 
-A web app for searching songs, albums and playlists — or pasting a Spotify/Deezer link — and downloading them as tagged MP3 files. The UI is Farsi-only (see `docs/DESIGN.md`); this glossary fixes the canonical Farsi rendering of each domain term so the copy stays consistent.
+A web app for searching songs, albums and playlists — or pasting a Spotify/Deezer link — and downloading them as tagged MP3 files. The UI ships in Farsi and English, Farsi by default (see `docs/DESIGN.md`); this glossary fixes the canonical Farsi rendering of each domain term so the copy stays consistent.
+
+It stays a Farsi glossary on purpose. English is the language a dictionary is _translated into_ here — `locales/en.ts` is the canonical shape and its wording is its own record — while Farsi is the language the product was written in and the one where two words for the same thing keep suggesting themselves. Terms below are what `locales/fa.ts` must use.
 
 ## Language
 
