@@ -100,6 +100,14 @@ export interface ArtistDetail {
   albums: SearchResult[]
 }
 
+/** Lyrics for a track. `synced` (time-stamped LRC) is fetched and cached but
+ *  not rendered in v1 — it's a future karaoke view waiting for a client. */
+export interface Lyrics {
+  plain: string | null
+  synced: string | null
+  source: string | null
+}
+
 const client = axios.create({ baseURL: '/api' })
 
 /** The backend composes result subtitles in English ("5 releases",
@@ -227,13 +235,29 @@ export async function startDownload(
   url: string,
   trackIds?: string[],
   quality: Quality = DEFAULT_QUALITY,
+  lyrics: boolean = true,
 ): Promise<string> {
   const { data } = await client.post<{ job_id: string }>('/download', {
     url,
     track_ids: trackIds ?? null,
     quality,
+    lyrics,
   })
   return data.job_id
+}
+
+/** Lyrics for a track, keyed by its catalog metadata. Always 200: nulls mean
+ *  "no lyrics", and the UI renders that as its own state rather than an error. */
+export async function getLyrics(track: Track): Promise<Lyrics> {
+  const { data } = await client.get<Lyrics>('/lyrics', {
+    params: {
+      artist: track.artists.join(', '),
+      title: track.title,
+      album: track.album,
+      duration_ms: track.duration_ms,
+    },
+  })
+  return data
 }
 
 export async function getJob(jobId: string): Promise<Job> {

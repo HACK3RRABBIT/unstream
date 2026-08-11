@@ -1,0 +1,5 @@
+export { CheckIcon } from './CheckIcon'
+export { CopyIcon } from './CopyIcon'
+export { MusicNoteIcon } from './MusicNoteIcon'
+export { MusicNotesIcon } from './MusicNotesIcon'
+export { XIcon } from './XIcon'

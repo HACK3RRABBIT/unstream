@@ -20,6 +20,7 @@ import { SearchResults } from './components/SearchResults'
 import { ArtistView } from './components/ArtistView'
 import { DownloadsDock } from './components/DownloadsDock'
 import { QualityPicker } from './components/QualityPicker'
+import { LyricsToggle } from './components/LyricsToggle'
 import { RecentSearches } from './components/RecentSearches'
 import { DownloadsProvider, useDownloads } from './lib/downloads'
 import { clearRecentSearches, recentSearches, rememberSearch } from './lib/recent'
@@ -406,7 +407,10 @@ function Shell() {
             آنستریم
           </span>
         </button>
-        <QualityPicker className="ms-auto" />
+        <div className="ms-auto flex items-center gap-2.5">
+          <LyricsToggle />
+          <QualityPicker />
+        </div>
       </header>
 
       <main className="mx-auto w-full max-w-3xl flex-1 px-5 pb-24">

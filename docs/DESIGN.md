@@ -17,6 +17,7 @@ frontend (Vite + React + Tailwind)  ──proxy /api──▶  backend (FastAPI)
                                                       ├─ itunes.py      search, Apple Music URLs
                                                       ├─ soundcloud.py  search + SoundCloud URLs
                                                       ├─ ytdlp.py       YouTube/SoundCloud URLs + search
+                                                      ├─ lyrics.py      LRCLIB lyrics, cached in SQLite
                                                       ├─ downloader.py  find audio → encode → tags
                                                       ├─ jobs.py        thread pool + progress + sweeper
                                                       ├─ limits.py      per-caller budgets
@@ -26,6 +27,10 @@ frontend (Vite + React + Tailwind)  ──proxy /api──▶  backend (FastAPI)
 nginx in the frontend container serves the built app **and** proxies `/api` to the backend over the internal network. Same origin, so there is no CORS layer and no second domain.
 
 Every metadata provider is public and keyless — no account, no API key, nothing that can be revoked or start charging per call. That constraint is why there is no Spotify Web API integration: since 2025 it requires the app owner to hold an active Premium subscription. Spotify links are read from the public embed pages instead.
+
+Lyrics follow the same rule. They come from **LRCLIB** (lrclib.net) first — a keyless catalog with plain text plus time-synced LRC — falling back to **Genius** when LRCLIB misses. The two-source split exists because LRCLIB keys Persian songs by romanized titles, so a catalog that hands the app Persian script can never match them; Genius's internal search API answers Persian queries and its song pages carry the lyrics. LRCLIB answers almost all English songs and Genius never hears about them. Genius is page-scraping, so it is the fragile member: if it starts answering 403s or changing its markup, the feature degrades to LRCLIB coverage — which is the same "a keyless source can rot" trade the rest of the app already makes with YouTube. Synced lyrics are fetched and cached but *not rendered* in v1 — the UI shows plain text. They are stored now so a karaoke-style view later is a frontend change only.
+
+Lyrics are **nice-to-have, like cover art**: the lookup is wrapped so a failed fetch can never fail a download, and the SQLite cache (next to `analytics.db`) caches misses too so a track that has no lyrics doesn't get re-asked every download. Embedding into files is a user preference (the «متن آهنگ» toggle in the header) and is off-by-nothing — on by default, per job, captured at job start like quality.
 
 Jobs live in memory, not a database. A restart loses in-flight progress and that is an accepted trade: the files on disk are the durable artifact, and a queue would be a second stateful service for a project whose premise is that it needs none.
 

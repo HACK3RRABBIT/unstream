@@ -21,7 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
-from . import analytics, deezer, downloader, embed, itunes, jobs, limits, soundcloud, ytdlp
+from . import analytics, deezer, downloader, embed, itunes, jobs, limits, lyrics, soundcloud, ytdlp
 from .models import Collection, ProviderError, SearchResult
 
 # Every provider here is keyless and free — no accounts, no API credentials.
@@ -193,6 +193,7 @@ class DownloadRequest(BaseModel):
     url: str
     track_ids: list[str] | None = None  # None = everything
     quality: str = downloader.DEFAULT_QUALITY  # mp3 bitrate, or "original"
+    lyrics: bool = True  # embed lyrics in the finished files' tags
 
 
 # Served files are no longer always mp3 — "original" keeps the upload's own
@@ -291,6 +292,35 @@ def resolve(body: ResolveRequest, request: Request) -> dict:
     return asdict(collection)
 
 
+@app.get("/api/lyrics")
+def get_lyrics(
+    request: Request, artist: str, title: str, album: str = "", duration_ms: int = 0
+) -> dict:
+    """Lyrics for a track, keyed by its catalog metadata.
+
+    Always 200: `plain`/`synced` are null when the track has no lyrics, so a
+    missing lyric is an ordinary page state, not an error the client has to
+    localize. `synced` is only ever non-null when `plain` is, so the UI can
+    treat it as a future enhancement and ignore it today.
+    """
+    limits.enforce("lyrics", request)
+    try:
+        found = lyrics.fetch(artist, title, album, duration_ms / 1000)
+    except lyrics.LyricsUnavailable:
+        found = None  # a transient failure is a miss this time, not a 500
+    analytics.record(
+        "lyrics_view",
+        visitor=limits.visitor(request),
+        detail="hit" if found else "miss",
+        label=f"{artist} - {title}",
+    )
+    return {
+        "plain": found.plain if found else None,
+        "synced": found.synced if found else None,
+        "source": found.source if found else None,
+    }
+
+
 @app.post("/api/download")
 def download(body: DownloadRequest, request: Request) -> dict:
     if body.quality not in downloader.QUALITIES:
@@ -329,6 +359,7 @@ def download(body: DownloadRequest, request: Request) -> dict:
         collection.name,
         tracks,
         body.quality,
+        embed_lyrics=body.lyrics,
         owner=client,
         visitor=visitor,
     )

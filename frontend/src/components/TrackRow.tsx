@@ -3,6 +3,7 @@ import { Check, Download, LoaderCircle, Pause, Play, TriangleAlert } from 'lucid
 import clsx from 'clsx'
 import { trackFileUrl, type JobTrack, type Track } from '../lib/api'
 import { togglePreview, usePlayingPreviewId, usePreviewLoading } from '../lib/preview'
+import { MusicNoteIcon } from '../icons'
 import { ShareTrack } from './ShareTrack'
 
 interface Props {
@@ -17,6 +18,9 @@ interface Props {
   /** Multi-select: render a checkbox when a toggle handler is provided. */
   selected?: boolean
   onToggleSelect?: () => void
+  /** Open this track's lyrics — a metadata view, available whatever the
+   *  download status. The handler is provided where the lyrics sheet lives. */
+  onLyrics?: () => void
   /** Carries the `--i` stagger index from the parent list. */
   style?: CSSProperties
 }
@@ -58,6 +62,7 @@ export function TrackRow({
   downloading = false,
   selected = false,
   onToggleSelect,
+  onLyrics,
   style,
 }: Props) {
   const status = state?.status
@@ -125,6 +130,17 @@ export function TrackRow({
         </div>
 
         <div className="flex shrink-0 items-center gap-3">
+          {onLyrics && (
+            <button
+              onClick={onLyrics}
+              title="متن آهنگ"
+              aria-label={`متن آهنگ ${track.title}`}
+              className="tap-target grid size-8 shrink-0 place-items-center rounded-ctl border border-ink-700 text-ink-400 transition duration-200 hover:border-lime-flash/50 hover:text-lime-flash active:scale-90 pointer-fine:opacity-60 pointer-fine:group-hover:opacity-100"
+            >
+              <MusicNoteIcon className="size-4" />
+            </button>
+          )}
+
           {track.preview_url && (
             <button
               onClick={() => togglePreview(track.id, track.preview_url!)}

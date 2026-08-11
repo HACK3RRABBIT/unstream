@@ -68,11 +68,12 @@ Streaming services are DRM-protected, so nothing is downloaded from them directl
    - **iTunes Search API** — keyless; adds Apple Music coverage to search and resolves `music.apple.com` URLs.
    - **SoundCloud web API** — the site's own `api-v2` endpoints, using a client id scraped from its public JS bundles (the same trick yt-dlp uses). Full search parity: tracks, people, albums and playlists. Go-only (DRM) tracks are filtered out.
    - **yt-dlp** — reads public YouTube and SoundCloud pages; resolves their URLs and contributes YouTube search results.
+   - **LRCLIB** — keyless lyric catalog, first pick for lyrics (English and Persian) shown in the app and embedded into downloads. **Genius** is the fallback when LRCLIB misses — its keyless internal search matches Persian titles that LRCLIB keys by romanized names only.
 
    Search fans out to four of these in parallel and merges the results, deduped by name + artist. There is deliberately no Spotify Web API integration — since 2025 it requires the app owner to hold an active Premium subscription, and this project stays free and keyless.
 2. **yt-dlp** finds the audio: tracks already pointing at a YouTube/SoundCloud page download directly; everything else is searched (`ytsearch8:` on "artists - title") picking the result whose duration is closest to the catalog's, which rejects live versions and hour-long mixes. Retries exclude broken uploads, and the last attempt searches SoundCloud instead of YouTube.
 3. The best audio stream is downloaded at the **quality** you picked — **ffmpeg** encodes mp3 at 128, 192 (default) or 320 kbps. **Original** skips the encode and keeps the upload's own stream (m4a, or opus remuxed out of webm so it can carry tags) — best fidelity, since re-encoding an already-lossy source can only lose more.
-4. **mutagen** embeds tags and cover art, as ID3, MP4 atoms or Vorbis comments depending on what came out.
+4. **mutagen** embeds tags and cover art (and lyrics, when the user wants them and LRCLIB has them), as ID3, MP4 atoms or Vorbis comments depending on what came out.
 
 ```
 frontend (Vite + React + Tailwind)  ──proxy /api──▶  backend (FastAPI)
@@ -80,6 +81,7 @@ frontend (Vite + React + Tailwind)  ──proxy /api──▶  backend (FastAPI)
                                                       ├─ deezer.py      search, artists, Deezer URLs
                                                       ├─ itunes.py      search, Apple Music URLs
                                                       ├─ ytdlp.py       YouTube/SoundCloud URLs + search
+                                                      ├─ lyrics.py      LRCLIB lyrics, cached in SQLite
                                                       ├─ downloader.py  find audio → encode → tags
                                                       └─ jobs.py        thread pool + progress + sweeper
 ```

@@ -43,3 +43,7 @@ _Avoid_: پیوند، آدرس
 **دانلود همه** (Download all):
 Downloading every track in an album or playlist in one action, which yields a ZIP.
 _Avoid_: دانلود کامل
+
+**متن آهنگ** (Lyrics):
+The words of a song, shown in the app and embedded into downloaded files.
+_Avoid_: لیریک، شعر، کلمه‌های آهنگ

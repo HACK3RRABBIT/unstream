@@ -83,6 +83,9 @@ class Job:
     id: str
     name: str
     quality: str = downloader.DEFAULT_QUALITY
+    # Whether finished files get lyrics embedded in their tags. The UI sets
+    # this per job from a global preference, the same way it picks quality.
+    embed_lyrics: bool = True
     # Opaque client key (an IP, from app.limits), only for counting a caller's
     # jobs in flight. Never leaves the process — as_dict() omits it, and job
     # ids stay unguessable so anyone holding one can still fetch it.
@@ -185,6 +188,7 @@ def _run_track(job: Job, state: TrackState) -> None:
             filename=state.filename,
             quality=job.quality,
             on_source=on_source,
+            embed_lyrics=job.embed_lyrics,
         )
         with job.lock:
             state.status = "done"
@@ -218,6 +222,7 @@ def start(
     name: str,
     tracks: list[Track],
     quality: str = downloader.DEFAULT_QUALITY,
+    embed_lyrics: bool = True,
     owner: str = "",
     visitor: str = "",
 ) -> Job:
@@ -225,6 +230,7 @@ def start(
         id=uuid.uuid4().hex[:12],
         name=name,
         quality=quality,
+        embed_lyrics=embed_lyrics,
         owner=owner,
         visitor=visitor,
     )
