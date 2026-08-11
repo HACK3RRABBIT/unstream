@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import clsx from 'clsx'
 import { apiError, getLyrics, type Track } from '../lib/api'
+import { useMessages } from '../lib/i18n'
 import { useToast } from '../lib/toast'
 
 interface Props {
@@ -129,6 +130,9 @@ function Empty({
  *  scrim + drag + Escape + scroll-lock contract as the downloads dock. */
 export function LyricsSheet({ track, onClose }: Props) {
   const { push } = useToast()
+  // Only the backend/axios error strings go through the dictionary so far;
+  // this sheet's own copy is still hard-coded Farsi (see the merge note).
+  const m = useMessages()
   const [copied, setCopied] = useState(false)
   const [drag, setDrag] = useState(0)
   const startY = useRef<number | null>(null)
@@ -343,7 +347,7 @@ export function LyricsSheet({ track, onClose }: Props) {
               <Empty
                 tone="danger"
                 icon={<TriangleAlert className="size-5" />}
-                title={apiError(error)}
+                title={apiError(error, m)}
                 onRetry={retry}
                 retrying={isFetching}
               />

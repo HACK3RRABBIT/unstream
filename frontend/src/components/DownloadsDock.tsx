@@ -10,17 +10,10 @@ import {
   X,
 } from 'lucide-react'
 import clsx from 'clsx'
-import { jobZipUrl, trackFileUrl, QUALITY_LABEL, type Job, type JobTrack } from '../lib/api'
+import { jobZipUrl, trackFileUrl, qualityLabel, type Job, type JobTrack } from '../lib/api'
 import { useDownloads, type DownloadEntry } from '../lib/downloads'
+import { faNumerals, useMessages, useStartAlign } from '../lib/i18n'
 import { ShareTrack } from './ShareTrack'
-
-const STAGE_LABEL: Record<string, string> = {
-  queued: 'تو صف',
-  searching: 'در حال جستجو…',
-  downloading: 'در حال دانلود',
-  tagging: 'در حال تگ زدن…',
-  retrying: 'تلاش دوباره…',
-}
 
 /** Working, but with no percentage to report — these get a travelling band
  *  instead of a width. Only `downloading` knows how far along it is. */
@@ -38,12 +31,6 @@ function inFlightFraction(job: Job): number {
   )
 }
 
-function formatEta(seconds: number): string {
-  if (seconds < 60) return `${seconds} ثانیه`
-  const minutes = Math.round(seconds / 60)
-  return `${minutes} دقیقه`
-}
-
 function TrackLine({
   entry,
   state,
@@ -54,6 +41,8 @@ function TrackLine({
   /** False when the card above is already drawing this track's progress. */
   showBar?: boolean
 }) {
+  const m = useMessages()
+  const startAlign = useStartAlign()
   const track = entry.tracks.find((t) => t.id === state.id)
   const title = track ? track.title : state.id
   const available = state.status === 'done' && !entry.expired
@@ -79,6 +68,8 @@ function TrackLine({
         className={clsx(
           'min-w-0 flex-1 truncate text-mini',
           state.status === 'error' ? 'text-ink-400' : 'text-ink-100',
+          faNumerals(title),
+          startAlign,
         )}
         title={state.error ?? title}
         dir="auto"
@@ -97,8 +88,8 @@ function TrackLine({
           <a
             href={trackFileUrl(entry.jobId, state.id)}
             download
-            title={`دانلود ${title}.${ext}`}
-            aria-label={`دانلود ${title} با فرمت ${ext}`}
+            title={m.dock.downloadFile(title, ext)}
+            aria-label={m.dock.downloadFileLong(title, ext)}
             className="tap-target flex shrink-0 items-center gap-1 rounded-ctl border border-ink-600 px-2 py-0.5 text-micro font-medium text-lime-flash transition hover:border-lime-flash/50 hover:bg-ink-800"
           >
             <Download className="size-3" />
@@ -106,9 +97,9 @@ function TrackLine({
           </a>
         </>
       ) : state.status === 'error' ? (
-        <span className="text-xs text-danger">ناموفق</span>
+        <span className="text-xs text-danger">{m.dock.failed}</span>
       ) : entry.expired ? (
-        <span className="text-xs text-ink-400">پاک شده</span>
+        <span className="text-xs text-ink-400">{m.dock.deleted}</span>
       ) : (
         <span
           className={clsx(
@@ -116,8 +107,8 @@ function TrackLine({
             state.status !== 'downloading' && 'animate-breathe',
           )}
         >
-          {STAGE_LABEL[state.status]}
-          {state.status === 'downloading' && ` ${Math.round(state.progress * 100)}%`}
+          {m.stages[state.status as keyof typeof m.stages]}
+          {state.status === 'downloading' && ` ${m.app.num(Math.round(state.progress * 100))}%`}
         </span>
       )}
 
@@ -142,6 +133,8 @@ function TrackLine({
 
 function JobCard({ entry, capped = true }: { entry: DownloadEntry; capped?: boolean }) {
   const { dismiss } = useDownloads()
+  const m = useMessages()
+  const startAlign = useStartAlign()
   const job = entry.job
   const done = job?.done ?? 0
   const failed = job?.failed ?? 0
@@ -169,27 +162,36 @@ function JobCard({ entry, capped = true }: { entry: DownloadEntry; capped?: bool
           <div className="size-9 shrink-0 rounded-ctl bg-ink-800" />
         )}
         <div className="min-w-0 flex-1">
-          {/* dir="auto" keeps a Latin name's punctuation ordered correctly,
-              but the progress line under it is always Persian — physical
-              right (not text-end, which would follow the name's own
-              direction) keeps the two lines on the same edge. */}
-          <p className="truncate text-right text-mini font-medium text-ink-100" dir="auto">
+          {/* The name needs `dir="auto"` to shape its own punctuation and to
+              truncate at its own end, but the progress line under it is always
+              in the UI's language — so the two would sit on opposite edges
+              whenever they disagree. Alignment is stated physically for that
+              reason; `text-start` here would resolve against the name and
+              defeat it. */}
+          <p
+            className={clsx(
+              'truncate text-mini font-medium text-ink-100',
+              faNumerals(entry.name),
+              startAlign,
+            )}
+            dir="auto"
+          >
             {entry.name}
           </p>
           <p className="text-xs text-ink-400 tabular-nums">
             {expired ? (
-              'فایل‌ها دیگه روی سرور نیستن — دوباره دانلودش کن'
+              m.dock.expired
             ) : finished ? (
               <>
-                {done} از {total} دانلود شد
-                {failed > 0 && <span className="text-danger"> · {failed} ناموفق</span>}
+                {m.dock.progress(done, total)}
+                {failed > 0 && <span className="text-danger"> · {m.dock.failedCount(failed)}</span>}
               </>
             ) : (
               <>
-                {done + failed}/{total}
-                {failed > 0 && <span className="text-danger"> · {failed} ناموفق</span>}
+                {m.app.num(done + failed)}/{m.app.num(total)}
+                {failed > 0 && <span className="text-danger"> · {m.dock.failedCount(failed)}</span>}
                 {entry.etaSeconds != null && (
-                  <span className="text-ink-300"> · حدود {formatEta(entry.etaSeconds)} مونده</span>
+                  <span className="text-ink-300"> · {m.dock.eta(entry.etaSeconds)}</span>
                 )}
               </>
             )}
@@ -198,19 +200,19 @@ function JobCard({ entry, capped = true }: { entry: DownloadEntry; capped?: bool
         <span
           title={
             entry.quality === 'original'
-              ? 'بدون انکود دوباره دانلود شده'
-              : `انکود شده با ${entry.quality} kbps`
+              ? m.dock.originalQuality
+              : m.dock.encodedQuality(entry.quality)
           }
           className="shrink-0 rounded-ctl border border-ink-700 px-1.5 py-0.5 text-micro font-medium text-ink-400 tabular-nums"
         >
-          {QUALITY_LABEL[entry.quality]}
+          {qualityLabel(entry.quality, m)}
         </span>
         {showZip && (
           <a
             href={jobZipUrl(entry.jobId)}
             download
-            title="دانلود همه به‌صورت ZIP"
-            aria-label="دانلود همه‌ی آهنگ‌ها به‌صورت ZIP"
+            title={m.dock.zip}
+            aria-label={m.dock.zipLong}
             className="tap-target grid size-7 shrink-0 place-items-center rounded-ctl border border-ink-600 text-ink-100 transition hover:border-lime-flash/50 hover:text-lime-flash"
           >
             <Archive className="size-3.5" />
@@ -219,7 +221,7 @@ function JobCard({ entry, capped = true }: { entry: DownloadEntry; capped?: bool
         {finished && (
           <button
             onClick={() => dismiss(entry.jobId)}
-            title="حذف از لیست"
+            title={m.dock.remove}
             className="tap-target grid size-7 shrink-0 place-items-center rounded-ctl text-ink-400 transition hover:bg-ink-800 hover:text-ink-100"
           >
             <X className="size-3.5" />
@@ -251,7 +253,7 @@ function JobCard({ entry, capped = true }: { entry: DownloadEntry; capped?: bool
         {!job && (
           <li className="flex items-center gap-2.5 px-4 py-1.5 text-mini text-ink-400">
             <LoaderCircle className="size-3.5 animate-spin" />
-            در حال شروع…
+            {m.dock.starting}
           </li>
         )}
       </ul>
@@ -290,6 +292,7 @@ function DownloadsSheet({
   onHeight: (px: number) => void
   children: ReactNode
 }) {
+  const m = useMessages()
   const [drag, setDrag] = useState(0)
   const startY = useRef<number | null>(null)
   const sheetRef = useRef<HTMLElement | null>(null)
@@ -350,7 +353,7 @@ function DownloadsSheet({
       />
       <section
         ref={sheetRef}
-        aria-label="دانلودها"
+        aria-label={m.dock.heading}
         style={{ transform: drag ? `translateY(${drag}px)` : undefined }}
         className={clsx(
           // A resting height, not a hug. Sized to its contents, one job made
@@ -376,11 +379,11 @@ function DownloadsSheet({
         >
           <div className="mx-auto mt-2.5 h-1 w-9 rounded-full bg-ink-600" />
           <div className="flex items-center gap-3 px-4 pt-2 pb-3">
-            <h2 className="text-micro font-semibold text-ink-400">دانلودها</h2>
+            <h2 className="text-micro font-semibold text-ink-400">{m.dock.heading}</h2>
             <span className="flex-1 text-xs text-ink-400 tabular-nums">{summary}</span>
             <button
               onClick={onClose}
-              aria-label="بستن پنل دانلود"
+              aria-label={m.dock.close}
               className="tap-target -m-1 grid size-7 shrink-0 place-items-center rounded-ctl text-ink-400 transition hover:bg-ink-800 hover:text-ink-100"
             >
               <ChevronDown className="size-4" />
@@ -396,6 +399,7 @@ function DownloadsSheet({
 export function DownloadsDock() {
   const { entries, activeCount, panelOpen, setPanelOpen } = useDownloads()
   const isDesktop = useIsDesktop()
+  const m = useMessages()
 
   // Toasts are full width on phones, so whatever this pins to the bottom edge
   // ends up under them. --dock-lift says how much room to leave, and this is
@@ -427,7 +431,8 @@ export function DownloadsDock() {
     { settled: 0, total: 0 },
   )
   const fraction = totals.total ? Math.min(1, totals.settled / totals.total) : 0
-  const summary = activeCount > 0 ? `${activeCount} در جریان` : `${entries.length} تمام‌شده`
+  const summary =
+    activeCount > 0 ? m.dock.activeSummary(activeCount) : m.dock.doneSummary(entries.length)
   const cards = [...entries]
     .reverse()
     .map((entry) => <JobCard key={entry.jobId} entry={entry} capped={entries.length > 1} />)
@@ -436,11 +441,11 @@ export function DownloadsDock() {
     <div className="fixed end-5 bottom-[calc(1.25rem+var(--safe-bottom))] z-50 flex flex-col items-end gap-3">
       {panelOpen && isDesktop && (
         <section
-          aria-label="دانلودها"
+          aria-label={m.dock.heading}
           className="flex w-[min(24rem,calc(100vw-2.5rem))] animate-fade-up flex-col overflow-hidden rounded-panel border border-ink-700 bg-ink-900 shadow-2xl shadow-black/60"
         >
           <header className="flex items-center justify-between border-b border-ink-800 px-4 py-3">
-            <h2 className="text-micro font-semibold text-ink-400">دانلودها</h2>
+            <h2 className="text-micro font-semibold text-ink-400">{m.dock.heading}</h2>
             <span className="text-xs text-ink-400 tabular-nums">{summary}</span>
           </header>
           <div className="max-h-[55vh] overflow-y-auto">{cards}</div>
@@ -455,7 +460,7 @@ export function DownloadsDock() {
 
       <button
         onClick={() => setPanelOpen(!panelOpen)}
-        aria-label={panelOpen ? 'بستن پنل دانلود' : 'نمایش دانلودها'}
+        aria-label={panelOpen ? m.dock.close : m.dock.show}
         className={clsx(
           'relative grid size-14 place-items-center rounded-full bg-lime-flash text-lime-ink shadow-lg shadow-black/40 transition duration-200 hover:bg-lime-soft hover:scale-105 active:scale-95',
           // The sheet owns the bottom edge and its own dismissal.
@@ -493,7 +498,7 @@ export function DownloadsDock() {
         )}
         {activeCount > 0 && !panelOpen && (
           <span className="absolute -top-0.5 -end-0.5 grid min-w-5 animate-pop place-items-center rounded-full border border-lime-flash bg-ink-950 px-1 text-micro font-semibold text-lime-flash tabular-nums">
-            {activeCount}
+            {m.app.num(activeCount)}
           </span>
         )}
       </button>

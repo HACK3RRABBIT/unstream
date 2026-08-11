@@ -1,63 +1,68 @@
 @import 'tailwindcss';
 
-/* Vazirmatn FD, self-hosted (see docs/DESIGN.md). The FD cut is what renders
-   ASCII digits as Persian numerals; the plain cut does not. The four weights
-   the UI actually uses (400/500/600/700) are preloaded from index.html —
-   those hrefs must stay byte-identical to the url()s here or the browser
-   downloads each font twice. */
-@font-face {
-  font-family: 'Vazirmatn';
-  font-weight: 100;
-  font-display: swap;
-  src: url('/fonts/Vazirmatn-FD-Thin.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'Vazirmatn';
-  font-weight: 200;
-  font-display: swap;
-  src: url('/fonts/Vazirmatn-FD-ExtraLight.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'Vazirmatn';
-  font-weight: 300;
-  font-display: swap;
-  src: url('/fonts/Vazirmatn-FD-Light.woff2') format('woff2');
-}
+/* Vazirmatn, self-hosted (see docs/DESIGN.md), in both of its cuts.
+
+   The plain cut is the document default and leaves ASCII digits as 0-9. The FD
+   cut maps them to Persian numerals from the font itself, and is opt-in per
+   element via the `font-fa` utility — for text that is *itself* Persian, where
+   "۲۴ ساعت" is right and "24 ساعت" is not. Applied app-wide it also rewrote
+   digits it had no business touching: "24K Magic" became "۲۴K Magic" and MP3
+   became MP۳. Numbers the UI composes don't rely on either cut — those are
+   converted in the dictionary (`app.num`), which knows whose sentence it is.
+
+   The four weights the UI uses (400/500/600/700) are the whole of the plain
+   cut and are preloaded from index.html — those hrefs must stay byte-identical
+   to the url()s here or the browser downloads each font twice. */
 @font-face {
   font-family: 'Vazirmatn';
   font-weight: 400;
   font-display: swap;
-  src: url('/fonts/Vazirmatn-FD-Regular.woff2') format('woff2');
+  src: url('/fonts/Vazirmatn-Regular.woff2') format('woff2');
 }
 @font-face {
   font-family: 'Vazirmatn';
   font-weight: 500;
   font-display: swap;
-  src: url('/fonts/Vazirmatn-FD-Medium.woff2') format('woff2');
+  src: url('/fonts/Vazirmatn-Medium.woff2') format('woff2');
 }
 @font-face {
   font-family: 'Vazirmatn';
   font-weight: 600;
   font-display: swap;
-  src: url('/fonts/Vazirmatn-FD-SemiBold.woff2') format('woff2');
+  src: url('/fonts/Vazirmatn-SemiBold.woff2') format('woff2');
 }
 @font-face {
   font-family: 'Vazirmatn';
   font-weight: 700;
   font-display: swap;
+  src: url('/fonts/Vazirmatn-Bold.woff2') format('woff2');
+}
+
+/* The FD cut. Same design, same metrics; ASCII digits render as ۰-۹. Only the
+   weights that Persian-script content actually uses. */
+@font-face {
+  font-family: 'Vazirmatn FD';
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/Vazirmatn-FD-Regular.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Vazirmatn FD';
+  font-weight: 500;
+  font-display: swap;
+  src: url('/fonts/Vazirmatn-FD-Medium.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Vazirmatn FD';
+  font-weight: 600;
+  font-display: swap;
+  src: url('/fonts/Vazirmatn-FD-SemiBold.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Vazirmatn FD';
+  font-weight: 700;
+  font-display: swap;
   src: url('/fonts/Vazirmatn-FD-Bold.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'Vazirmatn';
-  font-weight: 800;
-  font-display: swap;
-  src: url('/fonts/Vazirmatn-FD-ExtraBold.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'Vazirmatn';
-  font-weight: 900;
-  font-display: swap;
-  src: url('/fonts/Vazirmatn-FD-Black.woff2') format('woff2');
 }
 
 /* Metric-tuned fallback so the one-time cold-visit swap from the system font
@@ -77,6 +82,10 @@
 @theme {
   --font-display: 'Vazirmatn', 'Vazirmatn Fallback', system-ui, sans-serif;
   --font-sans: 'Vazirmatn', 'Vazirmatn Fallback', system-ui, sans-serif;
+  /* `font-fa`: the Farsi-digit cut, for an element whose own text is Persian.
+     Same design and metrics as the default, so it changes digits and nothing
+     else. Applied by `faNumerals()` in src/lib/i18n.tsx, never by hand. */
+  --font-fa: 'Vazirmatn FD', 'Vazirmatn Fallback', system-ui, sans-serif;
 
   /* Green-tinted dark neutrals */
   --color-ink-950: #0b0d0a;

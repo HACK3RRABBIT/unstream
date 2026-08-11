@@ -1,6 +1,8 @@
 import type { CSSProperties } from 'react'
 import { Disc3, MicVocal, Music2 } from 'lucide-react'
+import clsx from 'clsx'
 import type { ArtistDetail, SearchResult } from '../lib/api'
+import { faNumerals, localizeSubtitle, useMessages, useStartAlign } from '../lib/i18n'
 import { QuickDownload } from './QuickDownload'
 
 interface Props {
@@ -8,14 +10,9 @@ interface Props {
   onPick: (result: SearchResult) => void
 }
 
-const formatFans = (n: number) =>
-  n >= 1_000_000
-    ? `${(n / 1_000_000).toFixed(1)} میلیون فالوور`
-    : n >= 1_000
-      ? `${Math.round(n / 1_000)} هزار فالوور`
-      : `${n} فالوور`
-
 export function ArtistView({ artist, onPick }: Props) {
+  const m = useMessages()
+  const startAlign = useStartAlign()
   return (
     <section className="overflow-hidden rounded-panel border border-ink-700 bg-ink-900">
       <div className="flex flex-wrap items-center gap-5 border-b border-ink-800 p-5 sm:p-6">
@@ -31,16 +28,22 @@ export function ArtistView({ artist, onPick }: Props) {
           </div>
         )}
         <div className="min-w-0 flex-1">
-          <span className="text-micro font-semibold text-lime-flash">آرتیست</span>
-          <h2 className="mt-1 truncate font-display text-2xl font-bold" dir="auto">
+          <span className="text-micro font-semibold text-lime-flash">{m.artist.badge}</span>
+          <h2
+            className={clsx(
+              'mt-1 truncate font-display text-2xl font-bold',
+              faNumerals(artist.name),
+            )}
+            dir="auto"
+          >
             {artist.name}
           </h2>
           <p className="mt-1 text-mini text-ink-300">
-            {artist.albums.length} اثر
+            {m.artist.releases(artist.albums.length)}
             {artist.fan_count ? (
               <>
                 <span className="mx-1.5 text-ink-600">·</span>
-                {formatFans(artist.fan_count)}
+                {m.artist.fans(artist.fan_count)}
               </>
             ) : null}
           </p>
@@ -51,7 +54,7 @@ export function ArtistView({ artist, onPick }: Props) {
         <div className="border-b border-ink-800">
           <h3 className="flex items-center gap-2 px-5 pt-4 pb-1 text-micro font-semibold text-ink-400">
             <Music2 className="size-3.5" />
-            آهنگ‌های برتر
+            {m.artist.topTracks}
           </h3>
           <ol className="stagger pb-2">
             {artist.top_tracks.map((track, i) => (
@@ -65,7 +68,7 @@ export function ArtistView({ artist, onPick }: Props) {
                   className="flex min-w-0 flex-1 items-center gap-4 py-2.5 ps-5 text-start focus-visible:outline-none"
                 >
                   <span className="w-5 shrink-0 text-end text-mini tabular-nums text-ink-600">
-                    {i + 1}
+                    {m.app.num(i + 1)}
                   </span>
                   {track.cover_url ? (
                     <img
@@ -79,10 +82,19 @@ export function ArtistView({ artist, onPick }: Props) {
                       <Music2 className="size-4 text-ink-400" />
                     </div>
                   )}
-                  <div className="min-w-0 flex-1" dir="auto">
-                    <p className="truncate text-body font-medium text-ink-100">{track.name}</p>
+                  <div className={clsx('min-w-0 flex-1', startAlign)} dir="auto">
+                    <p
+                      className={clsx(
+                        'truncate text-body font-medium text-ink-100',
+                        faNumerals(track.name),
+                      )}
+                    >
+                      {track.name}
+                    </p>
                     {track.subtitle && (
-                      <p className="truncate text-mini text-ink-400">{track.subtitle}</p>
+                      <p className="truncate text-mini text-ink-400">
+                        {localizeSubtitle(track.subtitle, m)}
+                      </p>
                     )}
                   </div>
                 </button>
@@ -97,14 +109,14 @@ export function ArtistView({ artist, onPick }: Props) {
         <div>
           <h3 className="flex items-center gap-2 px-5 pt-4 pb-3 text-micro font-semibold text-ink-400">
             <Disc3 className="size-3.5" />
-            دیسکوگرافی
+            {m.artist.discography}
           </h3>
           <ul className="stagger grid grid-cols-2 gap-x-4 gap-y-5 px-5 pb-5 sm:grid-cols-3 md:grid-cols-4">
             {artist.albums.map((album, i) => (
               <li key={album.id} style={{ '--i': i } as CSSProperties}>
                 <button
                   onClick={() => onPick(album)}
-                  className="group w-full text-start focus-visible:outline-none"
+                  className={clsx('group w-full focus-visible:outline-none', startAlign)}
                   dir="auto"
                 >
                   <div className="relative aspect-square overflow-hidden rounded-btn bg-ink-800 ring-1 ring-ink-700/60 transition duration-300 group-hover:-translate-y-1 group-hover:ring-ink-600 group-focus-visible:ring-2 group-focus-visible:ring-lime-flash">
@@ -121,12 +133,17 @@ export function ArtistView({ artist, onPick }: Props) {
                       </div>
                     )}
                   </div>
-                  <p className="mt-2 truncate text-mini font-medium text-ink-100 transition-colors group-hover:text-lime-flash">
+                  <p
+                    className={clsx(
+                      'mt-2 truncate text-mini font-medium text-ink-100 transition-colors group-hover:text-lime-flash',
+                      faNumerals(album.name),
+                    )}
+                  >
                     {album.name}
                   </p>
                   {album.subtitle && (
-                    <p className="truncate text-xs text-ink-400" dir="auto">
-                      {album.subtitle}
+                    <p className={clsx('truncate text-xs text-ink-400', startAlign)} dir="auto">
+                      {localizeSubtitle(album.subtitle, m)}
                     </p>
                   )}
                 </button>

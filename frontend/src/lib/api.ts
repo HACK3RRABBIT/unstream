@@ -1,4 +1,5 @@
 import axios from 'axios'
+import type { Messages } from './locales/en'
 
 export interface Track {
   id: string
@@ -51,20 +52,12 @@ export type Quality = (typeof QUALITIES)[number]
 
 export const DEFAULT_QUALITY: Quality = '192'
 
-export const QUALITY_LABEL: Record<Quality, string> = {
-  '128': '128',
-  '192': '192',
-  '320': '320',
-  original: 'اورجینال',
-}
-
-export const QUALITY_HINT: Record<Quality, string> = {
-  '128': 'کم‌حجم‌ترین حالت — برای پادکست یا گوشی‌ای که جاش پره کافیه.',
-  '192': 'پیش‌فرض. کیفیت خوب با تقریباً نصف حجم ۳۲۰.',
-  '320': 'بهترین حالتی که mp3 داره. همه‌جا هم پخش میشه.',
-  original:
-    'بدون انکود دوباره — همون m4a یا opus خود آپلود. بهترین صدا، بیشترین حجم، و روی بعضی دستگاه‌های قدیمی پخش نمیشه.',
-}
+/** "original" is a word and comes from the dictionary; the bitrates are a
+ *  quantity the UI is stating, so they get the locale's digits. (File
+ *  extensions — mp3, m4a, opus — are names, not quantities, and stay as they
+ *  came.) */
+export const qualityLabel = (quality: Quality, m: Messages): string =>
+  quality === 'original' ? m.quality.original : m.app.num(quality)
 
 export const isQuality = (value: unknown): value is Quality => QUALITIES.includes(value as Quality)
 
@@ -116,82 +109,50 @@ export interface Lyrics {
 
 const client = axios.create({ baseURL: '/api' })
 
-/** The backend composes result subtitles in English ("5 releases",
- *  "by X · 40 tracks"); the UI is Farsi-only (docs/DESIGN.md), so the known
- *  phrases are rewritten here at the API seam rather than forking the
- *  backend's response for one client. Unmatched parts (artist names, years)
- *  pass through untouched. */
-function localizeSubtitle(subtitle: string): string {
-  return subtitle
-    .split(' · ')
-    .map((part) =>
-      part
-        .replace(/^(\d+) releases?$/, '$1 اثر')
-        .replace(/^(\d+) tracks?$/, '$1 آهنگ')
-        .replace(/^(\d+) followers?$/, '$1 فالوور')
-        .replace(/^by (.+)$/, 'از $1')
-        .replace(/^Artist$/, 'آرتیست')
-        .replace(/^On SoundCloud$/, 'تو ساندکلاد')
-        .replace(/^SINGLE$/, 'تک‌آهنگ'),
-    )
-    .join(' · ')
-}
-
-const localizeResult = (result: SearchResult): SearchResult => ({
-  ...result,
-  subtitle: localizeSubtitle(result.subtitle),
-})
-
-/** Backend `detail` strings, translated at the same seam as result subtitles.
- *  The wire stays English and is translated at the seam; each surface
- *  renders it in its own voice (docs/DESIGN.md). `$1` carries the backend's number
- *  through. */
-const ERROR_PHRASES: [RegExp, string][] = [
-  [/^Too many searches — wait (\d+)s/, 'یه کم تند رفتی — $1 ثانیه صبر کن و دوباره جستجو کن.'],
-  [/^Too many links opened — wait (\d+)s/, 'یه کم تند رفتی — $1 ثانیه صبر کن و دوباره امتحان کن.'],
-  [
-    /^Too many downloads started — wait (\d+)s/,
-    'برای امروز به سقف دانلود رسیدی — $1 ثانیه دیگه دوباره امتحان کن.',
-  ],
-  [/^Too many downloads at once/, 'همزمان چندتا دانلود در جریانه — صبر کن یکیش تموم شه.'],
-  [/^Too many tracks — (\d+)/, 'این لیست خیلی بلنده — هر بار حداکثر $1 آهنگ.'],
-  [
-    /^Unsupported link/,
-    'این لینک پشتیبانی نمیشه — لینک اسپاتیفای، دیزر، اپل موزیک، یوتیوب یا ساندکلاد بذار، یا اسمش رو جستجو کن.',
-  ],
-  [/^No tracks to download/, 'هیچ آهنگی برای دانلود انتخاب نشده.'],
-  [/^No completed tracks yet/, 'هنوز هیچ آهنگی آماده نشده.'],
-  [/^Track not ready/, 'این فایل هنوز آماده نیست.'],
-  [/^Unknown job/, 'این دانلود دیگه روی سرور نیست.'],
-  [/^Empty search query/, 'چیزی برای جستجو ننوشتی.'],
+/** Backend `detail` strings, matched to a dictionary entry. The wire carries a
+ *  terse machine-facing message; each surface renders it in its own voice and
+ *  its own language (docs/DESIGN.md). The capture group, when there is one,
+ *  carries the backend's number through to the phrase. */
+const ERROR_PHRASES: [RegExp, (m: Messages, n: string) => string][] = [
+  [/^Too many searches — wait (\d+)s/, (m, n) => m.errors.tooManySearches(n)],
+  [/^Too many links opened — wait (\d+)s/, (m, n) => m.errors.tooManyLinks(n)],
+  [/^Too many downloads started — wait (\d+)s/, (m, n) => m.errors.tooManyDownloads(n)],
+  [/^Too many downloads at once/, (m) => m.errors.downloadsAtOnce],
+  [/^Too many tracks — (\d+)/, (m, n) => m.errors.tooManyTracks(n)],
+  [/^Unsupported link/, (m) => m.errors.unsupportedLink],
+  [/^No tracks to download/, (m) => m.errors.noTracksSelected],
+  [/^No completed tracks yet/, (m) => m.errors.nothingFinished],
+  [/^Track not ready/, (m) => m.errors.notReady],
+  [/^Unknown job/, (m) => m.errors.unknownJob],
+  [/^Empty search query/, (m) => m.errors.emptyQuery],
 ]
 
-/** For anything the table missed: provider and yt-dlp errors are raw English,
- *  which has no place in a Farsi-only UI. */
-const STATUS_FALLBACK: Record<number, string> = {
-  400: 'این لینک باز نشد — شاید خصوصی باشه یا منبعش در دسترس نباشه.',
-  404: 'پیدا نشد.',
-  429: 'یه کم تند رفتی — چند لحظه صبر کن.',
+/** For anything the table missed: provider and yt-dlp errors are raw internals,
+ *  which have no place in the UI in any language. */
+function statusFallback(status: number, m: Messages): string {
+  if (status === 400) return m.errors.badRequest
+  if (status === 404) return m.errors.notFound
+  if (status === 429) return m.errors.rateLimited
+  return m.errors.noAnswer
 }
 
-function localizeError(detail: string, status: number): string {
-  for (const [pattern, farsi] of ERROR_PHRASES) {
-    // Patterns anchor on the opening and the Farsi replaces the whole
-    // message, so trailing English doesn't hang off a Persian sentence.
-    const match = pattern.exec(detail)
-    if (match) return farsi.replace('$1', match[1] ?? '')
-  }
-  return STATUS_FALLBACK[status] ?? 'سرور جواب نداد — یه بار دیگه امتحان کن.'
-}
-
-export function apiError(err: unknown): string {
+/** Turns a thrown request into a sentence. Takes the dictionary rather than
+ *  reaching for one, so it stays callable outside a React tree. */
+export function apiError(err: unknown, m: Messages): string {
   if (axios.isAxiosError(err)) {
     const status = err.response?.status
     const detail = err.response?.data?.detail
-    if (status == null) return 'به سرور وصل نشدیم — اینترنتت رو چک کن.'
-    return localizeError(typeof detail === 'string' ? detail : '', status)
+    if (status == null) return m.errors.offline
+    const text = typeof detail === 'string' ? detail : ''
+    for (const [pattern, phrase] of ERROR_PHRASES) {
+      // Patterns anchor on the opening and the phrase covers the whole
+      // message, so no raw backend tail hangs off the end of a sentence.
+      const match = pattern.exec(text)
+      if (match) return phrase(m, match[1] ?? '')
+    }
+    return statusFallback(status, m)
   }
-  return err instanceof Error ? err.message : 'یه مشکلی پیش اومد'
+  return err instanceof Error ? err.message : m.errors.unknown
 }
 
 const URL_PATTERNS = [
@@ -208,7 +169,7 @@ export async function searchCatalog(query: string, page = 0): Promise<SearchPage
   const { data } = await client.get<SearchPage>('/search', {
     params: { q: query, page },
   })
-  return { ...data, results: data.results.map(localizeResult) }
+  return data
 }
 
 /** Append a page, dropping anything already on screen. */
@@ -225,11 +186,7 @@ export function mergeResults(current: SearchResult[], incoming: SearchResult[]):
 
 export async function getArtist(id: string): Promise<ArtistDetail> {
   const { data } = await client.get<ArtistDetail>(`/artist/${id}`)
-  return {
-    ...data,
-    top_tracks: data.top_tracks.map(localizeResult),
-    albums: data.albums.map(localizeResult),
-  }
+  return data
 }
 
 export async function resolveUrl(url: string): Promise<Collection> {

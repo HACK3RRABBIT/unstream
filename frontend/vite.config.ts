@@ -31,8 +31,36 @@ function pwaServiceWorker(): PluginOption {
   }
 }
 
+/** Serves /config.js in dev and preview.
+ *
+ *  In production the frontend container generates this file from its
+ *  environment (see frontend/docker-entrypoint.d/), which is what makes
+ *  UNSTREAM_DEFAULT_LOCALE changeable without a rebuild. Serving the same
+ *  shape here means `npm run dev` reads the same variable and there is no
+ *  404 for a file that exists only once it's deployed. */
+function runtimeConfig(): PluginOption {
+  const serve = (middlewares: { use: (path: string, handler: Middleware) => void }) => {
+    middlewares.use('/config.js', (_req, res) => {
+      const config = { defaultLocale: process.env.UNSTREAM_DEFAULT_LOCALE ?? '' }
+      res.setHeader('Content-Type', 'application/javascript')
+      res.setHeader('Cache-Control', 'no-cache')
+      res.end(`window.__UNSTREAM_CONFIG__ = ${JSON.stringify(config)}\n`)
+    })
+  }
+  return {
+    name: 'unstream-runtime-config',
+    configureServer: (server) => serve(server.middlewares),
+    configurePreviewServer: (server) => serve(server.middlewares),
+  }
+}
+
+type Middleware = (
+  req: unknown,
+  res: { setHeader: (k: string, v: string) => void; end: (body: string) => void },
+) => void
+
 export default defineConfig({
-  plugins: [react(), tailwindcss(), pwaServiceWorker()],
+  plugins: [react(), tailwindcss(), runtimeConfig(), pwaServiceWorker()],
   server: {
     proxy: {
       '/api': 'http://localhost:8000',

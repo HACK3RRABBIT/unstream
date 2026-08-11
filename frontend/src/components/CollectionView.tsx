@@ -4,6 +4,7 @@ import { Archive, Check, Download, Link2, LoaderCircle, Music2, X } from 'lucide
 import clsx from 'clsx'
 import { apiError, jobZipUrl, type Collection, type JobTrack, type Track } from '../lib/api'
 import { useDownloads } from '../lib/downloads'
+import { faNumerals, useMessages, useStartAlign } from '../lib/i18n'
 import { useToast } from '../lib/toast'
 import { LyricsSheet } from './LyricsSheet'
 import { TrackRow } from './TrackRow'
@@ -13,15 +14,9 @@ interface Props {
   collection: Collection
 }
 
-const KIND_LABEL = { track: 'آهنگ', album: 'آلبوم', playlist: 'پلی‌لیست' }
-
-function formatTotal(ms: number): string {
-  const minutes = Math.round(ms / 60000)
-  if (minutes < 60) return `${minutes} دقیقه`
-  return `${Math.floor(minutes / 60)} ساعت و ${minutes % 60} دقیقه`
-}
-
 export function CollectionView({ url, collection }: Props) {
+  const m = useMessages()
+  const startAlign = useStartAlign()
   // Downloads live in the global store, so they keep running (and stay
   // visible in the dock) when the user navigates to another search.
   // A collection can spawn several jobs for the same URL — one "Download
@@ -45,9 +40,9 @@ export function CollectionView({ url, collection }: Props) {
       await navigator.clipboard.writeText(share)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
-      push('لینک اشتراکی کپی شد', 'success')
+      push(m.collection.copied, 'success')
     } catch {
-      push('کپی لینک انجام نشد', 'error')
+      push(m.collection.copyFailed, 'error')
     }
   }
 
@@ -64,17 +59,17 @@ export function CollectionView({ url, collection }: Props) {
 
   const start = useMutation({
     mutationFn: () => downloads.start(url, collection),
-    onSuccess: () => push(`${collection.tracks.length} آهنگ از ${collection.name} رفت تو صف`),
-    onError: (err) => push(apiError(err), 'error'),
+    onSuccess: () => push(m.collection.queuedAll(collection.tracks.length, collection.name)),
+    onError: (err) => push(apiError(err, m), 'error'),
   })
 
   const startSelected = useMutation({
     mutationFn: (ids: string[]) => downloads.start(url, collection, ids),
     onSuccess: (_data, ids) => {
       clearSelection()
-      push(`${ids.length} آهنگ رفت تو صف`)
+      push(m.collection.queuedSome(ids.length))
     },
-    onError: (err) => push(apiError(err), 'error'),
+    onError: (err) => push(apiError(err, m), 'error'),
   })
 
   const startTrack = useMutation({
@@ -84,8 +79,8 @@ export function CollectionView({ url, collection }: Props) {
         { ...collection, name: track.title, cover_url: track.cover_url ?? collection.cover_url },
         [track.id],
       ),
-    onSuccess: (_data, track) => push(`«${track.title}» رفت تو صف`),
-    onError: (err) => push(apiError(err), 'error'),
+    onSuccess: (_data, track) => push(m.collection.queuedOne(track.title)),
+    onError: (err) => push(apiError(err, m), 'error'),
   })
 
   // Latest job state per track id, plus which job it belongs to (for the
@@ -130,19 +125,26 @@ export function CollectionView({ url, collection }: Props) {
             wrap to their own row instead of truncating the name */}
         <div className="min-w-0 grow basis-40">
           <span className="text-micro font-semibold text-lime-flash">
-            {KIND_LABEL[collection.kind]}
+            {m.collection.kinds[collection.kind]}
           </span>
-          <h2 className="mt-1 truncate font-display text-2xl font-bold" dir="auto">
+          <h2
+            className={clsx(
+              'mt-1 truncate font-display text-2xl font-bold',
+              faNumerals(collection.name),
+              startAlign,
+            )}
+            dir="auto"
+          >
             {collection.name}
           </h2>
           <p className="mt-1 text-mini text-ink-300">
             <span dir="auto">{collection.owner}</span>
             <span className="mx-1.5 text-ink-600">·</span>
-            {collection.tracks.length} آهنگ
+            {m.collection.trackCount(collection.tracks.length)}
             {totalMs > 0 && (
               <>
                 <span className="mx-1.5 text-ink-600">·</span>
-                {formatTotal(totalMs)}
+                {m.collection.duration(totalMs)}
               </>
             )}
           </p>
@@ -151,8 +153,8 @@ export function CollectionView({ url, collection }: Props) {
         <div className="flex items-center gap-2">
           <button
             onClick={copyLink}
-            title="کپی لینک اشتراکی این صفحه"
-            aria-label="کپی لینک اشتراکی"
+            title={m.collection.copy}
+            aria-label={m.collection.copyShort}
             className="grid size-10 place-items-center rounded-btn border border-ink-600 text-ink-300 transition duration-200 hover:border-ink-400 hover:text-ink-100 active:scale-95"
           >
             {copied ? (
@@ -168,15 +170,15 @@ export function CollectionView({ url, collection }: Props) {
               className="flex animate-pop items-center gap-1.5 rounded-btn border border-ink-600 px-4 py-2.5 text-mini font-medium text-ink-100 transition duration-200 hover:border-ink-400 active:scale-[0.98]"
             >
               <Archive className="size-4" />
-              ZIP ({zipEntry.job!.done})
+              ZIP ({m.app.num(zipEntry.job!.done)})
             </a>
           )}
           {selected.size > 0 ? (
             <>
               <button
                 onClick={clearSelection}
-                title="لغو انتخاب"
-                aria-label="لغو انتخاب"
+                title={m.collection.clearSelection}
+                aria-label={m.collection.clearSelection}
                 className="grid size-10 place-items-center rounded-btn border border-ink-600 text-ink-300 transition duration-200 hover:border-ink-400 hover:text-ink-100 active:scale-95"
               >
                 <X className="size-4" />
@@ -195,7 +197,7 @@ export function CollectionView({ url, collection }: Props) {
                 ) : (
                   <Download className="size-4" />
                 )}
-                دانلود {selected.size} انتخاب‌شده
+                {m.collection.downloadSelected(selected.size)}
               </button>
             </>
           ) : (
@@ -212,12 +214,14 @@ export function CollectionView({ url, collection }: Props) {
                 {running || start.isPending ? (
                   <>
                     <LoaderCircle className="size-4 animate-spin" />
-                    {entries.length > 0 ? `${settled}/${queuedTotal}` : 'در حال شروع…'}
+                    {entries.length > 0
+                      ? `${m.app.num(settled)}/${m.app.num(queuedTotal)}`
+                      : m.collection.starting}
                   </>
                 ) : (
                   <>
                     <Download className="size-4" />
-                    دانلود همه
+                    {m.collection.downloadAll}
                   </>
                 )}
               </button>
@@ -231,7 +235,7 @@ export function CollectionView({ url, collection }: Props) {
           role="alert"
           className="animate-fade-up border-b border-ink-800 bg-danger/10 px-5 py-3 text-mini text-danger"
         >
-          {apiError(start.error ?? startTrack.error ?? startSelected.error)}
+          {apiError(start.error ?? startTrack.error ?? startSelected.error, m)}
         </p>
       )}
 
@@ -241,19 +245,19 @@ export function CollectionView({ url, collection }: Props) {
       {collection.tracks.length > 1 && (
         <div className="flex items-center justify-between gap-3 border-b border-ink-800 bg-ink-950/50 px-5 py-3 sm:py-2">
           {/* min-w-0 lets this shrink instead of shoving the action out of the
-              row; the action itself never wraps, so "انتخاب همه" can't break
+              row; the action itself never wraps, so "Select all" can't break
               across two lines the way it did at phone width. */}
           <span className="min-w-0 text-xs text-ink-400 tabular-nums">
             {selected.size > 0 ? (
-              `${selected.size} از ${collection.tracks.length} انتخاب شده`
+              m.collection.selectedOf(selected.size, collection.tracks.length)
             ) : (
               <>
-                {collection.tracks.length} آهنگ
+                {m.collection.trackCount(collection.tracks.length)}
                 <span className="mx-1.5 text-ink-600">·</span>
                 {/* The same instruction, at two lengths — the long one has no
                     room on a phone, and truncating it would cut mid-sentence. */}
-                <span className="sm:hidden">با تیک انتخاب کن</span>
-                <span className="hidden sm:inline">هرکدوم رو تیک بزنی فقط همون‌ها دانلود میشن</span>
+                <span className="sm:hidden">{m.collection.tickShort}</span>
+                <span className="hidden sm:inline">{m.collection.tickLong}</span>
               </>
             )}
           </span>
@@ -261,7 +265,9 @@ export function CollectionView({ url, collection }: Props) {
             onClick={selected.size === collection.tracks.length ? clearSelection : selectAll}
             className="tap-target shrink-0 text-xs font-medium whitespace-nowrap text-lime-flash transition hover:text-lime-soft"
           >
-            {selected.size === collection.tracks.length ? 'لغو همه' : 'انتخاب همه'}
+            {selected.size === collection.tracks.length
+              ? m.collection.clearAll
+              : m.collection.selectAll}
           </button>
         </div>
       )}
@@ -293,8 +299,10 @@ export function CollectionView({ url, collection }: Props) {
       {allFinished && (
         <p className="flex animate-fade-up items-center gap-2 border-t border-ink-800 px-5 py-3.5 text-mini text-ink-300">
           <Check className="size-4 shrink-0 text-lime-flash" />
-          تموم شد — {doneTotal} از {queuedTotal} دانلود شد
-          {failedTotal > 0 && <span className="text-danger">· {failedTotal} تا نشد</span>}
+          {m.collection.finished(doneTotal, queuedTotal)}
+          {failedTotal > 0 && (
+            <span className="text-danger">· {m.collection.failedCount(failedTotal)}</span>
+          )}
         </p>
       )}
 

@@ -19,7 +19,7 @@ Paste a **Spotify / Deezer / Apple Music / YouTube / SoundCloud** track, album o
 
 No accounts. No API keys. Nothing paid. You run it, so the files are yours and nobody is standing in between.
 
-> The interface is **Farsi only** — that was a deliberate product decision, not an oversight ([why](docs/DESIGN.md#farsi-only)). Everything else here is in English.
+> The interface ships in **Farsi and English**, switchable from the header. Farsi is the default because that is the audience it was built for ([why](docs/DESIGN.md#farsi-only)); set `UNSTREAM_DEFAULT_LOCALE=en` if you want English to be what people land on.
 
 ## Quick start
 
@@ -93,6 +93,7 @@ Everything is optional. `cp .env.example .env` and uncomment what you want — t
 | Variable | Default (self-hosted) | Does |
 |---|---|---|
 | `UNSTREAM_PORT` | `8080` | Host port for the web UI |
+| `UNSTREAM_DEFAULT_LOCALE` | `fa` | Language a first-time visitor gets: `fa` or `en`. Read at container start, so no rebuild |
 | `DOWNLOADS_DIR` | `./downloads` | Where finished tracks land. Point it at an external disk or a NAS mount |
 | `PUID` / `PGID` | `1001` | Who owns those files. Use `id -u` / `id -g` on Linux |
 | `DOWNLOADS_TTL_HOURS` | `0` (never) | Hours before a finished download is deleted |
@@ -103,6 +104,19 @@ Everything is optional. `cp .env.example .env` and uncomment what you want — t
 | `ADMIN_TOKEN` | *unset* | Enables the `/admin` dashboard. Unset = it doesn't exist |
 
 The **code's** defaults differ from the compose file's: they assume a server shared with strangers (downloads expire after 24h, disk capped at 20 GB, limits tight). `docker-compose.yml` overrides them toward "this is my machine". See [the design notes](docs/DESIGN.md#self-hosting).
+
+### Language
+
+Farsi (right-to-left) and English (left-to-right). Anyone can switch from the picker in the header and their choice is remembered in their own browser; `UNSTREAM_DEFAULT_LOCALE` only decides what someone who hasn't chosen yet sees.
+
+```sh
+echo "UNSTREAM_DEFAULT_LOCALE=en" >> .env
+docker compose up -d
+```
+
+That takes effect on restart — no rebuild, even on the prebuilt images, because the frontend container writes the setting into a small `/config.js` when it starts. Switching languages flips the text direction, the numerals, and the page's own title and share metadata along with the copy.
+
+**Adding a language** is two files, not a setting: copy `frontend/src/lib/locales/en.ts`, translate it, and add a line to `LOCALES` in `frontend/src/lib/i18n.tsx`. The dictionary's shape is a type, so a missing phrase fails the build instead of showing up blank. If the language writes numbers in its own digits, `app.num` in its dictionary is where that conversion goes — [the digit rule](docs/DESIGN.md#digits) explains why it lives there and not in the font.
 
 ## Can I host this for other people?
 
@@ -169,6 +183,8 @@ cd frontend && npm install && npm run dev
 ```
 
 Then <http://localhost:5173>. Tests: `cd backend && uv run pytest`.
+
+`UNSTREAM_DEFAULT_LOCALE` works in dev too — Vite serves the same `/config.js` the container generates, so `UNSTREAM_DEFAULT_LOCALE=en npm run dev` starts in English.
 
 The decisions worth knowing before you change anything are in [`docs/DESIGN.md`](docs/DESIGN.md).
 

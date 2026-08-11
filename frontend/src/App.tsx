@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useMutation } from '@tanstack/react-query'
-import { ArrowLeft, ArrowRight, AudioLines, Link2 as LinkIcon, Search } from 'lucide-react'
+import { AudioLines, Link2 as LinkIcon, Search } from 'lucide-react'
 import clsx from 'clsx'
 import {
   apiError,
@@ -21,8 +21,11 @@ import { ArtistView } from './components/ArtistView'
 import { DownloadsDock } from './components/DownloadsDock'
 import { QualityPicker } from './components/QualityPicker'
 import { LyricsToggle } from './components/LyricsToggle'
+import { LanguagePicker } from './components/LanguagePicker'
 import { RecentSearches } from './components/RecentSearches'
 import { DownloadsProvider, useDownloads } from './lib/downloads'
+import { LocaleProvider, useDirectional, useMessages } from './lib/i18n'
+import type { Messages } from './lib/locales/en'
 import { clearRecentSearches, recentSearches, rememberSearch } from './lib/recent'
 import { ToastProvider, useToast } from './lib/toast'
 
@@ -39,11 +42,9 @@ type View =
   | { type: 'artist'; artist: ArtistDetail }
   | { type: 'collection'; url: string; collection: Collection }
 
-const BACK_LABEL: Record<View['type'], string> = {
-  search: 'برگشت به نتایج',
-  artist: 'برگشت به آرتیست',
-  collection: 'برگشت',
-}
+/** What the back button says, named by the view it returns *to*. */
+const backLabel = (type: View['type'], m: Messages): string =>
+  type === 'search' ? m.nav.backToResults : type === 'artist' ? m.nav.backToArtist : m.nav.back
 
 /** Animates its children to and from zero height. `grid-template-rows`
  *  1fr→0fr is the only way to transition to `height: auto`; the inner div does
@@ -80,6 +81,7 @@ const isTypingTarget = (target: EventTarget | null) => {
 function DownloadNotifier() {
   const { entries } = useDownloads()
   const { push } = useToast()
+  const m = useMessages()
   const finishedState = useRef<Map<string, boolean>>(new Map())
 
   useEffect(() => {
@@ -93,16 +95,16 @@ function DownloadNotifier() {
         const done = entry.job!.done
         const failed = entry.job!.failed
         if (done > 0 && failed === 0) {
-          push(`${entry.name} — ${done} آهنگ آماده‌ی ذخیره‌ست`, 'success')
+          push(m.notify.ready(entry.name, done), 'success')
         } else if (done > 0) {
-          push(`${entry.name} — ${done} آهنگ آماده شد، ${failed} تا دانلود نشد`, 'info')
+          push(m.notify.partial(entry.name, done, failed), 'info')
         } else {
-          push(`${entry.name} — دانلود انجام نشد`, 'error')
+          push(m.notify.failed(entry.name), 'error')
         }
       }
       finishedState.current.set(entry.jobId, finished)
     }
-  }, [entries, push])
+  }, [entries, push, m])
 
   return null
 }
@@ -131,6 +133,9 @@ function Shell() {
   const [focusPulse, setFocusPulse] = useState(0)
 
   const [recent, setRecent] = useState(recentSearches)
+
+  const m = useMessages()
+  const { Back, Forward, backNudge, forwardNudge } = useDirectional()
 
   // Set when this page load came from a shared link. Landing straight in a
   // loading collection with the marketing hero above it reads as the app
@@ -219,6 +224,10 @@ function Shell() {
   goBackRef.current = goBack
   const pushRef = useRef(push)
   pushRef.current = push
+  // Same reason as `push`: the global paste/update listeners are mounted once,
+  // but must announce in whatever language is current when they fire.
+  const mRef = useRef(m)
+  mRef.current = m
 
   /** Fetch the next page and append it to the search view on top of the stack. */
   const loadMore = useCallback(async () => {
@@ -244,7 +253,7 @@ function Shell() {
         ]
       })
     } catch (err) {
-      pushRef.current(apiError(err), 'error')
+      pushRef.current(apiError(err, mRef.current), 'error')
     } finally {
       loadingMoreRef.current = false
       setLoadingMore(false)
@@ -303,8 +312,8 @@ function Shell() {
   // already reload themselves; see main.tsx.)
   useEffect(() => {
     const onUpdate = () =>
-      pushRef.current('نسخه‌ی جدید آنستریم اومده', 'info', {
-        label: 'رفرش',
+      pushRef.current(mRef.current.notify.newVersion, 'info', {
+        label: mRef.current.notify.refresh,
         onClick: () => window.location.reload(),
       })
     window.addEventListener('unstream:update', onUpdate)
@@ -333,7 +342,7 @@ function Shell() {
         e.preventDefault()
         setSharedArrival(null)
         setRecent(rememberSearch(text))
-        pushRef.current('لینک پیدا شد — در حال باز کردن…', 'info')
+        pushRef.current(mRef.current.notify.linkDetected, 'info')
         openCollectionRef.current(text, false)
       }
     }
@@ -397,19 +406,23 @@ function Shell() {
         <button
           onClick={goHome}
           disabled={landing}
-          aria-label="خانه"
+          aria-label={m.app.home}
           className="group flex items-center gap-2.5 rounded-ctl transition disabled:cursor-default"
         >
           <span className="grid size-8 place-items-center rounded-ctl bg-lime-flash text-lime-ink transition duration-200 group-enabled:group-active:scale-95">
             <AudioLines className="size-4.5" strokeWidth={2.25} />
           </span>
           <span className="font-display text-lg font-semibold transition-colors duration-200 group-enabled:group-hover:text-lime-flash">
-            آنستریم
+            {m.app.name}
           </span>
         </button>
+        {/* All three are preferences rather than actions, so they share the
+            trailing edge. The two that change what a download *is* come first;
+            the language only changes how it's labelled. */}
         <div className="ms-auto flex items-center gap-2.5">
           <LyricsToggle />
           <QualityPicker />
+          <LanguagePicker />
         </div>
       </header>
 
@@ -419,30 +432,30 @@ function Shell() {
             <div className="animate-fade-up rounded-panel border border-lime-flash/25 bg-lime-flash/[0.06] p-4 sm:p-5">
               <p className="flex items-center gap-2 text-micro font-semibold text-lime-flash">
                 <LinkIcon className="size-3.5" />
-                لینک اشتراکی
+                {m.shared.badge}
               </p>
               <h1 className="mt-2 font-display text-2xl font-bold text-balance">
                 {error
-                  ? 'این لینک اشتراکی باز نشد'
+                  ? m.shared.titleError
                   : sharedArrival.kind === 'q'
-                    ? 'یکی یه جستجو برات فرستاده'
+                    ? m.shared.titleQuery
                     : busy
-                      ? 'در حال باز کردن چیزی که برات فرستادن…'
-                      : 'این رو یکی برات فرستاده'}
+                      ? m.shared.titleBusy
+                      : m.shared.titleDefault}
               </h1>
               <p className="mt-2 text-mini text-ink-300">
                 {error ? (
-                  'شاید لینک خراب یا خصوصی باشه، یا از منبعی باشه که آنستریم نمی‌تونه بخونتش.'
+                  m.shared.bodyError
                 ) : sharedArrival.kind === 'q' ? (
                   <>
-                    نتایج برای{' '}
+                    {m.shared.queryBefore}{' '}
                     <span className="text-lime-flash" dir="auto">
-                      «{sharedArrival.query}»
+                      {m.app.quote(sharedArrival.query)}
                     </span>{' '}
-                    — خودکار از لینکی که دنبال کردی باز شد.
+                    {m.shared.queryAfter}
                   </>
                 ) : (
-                  'آنستریم این رو خودکار از روی لینکت باز کرد. آهنگ‌هایی که می‌خوای رو انتخاب کن، یا از اول شروع کن.'
+                  m.shared.bodyDefault
                 )}
               </p>
               <button
@@ -450,8 +463,10 @@ function Shell() {
                 className="group mt-4 flex items-center gap-1.5 rounded-btn border border-ink-600 px-3.5 py-2 text-mini font-medium text-ink-100 transition duration-200 hover:border-ink-400 active:scale-[0.98]"
               >
                 <Search className="size-3.5" />
-                جستجوی یه چیز دیگه
-                <ArrowLeft className="size-3.5 transition-transform duration-200 group-hover:-translate-x-0.5" />
+                {m.shared.searchElse}
+                <Forward
+                  className={clsx('size-3.5 transition-transform duration-200', forwardNudge)}
+                />
               </button>
             </div>
             {error && (
@@ -459,7 +474,7 @@ function Shell() {
                 role="alert"
                 className="mt-4 animate-fade-up rounded-btn border border-danger/25 bg-danger/10 px-4 py-3 text-sm text-danger"
               >
-                {apiError(error)}
+                {apiError(error, m)}
               </p>
             )}
           </section>
@@ -478,14 +493,12 @@ function Shell() {
                 the inner wrapper does the clipping. */}
             <Collapsible open={landing}>
               <h1 className="animate-fade-up font-display text-[clamp(2.5rem,7.5vw,4.5rem)] leading-[1.15] font-bold text-balance">
-                دانلود موزیک،
+                {m.hero.titleLine1}
                 <br />
-                <span className="text-lime-flash">آلبوم و پلی‌لیست</span>
+                <span className="text-lime-flash">{m.hero.titleLine2}</span>
               </h1>
               <p className="mt-5 max-w-md animate-fade-up text-body leading-relaxed text-ink-300 [animation-delay:80ms]">
-                لینک اسپاتیفای، یوتیوب، ساندکلاد، دیزر یا اپل موزیک رو بذار — یا همه‌ی کاتالوگ‌ها رو
-                یکجا جستجو کن. فایل MP3 تگ‌خورده با کاور و کیفیت دلخواهت رو بگیر؛ نه اکانت می‌خواد،
-                نه ثبت‌نام.
+                {m.hero.blurb}
               </p>
             </Collapsible>
 
@@ -504,11 +517,11 @@ function Shell() {
                 cold-start affordance — both belong to the empty page only. */}
             <Collapsible open={landing}>
               <p className="mt-3 animate-fade-up text-mini text-ink-400 [animation-delay:220ms]">
-                برای جستجو{' '}
+                {m.hero.shortcutBefore}{' '}
                 <kbd className="rounded-[5px] border border-ink-700 bg-ink-900 px-1.5 py-0.5 font-sans text-micro text-ink-300">
                   /
                 </kbd>{' '}
-                رو بزن، یا هر جای صفحه یه لینک پیست کن.
+                {m.hero.shortcutAfter}
               </p>
               <RecentSearches
                 items={recent}
@@ -522,7 +535,7 @@ function Shell() {
                 role="alert"
                 className="mt-4 animate-fade-up rounded-btn border border-danger/25 bg-danger/10 px-4 py-3 text-sm text-danger"
               >
-                {apiError(error)}
+                {apiError(error, m)}
               </p>
             )}
           </section>
@@ -536,8 +549,8 @@ function Shell() {
                 onClick={goBack}
                 className="group mb-3 flex items-center gap-1.5 rounded-ctl px-2 py-1.5 text-mini font-medium text-ink-300 transition hover:bg-ink-800 hover:text-ink-100 active:scale-[0.98]"
               >
-                <ArrowRight className="size-4 transition-transform duration-200 group-hover:translate-x-0.5" />
-                {BACK_LABEL[previous.type]}
+                <Back className={clsx('size-4 transition-transform duration-200', backNudge)} />
+                {backLabel(previous.type, m)}
               </button>
             )}
             {view.type === 'search' && (
@@ -603,11 +616,15 @@ function Shell() {
 }
 
 export default function App() {
+  // Locale outermost: the toasts and the download dock both render copy, so
+  // there is no part of the tree that can be built before the language is known.
   return (
-    <ToastProvider>
-      <DownloadsProvider>
-        <Shell />
-      </DownloadsProvider>
-    </ToastProvider>
+    <LocaleProvider>
+      <ToastProvider>
+        <DownloadsProvider>
+          <Shell />
+        </DownloadsProvider>
+      </ToastProvider>
+    </LocaleProvider>
   )
 }
