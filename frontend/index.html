@@ -72,11 +72,12 @@
       }
     </script>
 
-    <!-- Self-hosted Vazirmatn (docs/DESIGN.md): preload exactly the weights the UI
-         uses, from the plain cut that is the document default. The FD cut is
-         fetched only if Persian-script content needs it. hrefs must match the
-         url()s in index.css byte-for-byte, and font preloads need crossorigin
-         even same-origin, or they download twice. -->
+    <!-- Self-hosted Vazirmatn (docs/DESIGN.md): the four weights the UI uses from
+         the plain cut that is the document default, plus the FD regular — Farsi
+         is the default language, and without it every Persian title swaps digit
+         shapes after first paint. The remaining FD weights are fetched on demand.
+         hrefs must match the url()s in index.css byte-for-byte, and font preloads
+         need crossorigin even same-origin, or they download twice. -->
     <link
       rel="preload"
       as="font"
@@ -103,6 +104,13 @@
       as="font"
       type="font/woff2"
       href="/fonts/Vazirmatn-Bold.woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      as="font"
+      type="font/woff2"
+      href="/fonts/Vazirmatn-FD-Regular.woff2"
       crossorigin
     />
   </head>
