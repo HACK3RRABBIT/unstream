@@ -23,9 +23,7 @@ export function LyricsToggle({ className }: { className?: string }) {
 
   return (
     <div className={clsx('flex items-center gap-2', className)}>
-      <span className="hidden text-micro font-semibold text-ink-400 sm:inline">
-        {m.lyrics.embed.label}
-      </span>
+      <span className="text-micro font-semibold text-ink-400">{m.lyrics.embed.label}</span>
       <div className="flex items-center gap-0.5 rounded-ctl border border-ink-800 bg-ink-900 p-0.5">
         <button
           aria-pressed={embedLyrics}

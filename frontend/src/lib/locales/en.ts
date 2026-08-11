@@ -30,6 +30,13 @@ const en = {
     picker: 'Choose a language',
   },
 
+  /** The sheet the header's controls move into on a narrow screen. */
+  settings: {
+    label: 'Settings',
+    open: 'Open settings',
+    close: 'Close settings',
+  },
+
   /** The document's own metadata — `<title>`, the description, Open Graph and
    *  Twitter cards. Applied to the live document whenever the language changes
    *  (see `../i18n.tsx`), so a shared link carries the copy of the language the

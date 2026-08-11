@@ -22,6 +22,8 @@ import { DownloadsDock } from './components/DownloadsDock'
 import { QualityPicker } from './components/QualityPicker'
 import { LyricsToggle } from './components/LyricsToggle'
 import { LanguagePicker } from './components/LanguagePicker'
+import { SettingsSheet } from './components/SettingsSheet'
+import { SettingsIcon } from './components/icons'
 import { RecentSearches } from './components/RecentSearches'
 import { DownloadsProvider, useDownloads } from './lib/downloads'
 import { LocaleProvider, useDirectional, useMessages } from './lib/i18n'
@@ -133,6 +135,9 @@ function Shell() {
   const [focusPulse, setFocusPulse] = useState(0)
 
   const [recent, setRecent] = useState(recentSearches)
+
+  // The narrow layout's home for the header's preferences.
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   const m = useMessages()
   const { Back, Forward, backNudge, forwardNudge } = useDirectional()
@@ -416,15 +421,27 @@ function Shell() {
             {m.app.name}
           </span>
         </button>
-        {/* All three are preferences rather than actions, so they share the
-            trailing edge. The two that change what a download *is* come first;
-            the language only changes how it's labelled. */}
-        <div className="ms-auto flex items-center gap-2.5">
+        {/* Preferences, so they share the trailing edge; the two that change
+            what a download *is* come first. Below `sm` they move into a sheet:
+            three chip strips do not fit beside the wordmark, and a flex row
+            will not shrink below its content, so leaving them here gave the
+            document a horizontal scrollbar. */}
+        <div className="ms-auto hidden items-center gap-2.5 sm:flex">
           <LyricsToggle />
           <QualityPicker />
           <LanguagePicker />
         </div>
+        <button
+          onClick={() => setSettingsOpen(true)}
+          aria-label={m.settings.open}
+          aria-haspopup="dialog"
+          className="tap-target ms-auto grid size-9 shrink-0 place-items-center rounded-ctl border border-ink-800 bg-ink-900 text-ink-300 transition duration-200 hover:text-ink-100 active:scale-90 sm:hidden"
+        >
+          <SettingsIcon className="size-5" />
+        </button>
       </header>
+
+      {settingsOpen && <SettingsSheet onClose={() => setSettingsOpen(false)} />}
 
       <main className="mx-auto w-full max-w-3xl flex-1 px-5 pb-24">
         {sharedArrival ? (
@@ -516,7 +533,7 @@ function Shell() {
             {/* The shortcut hint is a discovery aid and the chips are a
                 cold-start affordance — both belong to the empty page only. */}
             <Collapsible open={landing}>
-              <p className="mt-3 animate-fade-up text-mini text-ink-400 [animation-delay:220ms]">
+              <p className="mt-3 pb-1 animate-fade-up text-mini text-ink-400 [animation-delay:220ms]">
                 {m.hero.shortcutBefore}{' '}
                 <kbd className="rounded-[5px] border border-ink-700 bg-ink-900 px-1.5 py-0.5 font-sans text-micro text-ink-300">
                   /

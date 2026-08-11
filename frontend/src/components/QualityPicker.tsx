@@ -19,9 +19,7 @@ export function QualityPicker({ className }: { className?: string }) {
 
   return (
     <div className={clsx('flex items-center gap-2', className)}>
-      <span className="hidden text-micro font-semibold text-ink-400 sm:inline">
-        {m.quality.label}
-      </span>
+      <span className="text-micro font-semibold text-ink-400">{m.quality.label}</span>
       <div
         role="radiogroup"
         aria-label={m.quality.group}
