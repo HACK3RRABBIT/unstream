@@ -65,6 +65,32 @@
   src: url('/fonts/Vazirmatn-FD-Bold.woff2') format('woff2');
 }
 
+/* Inter (SIL OFL 1.1), the Latin face — see docs/DESIGN.md#typeface. Variable
+   across 400–700 in one file, so a new weight here costs no extra download.
+
+   Two subsets, picked by the browser from `unicode-range`. The ranges are
+   copied verbatim from Google's own Inter CSS: they describe what is actually
+   in each file, so editing them promises glyphs that are not there. */
+@font-face {
+  font-family: 'Inter';
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/Inter-Variable.woff2') format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Inter';
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/Inter-Variable-ext.woff2') format('woff2');
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+    U+A720-A7FF;
+}
+
 /* Metric-tuned fallback so the one-time cold-visit swap from the system font
    to Vazirmatn causes no layout shift. Measured with fontTools: mean
    Persian-glyph advance of Vazirmatn vs Tahoma gives the size-adjust;
@@ -327,6 +353,22 @@
    cutout demands; the content column keeps its own px-5 gutter. */
 @utility safe-x {
   padding-inline: max(env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px));
+}
+
+/* The English UI is set in Inter; the Farsi UI stays entirely Vazirmatn.
+   Keyed off `<html lang>`, which `applyDocumentLocale` rewrites, so the
+   typeface follows the picker with no class to keep in sync.
+
+   Vazirmatn stays behind Inter and is load-bearing: this app mixes scripts on
+   every screen, and Inter has no Persian glyphs, so Persian titles fall
+   through per character. `--font-fa` is untouched — it is the Farsi-digit cut
+   for Persian *content*, which is Persian whatever language the UI is in.
+
+   An attribute selector, not `:lang()`: this must match the document element
+   alone, or the language segments would each restyle their own subtree. */
+html[lang='en'] {
+  --font-sans: 'Inter', 'Vazirmatn', 'Vazirmatn Fallback', system-ui, sans-serif;
+  --font-display: 'Inter', 'Vazirmatn', 'Vazirmatn Fallback', system-ui, sans-serif;
 }
 
 html {
