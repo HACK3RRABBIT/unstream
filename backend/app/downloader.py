@@ -28,10 +28,11 @@ from urllib.request import urlopen
 
 from mutagen import File as MutagenFile
 from mutagen.flac import Picture
-from mutagen.id3 import APIC, ID3, TALB, TDRC, TIT2, TPE1, TPE2, TRCK
+from mutagen.id3 import APIC, ID3, TALB, TDRC, TIT2, TPE1, TPE2, TRCK, USLT
 from mutagen.mp4 import MP4, MP4Cover
 from yt_dlp import YoutubeDL
 
+from . import analytics, lyrics
 from .models import Track
 from .ytdlp import base_opts
 
@@ -248,7 +249,7 @@ def _cover_bytes(track: Track) -> bytes | None:
         return None  # cover art is nice-to-have
 
 
-def _tag_mp3(path: Path, track: Track, cover: bytes | None) -> None:
+def _tag_mp3(path: Path, track: Track, cover: bytes | None, lyrics_text: str | None) -> None:
     tags = ID3()
     tags.add(TIT2(encoding=3, text=track.title))
     tags.add(TPE1(encoding=3, text=", ".join(track.artists)))
@@ -258,6 +259,17 @@ def _tag_mp3(path: Path, track: Track, cover: bytes | None) -> None:
         tags.add(TRCK(encoding=3, text=str(track.track_number)))
     if track.release_date:
         tags.add(TDRC(encoding=3, text=track.release_date[:4]))
+    if lyrics_text:
+        # `lang` is ISO 639-2: 'fas' for Arabic-script text (Persian, Arabic),
+        # 'eng' otherwise — players use it to pick an LRC file per language.
+        tags.add(
+            USLT(
+                encoding=3,
+                lang=lyrics.detect_lang(lyrics_text),
+                desc="",
+                text=lyrics_text,
+            )
+        )
     if cover:
         tags.add(
             APIC(
@@ -271,7 +283,7 @@ def _tag_mp3(path: Path, track: Track, cover: bytes | None) -> None:
     tags.save(path)
 
 
-def _tag_mp4(path: Path, track: Track, cover: bytes | None) -> None:
+def _tag_mp4(path: Path, track: Track, cover: bytes | None, lyrics_text: str | None) -> None:
     """iTunes-style atoms, for the m4a an "original" download usually is."""
     audio = MP4(path)
     if audio.tags is None:
@@ -285,12 +297,14 @@ def _tag_mp4(path: Path, track: Track, cover: bytes | None) -> None:
         tags["trkn"] = [(track.track_number, 0)]
     if track.release_date:
         tags["\xa9day"] = [track.release_date[:4]]
+    if lyrics_text:
+        tags["\xa9lyr"] = [lyrics_text]
     if cover:
         tags["covr"] = [MP4Cover(cover, imageformat=MP4Cover.FORMAT_JPEG)]
     audio.save()
 
 
-def _tag_ogg(path: Path, track: Track, cover: bytes | None) -> None:
+def _tag_ogg(path: Path, track: Track, cover: bytes | None, lyrics_text: str | None) -> None:
     """Vorbis comments — mutagen picks Opus vs Vorbis from the file itself."""
     audio = MutagenFile(path)
     if audio is None:
@@ -303,6 +317,8 @@ def _tag_ogg(path: Path, track: Track, cover: bytes | None) -> None:
         audio["tracknumber"] = [str(track.track_number)]
     if track.release_date:
         audio["date"] = [track.release_date[:4]]
+    if lyrics_text:
+        audio["lyrics"] = [lyrics_text]
     if cover:
         picture = Picture()
         picture.data = cover
@@ -325,15 +341,39 @@ _TAGGERS = {
 }
 
 
-def embed_tags(path: Path, track: Track) -> None:
-    """Write catalog metadata + art in whatever format the file speaks.
+def embed_tags(path: Path, track: Track, lyrics_text: str | None = None) -> None:
+    """Write catalog metadata + art (+ lyrics) in whatever format the file speaks.
 
     A container with no tag support (raw aac, wav) is left alone — the
     audio is still perfectly good, it just arrives unlabelled.
     """
     tagger = _TAGGERS.get(path.suffix.lower())
     if tagger:
-        tagger(path, track, _cover_bytes(track))
+        tagger(path, track, _cover_bytes(track), lyrics_text)
+
+
+def _find_lyrics(track: Track) -> str | None:
+    """Best-effort lyrics for embedding. Never raises, never blocks a download.
+
+    Same contract as cover art: nice to have, silent when it fails.
+
+    The outcome is counted here and not only at the API, because embedding is
+    where most lookups happen: an album asks once per track, while the sheet is
+    opened one song at a time. Anything that is not a clear found-or-absent
+    counts as "unavailable" — including a bug in here, which is the honest
+    reading, since what it means is that we did not get an answer.
+    """
+    artist = ", ".join(track.artists)
+    outcome, plain = "unavailable", None
+    try:
+        found = lyrics.fetch(artist, track.title, track.album, track.duration_ms / 1000)
+        outcome = "found" if found else "absent"
+        plain = found.plain if found else None
+    except Exception:
+        pass  # a lyric is never worth failing a download over
+    # `record` swallows its own errors, so counting cannot cost a download.
+    analytics.record("lyrics_embed", detail=outcome, label=f"{artist} - {track.title}")
+    return plain
 
 
 def download_track(
@@ -344,6 +384,7 @@ def download_track(
     filename: str | None = None,
     quality: str = DEFAULT_QUALITY,
     on_source: Callable[[str, int], None] | None = None,
+    embed_lyrics: bool = True,
 ) -> Path:
     """Full pipeline for one track. Reports (stage, fraction) via callback.
 
@@ -355,6 +396,10 @@ def download_track(
     `on_source` is told which upload each attempt settled on, and which
     attempt it was — the only place that knows whether a track came from
     its own page, from YouTube search, or from the SoundCloud last resort.
+
+    `embed_lyrics` toggles the best-effort lyric lookup that runs during
+    tagging; its failure is swallowed by `_find_lyrics`, so lyrics can never
+    make a track fail that would otherwise download fine.
 
     Attempt order: the track's own source page if it has one, then YouTube
     search (excluding failed uploads), then SoundCloud as the last resort.
@@ -393,7 +438,7 @@ def download_track(
             )
 
             on_progress("tagging", 1.0)
-            embed_tags(audio, track)
+            embed_tags(audio, track, _find_lyrics(track) if embed_lyrics else None)
             return audio
         except Exception as exc:
             last_error = exc

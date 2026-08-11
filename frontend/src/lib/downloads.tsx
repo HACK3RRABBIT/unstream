@@ -55,6 +55,9 @@ interface DownloadsContextValue {
   /** Audio quality every new job is started at; persisted across sessions. */
   quality: Quality
   setQuality: (quality: Quality) => void
+  /** Whether new jobs embed lyrics in the finished files' tags. */
+  embedLyrics: boolean
+  setEmbedLyrics: (embed: boolean) => void
   start: (url: string, collection: Collection, trackIds?: string[]) => Promise<void>
   /** One-click download of a single search result: resolve, then queue. */
   startFromResult: (result: SearchResult) => Promise<void>
@@ -72,6 +75,7 @@ const isFinished = (e: DownloadEntry) => e.job?.finished ?? false
 const isSettled = (e: DownloadEntry) => e.expired === true || isFinished(e)
 
 const QUALITY_KEY = 'unstream:quality'
+const LYRICS_KEY = 'unstream:lyrics'
 const JOBS_KEY = 'unstream:jobs'
 
 /** Mirrors DOWNLOADS_TTL_HOURS in backend/app/jobs.py — past this a stored
@@ -85,6 +89,14 @@ function storedQuality(): Quality {
     return isQuality(saved) ? saved : DEFAULT_QUALITY
   } catch {
     return DEFAULT_QUALITY // private mode / storage disabled
+  }
+}
+
+function storedLyrics(): boolean {
+  try {
+    return localStorage.getItem(LYRICS_KEY) !== '0'
+  } catch {
+    return true // private mode / storage disabled
   }
 }
 
@@ -110,12 +122,15 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
   const [entries, setEntries] = useState<DownloadEntry[]>(storedEntries)
   const [panelOpen, setPanelOpen] = useState(false)
   const [quality, setQualityState] = useState<Quality>(storedQuality)
+  const [embedLyrics, setEmbedLyricsState] = useState<boolean>(storedLyrics)
   const entriesRef = useRef(entries)
   entriesRef.current = entries
   // Read through a ref so `start` stays referentially stable — every
   // download button downstream depends on it.
   const qualityRef = useRef(quality)
   qualityRef.current = quality
+  const lyricsRef = useRef(embedLyrics)
+  lyricsRef.current = embedLyrics
   // (time, settled-count) samples per job, for ETA estimation.
   const samplesRef = useRef<Map<string, { t: number; settled: number }[]>>(new Map())
 
@@ -128,9 +143,18 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  const setEmbedLyrics = useCallback((next: boolean) => {
+    setEmbedLyricsState(next)
+    try {
+      localStorage.setItem(LYRICS_KEY, next ? '1' : '0')
+    } catch {
+      // Not persisting is survivable; the session still honours the choice.
+    }
+  }, [])
+
   const start = useCallback(async (url: string, collection: Collection, trackIds?: string[]) => {
     const chosen = qualityRef.current
-    const jobId = await startDownload(url, trackIds, chosen)
+    const jobId = await startDownload(url, trackIds, chosen, lyricsRef.current)
     const wanted = trackIds ? new Set(trackIds) : null
     setEntries((prev) => [
       ...prev,
@@ -254,6 +278,8 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
       setPanelOpen,
       quality,
       setQuality,
+      embedLyrics,
+      setEmbedLyrics,
       start,
       startFromResult,
       dismiss,
@@ -266,6 +292,8 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
       panelOpen,
       quality,
       setQuality,
+      embedLyrics,
+      setEmbedLyrics,
       start,
       startFromResult,
       dismiss,

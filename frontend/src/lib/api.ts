@@ -93,6 +93,20 @@ export interface ArtistDetail {
   albums: SearchResult[]
 }
 
+/** Lyrics for a track. `synced` (time-stamped LRC) is fetched and cached but
+ *  not rendered in v1 — it's a future karaoke view waiting for a client.
+ *
+ *  `status` says which kind of nothing a null `plain` is. `absent` means every
+ *  source answered and none has this song; `unavailable` means they could not
+ *  be reached. Rendering those the same way is what let a blocked source read
+ *  as "this song has no lyrics" — only one of the two is worth a retry. */
+export interface Lyrics {
+  status: 'found' | 'absent' | 'unavailable'
+  plain: string | null
+  synced: string | null
+  source: string | null
+}
+
 const client = axios.create({ baseURL: '/api' })
 
 /** Backend `detail` strings, matched to a dictionary entry. The wire carries a
@@ -184,13 +198,34 @@ export async function startDownload(
   url: string,
   trackIds?: string[],
   quality: Quality = DEFAULT_QUALITY,
+  lyrics: boolean = true,
 ): Promise<string> {
   const { data } = await client.post<{ job_id: string }>('/download', {
     url,
     track_ids: trackIds ?? null,
     quality,
+    lyrics,
   })
   return data.job_id
+}
+
+/** Lyrics for a track, keyed by its catalog metadata. Always 200: nulls mean
+ *  "no lyrics", and the UI renders that as its own state rather than an error.
+ *
+ *  `refresh` is for the retry button. The backend caches an outage for a few
+ *  minutes so an album download doesn't re-pay the lookup on every track, and
+ *  this is the flag that says "a person asked, go and look again anyway". */
+export async function getLyrics(track: Track, refresh = false): Promise<Lyrics> {
+  const { data } = await client.get<Lyrics>('/lyrics', {
+    params: {
+      artist: track.artists.join(', '),
+      title: track.title,
+      album: track.album,
+      duration_ms: track.duration_ms,
+      ...(refresh ? { refresh: 1 } : {}),
+    },
+  })
+  return data
 }
 
 export async function getJob(jobId: string): Promise<Job> {

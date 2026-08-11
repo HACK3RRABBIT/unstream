@@ -2,10 +2,11 @@ import { useMemo, useState, type CSSProperties } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { Archive, Check, Download, Link2, LoaderCircle, Music2, X } from 'lucide-react'
 import clsx from 'clsx'
-import { apiError, jobZipUrl, type Collection, type JobTrack } from '../lib/api'
+import { apiError, jobZipUrl, type Collection, type JobTrack, type Track } from '../lib/api'
 import { useDownloads } from '../lib/downloads'
 import { faNumerals, useMessages, useStartAlign } from '../lib/i18n'
 import { useToast } from '../lib/toast'
+import { LyricsSheet } from './LyricsSheet'
 import { TrackRow } from './TrackRow'
 
 interface Props {
@@ -30,6 +31,8 @@ export function CollectionView({ url, collection }: Props) {
   // Tracks the user ticked to download as one batch.
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [copied, setCopied] = useState(false)
+  // Track whose lyrics sheet is open, if any.
+  const [lyricsTrack, setLyricsTrack] = useState<Track | null>(null)
 
   const copyLink = async () => {
     const share = `${window.location.origin}/?url=${encodeURIComponent(url)}`
@@ -287,6 +290,7 @@ export function CollectionView({ url, collection }: Props) {
               onToggleSelect={
                 collection.tracks.length > 1 ? () => toggleSelect(track.id) : undefined
               }
+              onLyrics={() => setLyricsTrack(track)}
             />
           )
         })}
@@ -301,6 +305,8 @@ export function CollectionView({ url, collection }: Props) {
           )}
         </p>
       )}
+
+      {lyricsTrack && <LyricsSheet track={lyricsTrack} onClose={() => setLyricsTrack(null)} />}
     </section>
   )
 }

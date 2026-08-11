@@ -138,6 +138,9 @@ _ZIP = RateLimiter(ZIPS_PER_HOUR, 3600)
 # Analytics beacons: a real browser sends a handful per session, so this is
 # only here to stop someone inflating the numbers with a loop.
 _COLLECT = RateLimiter(int(os.getenv("RATE_COLLECT_PER_MINUTE", "30")), 60)
+# Lyric lookups are cheap (they hit LRCLIB, not YouTube), but each one can
+# fan out to two requests, so they still get a budget.
+_LYRICS = RateLimiter(int(os.getenv("RATE_LYRICS_PER_MINUTE", "30")), 60)
 # Charged on *failed* admin auth only, so a wrong token a few times is fine
 # but guessing at the token is not.
 _ADMIN = RateLimiter(10, 900)
@@ -149,6 +152,7 @@ _LIMITERS = {
     "file": _FILE,
     "zip": _ZIP,
     "collect": _COLLECT,
+    "lyrics": _LYRICS,
     "admin": _ADMIN,
 }
 
@@ -159,6 +163,7 @@ _MESSAGES = {
     "file": "Too many files saved — wait {retry}s and try again.",
     "zip": "Too many ZIPs — wait {retry}s and try again.",
     "collect": "Too many events — wait {retry}s and try again.",
+    "lyrics": "Too many lyric lookups — wait {retry}s and try again.",
     "admin": "Too many bad tokens — wait {retry}s and try again.",
 }
 

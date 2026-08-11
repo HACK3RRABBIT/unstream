@@ -16,12 +16,12 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
-from . import analytics, deezer, downloader, embed, itunes, jobs, limits, soundcloud, ytdlp
+from . import analytics, deezer, downloader, embed, itunes, jobs, limits, lyrics, soundcloud, ytdlp
 from .models import Collection, ProviderError, SearchResult
 
 # Every provider here is keyless and free — no accounts, no API credentials.
@@ -193,6 +193,7 @@ class DownloadRequest(BaseModel):
     url: str
     track_ids: list[str] | None = None  # None = everything
     quality: str = downloader.DEFAULT_QUALITY  # mp3 bitrate, or "original"
+    lyrics: bool = True  # embed lyrics in the finished files' tags
 
 
 # Served files are no longer always mp3 — "original" keeps the upload's own
@@ -291,6 +292,60 @@ def resolve(body: ResolveRequest, request: Request) -> dict:
     return asdict(collection)
 
 
+@app.get("/api/lyrics")
+def get_lyrics(
+    request: Request,
+    artist: str = Query(max_length=200),
+    title: str = Query(max_length=200),
+    album: str = Query("", max_length=200),
+    duration_ms: int = 0,
+    refresh: bool = False,
+) -> dict:
+    """Lyrics for a track, keyed by its catalog metadata.
+
+    Always 200, with `status` saying which kind of nothing a null is:
+
+      found        we have the words
+      absent       every source answered, none has this song
+      unavailable  the sources could not be reached — ask again later
+
+    `absent` and `unavailable` are kept apart on purpose, and collapsing them
+    hides source outages in the very numbers meant to reveal them — see
+    docs/DESIGN.md. `refresh=1` is what the retry button sends: an outage is
+    cached briefly so an album does not re-pay it per track, and a person
+    asking again is exactly the caller that cache should not apply to.
+
+    `synced` is only ever non-null when `plain` is, so the UI can treat it as
+    a future enhancement and ignore it today.
+
+    The length caps are load-bearing: a miss is cached under a key built from
+    these strings, so without them a caller can write rows of arbitrary size
+    into lyrics.db. No real catalog title comes close to 200.
+    """
+    limits.enforce("lyrics", request)
+    found = None
+    try:
+        found = lyrics.fetch(artist, title, album, duration_ms / 1000, force=refresh)
+        status = "found" if found else "absent"
+    except lyrics.LyricsUnavailable:
+        # Not a 500 — the page still renders — but not "absent" either. The
+        # sources were unreachable, and saying "this song has no lyrics" would
+        # be a claim we cannot make. The client offers a retry on this.
+        status = "unavailable"
+    analytics.record(
+        "lyrics_view",
+        visitor=limits.visitor(request),
+        detail=status,
+        label=f"{artist} - {title}",
+    )
+    return {
+        "status": status,
+        "plain": found.plain if found else None,
+        "synced": found.synced if found else None,
+        "source": found.source if found else None,
+    }
+
+
 @app.post("/api/download")
 def download(body: DownloadRequest, request: Request) -> dict:
     if body.quality not in downloader.QUALITIES:
@@ -329,6 +384,7 @@ def download(body: DownloadRequest, request: Request) -> dict:
         collection.name,
         tracks,
         body.quality,
+        embed_lyrics=body.lyrics,
         owner=client,
         visitor=visitor,
     )
