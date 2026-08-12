@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type RefObject } from 'react'
-import { LoaderCircle, Search } from 'lucide-react'
+import { LoaderCircle, Search, X } from 'lucide-react'
 import clsx from 'clsx'
 import { isCatalogUrl } from '../lib/api'
 import { useDirectional, useLocale, useMessages } from '../lib/i18n'
@@ -7,6 +7,8 @@ import { useDirectional, useLocale, useMessages } from '../lib/i18n'
 interface Props {
   loading: boolean
   onSubmit: (input: string) => void
+  /** Abandons the request `loading` is describing. */
+  onCancel: () => void
   className?: string
   inputRef?: RefObject<HTMLInputElement | null>
   /** Bumped by the parent each time a keyboard shortcut focuses this form —
@@ -14,7 +16,14 @@ interface Props {
   focusPulse?: number
 }
 
-export function UrlForm({ loading, onSubmit, className, inputRef, focusPulse = 0 }: Props) {
+export function UrlForm({
+  loading,
+  onSubmit,
+  onCancel,
+  className,
+  inputRef,
+  focusPulse = 0,
+}: Props) {
   const [input, setInput] = useState('')
   const isUrl = isCatalogUrl(input)
   const m = useMessages()
@@ -90,28 +99,40 @@ export function UrlForm({ loading, onSubmit, className, inputRef, focusPulse = 0
           dir === 'rtl' ? 'text-right placeholder-shown:[direction:rtl]' : 'text-left',
         )}
       />
-      <button
-        type="submit"
-        disabled={loading || !input.trim()}
-        className={clsx(
-          'group flex shrink-0 items-center gap-1.5 rounded-btn px-4 py-2.5 text-mini font-medium',
-          'bg-lime-flash text-lime-ink transition duration-200 active:scale-[0.98]',
-          'hover:bg-lime-soft',
-          'disabled:cursor-not-allowed disabled:opacity-40',
-        )}
-      >
-        {loading ? (
-          <>
-            <LoaderCircle className="size-4 animate-spin" />
-            {isUrl ? m.form.opening : m.form.searching}
-          </>
-        ) : (
-          <>
-            {isUrl ? m.form.open : m.form.search}
-            <Forward className={clsx('size-4 transition-transform duration-200', forwardNudge)} />
-          </>
-        )}
-      </button>
+      {/* While a request is in flight the button's footprint becomes a status
+          pill with its own ✕. The pill is not the button: a search fans out to
+          four providers and can sit there for twenty seconds, so stopping it
+          needs a target of its own rather than a second meaning for the control
+          that started it. */}
+      {loading ? (
+        <div className="flex shrink-0 items-center gap-1.5 rounded-btn border border-ink-700 bg-ink-800 py-1 pe-1 ps-3 text-mini font-medium text-ink-300">
+          <LoaderCircle className="size-4 animate-spin text-lime-flash" />
+          <span>{isUrl ? m.form.opening : m.form.searching}</span>
+          <button
+            type="button"
+            onClick={onCancel}
+            title={isUrl ? m.form.cancelOpen : m.form.cancelSearch}
+            aria-label={isUrl ? m.form.cancelOpen : m.form.cancelSearch}
+            className="tap-target grid size-7 place-items-center rounded-ctl text-ink-400 transition duration-200 hover:bg-ink-700 hover:text-ink-100 active:scale-90"
+          >
+            <X className="size-3.5" />
+          </button>
+        </div>
+      ) : (
+        <button
+          type="submit"
+          disabled={!input.trim()}
+          className={clsx(
+            'group flex shrink-0 items-center gap-1.5 rounded-btn px-4 py-2.5 text-mini font-medium',
+            'bg-lime-flash text-lime-ink transition duration-200 active:scale-[0.98]',
+            'hover:bg-lime-soft',
+            'disabled:cursor-not-allowed disabled:opacity-40',
+          )}
+        >
+          {isUrl ? m.form.open : m.form.search}
+          <Forward className={clsx('size-4 transition-transform duration-200', forwardNudge)} />
+        </button>
+      )}
     </form>
   )
 }

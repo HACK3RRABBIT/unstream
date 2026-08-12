@@ -72,6 +72,8 @@ const fa: Messages = {
     searching: 'در حال جستجو…',
     open: 'باز کن',
     search: 'جستجو',
+    cancelSearch: 'لغو جستجو',
+    cancelOpen: 'لغو باز کردن لینک',
   },
 
   recent: {
@@ -234,6 +236,10 @@ const fa: Messages = {
     downloadFileLong: (title, ext) => `دانلود ${title} با فرمت ${ext}`,
     failed: 'ناموفق',
     deleted: 'پاک شده',
+    cancel: 'لغو این دانلود',
+    cancelling: 'در حال لغو…',
+    cancelled: 'لغو شد',
+    cancelledCount: (n) => `${fd(n)} لغو شده`,
   },
 
   share: {
@@ -270,6 +276,8 @@ const fa: Messages = {
     partial: (name, done, failed) =>
       `${name} — ${fd(done)} آهنگ آماده شد، ${fd(failed)} تا دانلود نشد`,
     failed: (name) => `${name} — دانلود انجام نشد`,
+    cancelled: (name, done) =>
+      done > 0 ? `${name} — لغو شد، ${fd(done)} آهنگ آماده‌ی ذخیره‌ست` : `${name} — دانلود لغو شد`,
     linkDetected: 'لینک پیدا شد — در حال باز کردن…',
     newVersion: 'نسخه‌ی جدید آنستریم اومده',
     refresh: 'رفرش',

@@ -31,6 +31,7 @@ from mutagen.flac import Picture
 from mutagen.id3 import APIC, ID3, TALB, TDRC, TIT2, TPE1, TPE2, TRCK, USLT
 from mutagen.mp4 import MP4, MP4Cover
 from yt_dlp import YoutubeDL
+from yt_dlp.utils import DownloadCancelled
 
 from . import analytics, lyrics
 from .models import Track
@@ -55,6 +56,20 @@ _AUDIO_EXTS = {".webm", ".m4a", ".opus", ".ogg", ".aac", ".wav", ".flac", ".mp4"
 
 class DownloadError(Exception):
     pass
+
+
+class Cancelled(Exception):
+    """The caller asked for this download to stop. Not a failure.
+
+    Its own type rather than a DownloadError, because the retry loop below
+    treats every failure as worth another attempt — and a cancellation is the
+    one exception that must travel straight out.
+    """
+
+
+def _stop_if_cancelled(should_cancel: Callable[[], bool] | None) -> None:
+    if should_cancel and should_cancel():
+        raise Cancelled()
 
 
 def safe_filename(name: str) -> str:
@@ -185,14 +200,23 @@ def download_audio(
     dest: Path,
     on_progress: Callable[[float], None] | None = None,
     quality: str = DEFAULT_QUALITY,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> Path:
     """Download `url` into `dest` (a path without extension) at `quality`.
 
     Returns the audio file actually produced — an mp3 for a bitrate, or the
     upload's own m4a/opus for "original".
+
+    `should_cancel` is polled from the progress hook, which is the only thread
+    of control the caller has while bytes are moving; a transfer is otherwise
+    uninterruptible until the whole file is down.
     """
 
     def hook(status: dict) -> None:
+        # yt-dlp's own signal for "stop, this was called off" — anything else
+        # raised here is reported as a download failure and retried.
+        if should_cancel and should_cancel():
+            raise DownloadCancelled()
         if on_progress and status.get("status") == "downloading":
             total = status.get("total_bytes") or status.get("total_bytes_estimate")
             if total:
@@ -218,8 +242,14 @@ def download_audio(
             }
         ]
 
-    with YoutubeDL(opts) as ydl:
-        ydl.download([url])
+    try:
+        with YoutubeDL(opts) as ydl:
+            ydl.download([url])
+    except DownloadCancelled as exc:
+        raise Cancelled() from exc
+    # A postprocessor runs after the last progress hook fires, so the encode
+    # of a file nobody wants any more can only be caught here.
+    _stop_if_cancelled(should_cancel)
 
     if quality == ORIGINAL:
         return _keep_original(dest)
@@ -385,6 +415,7 @@ def download_track(
     quality: str = DEFAULT_QUALITY,
     on_source: Callable[[str, int], None] | None = None,
     embed_lyrics: bool = True,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> Path:
     """Full pipeline for one track. Reports (stage, fraction) via callback.
 
@@ -400,6 +431,12 @@ def download_track(
     `embed_lyrics` toggles the best-effort lyric lookup that runs during
     tagging; its failure is swallowed by `_find_lyrics`, so lyrics can never
     make a track fail that would otherwise download fine.
+
+    `should_cancel` makes the whole pipeline abandonable: it is polled between
+    attempts and while bytes move, and raises `Cancelled` rather than a
+    `DownloadError`, so the retry loop below cannot mistake being called off
+    for a broken upload and go looking for another one. Partial files are
+    cleaned up on the way out — a cancelled download leaves nothing behind.
 
     Attempt order: the track's own source page if it has one, then YouTube
     search (excluding failed uploads), then SoundCloud as the last resort.
@@ -421,6 +458,10 @@ def download_track(
             time.sleep(2 * attempt)
         url = None
         try:
+            # Inside the try, so a cancellation between attempts leaves through
+            # the same cleanup as one mid-transfer: the attempt that just failed
+            # has partials of its own.
+            _stop_if_cancelled(should_cancel)
             on_progress("searching", 0.0)
             if attempt == 0 and track.source_url:
                 url = track.source_url
@@ -434,12 +475,22 @@ def download_track(
             _clean_partials(dest)
             on_progress("downloading", 0.0)
             audio = download_audio(
-                url, dest, lambda frac: on_progress("downloading", frac), quality
+                url,
+                dest,
+                lambda frac: on_progress("downloading", frac),
+                quality,
+                should_cancel,
             )
 
             on_progress("tagging", 1.0)
             embed_tags(audio, track, _find_lyrics(track) if embed_lyrics else None)
             return audio
+        except Cancelled:
+            # Whatever came down is half a song nobody asked to keep, and the
+            # stem is reused verbatim on a later download of the same track —
+            # a leftover .part is what makes yt-dlp resume into a broken file.
+            _clean_partials(dest)
+            raise
         except Exception as exc:
             last_error = exc
             if url:

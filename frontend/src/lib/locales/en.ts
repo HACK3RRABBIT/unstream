@@ -85,6 +85,8 @@ const en = {
     searching: 'Searching…',
     open: 'Open',
     search: 'Search',
+    cancelSearch: 'Stop searching',
+    cancelOpen: 'Stop opening this link',
   },
 
   recent: {
@@ -264,6 +266,12 @@ const en = {
     downloadFileLong: (title: string, ext: string) => `Download ${title} as ${ext}`,
     failed: 'Failed',
     deleted: 'Deleted',
+    /** Stopping a job in progress. Whatever has already finished is kept, so
+     *  this says "stop" rather than anything that sounds like undoing it. */
+    cancel: 'Stop this download',
+    cancelling: 'Stopping…',
+    cancelled: 'Stopped',
+    cancelledCount: (n: number) => `${n} stopped`,
   },
 
   share: {
@@ -301,6 +309,10 @@ const en = {
     partial: (name: string, done: number, failed: number) =>
       `${name} — ${done} ready, ${failed} failed to download`,
     failed: (name: string) => `${name} — download failed`,
+    /** After a cancel. `done` is what had already landed and is still there to
+     *  save, which is the only part of this the user doesn't already know. */
+    cancelled: (name: string, done: number) =>
+      done > 0 ? `${name} — stopped, ${done} still ready to save` : `${name} — download stopped`,
     linkDetected: 'Link detected — opening…',
     newVersion: 'A new version of Unstream is available',
     refresh: 'Refresh',
