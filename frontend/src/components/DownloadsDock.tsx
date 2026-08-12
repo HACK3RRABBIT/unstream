@@ -4,15 +4,25 @@ import {
   ArrowDownToLine,
   Check,
   ChevronDown,
+  CircleSlash,
+  CircleStop,
   Download,
   LoaderCircle,
   TriangleAlert,
   X,
 } from 'lucide-react'
 import clsx from 'clsx'
-import { jobZipUrl, trackFileUrl, qualityLabel, type Job, type JobTrack } from '../lib/api'
+import {
+  apiError,
+  jobZipUrl,
+  trackFileUrl,
+  qualityLabel,
+  type Job,
+  type JobTrack,
+} from '../lib/api'
 import { useDownloads, type DownloadEntry } from '../lib/downloads'
 import { faNumerals, useMessages, useStartAlign } from '../lib/i18n'
+import { useToast } from '../lib/toast'
 import { ShareTrack } from './ShareTrack'
 
 /** Working, but with no percentage to report — these get a travelling band
@@ -57,6 +67,8 @@ function TrackLine({
         <Check className="size-3.5 shrink-0 animate-pop text-lime-flash" />
       ) : state.status === 'error' ? (
         <TriangleAlert className="size-3.5 shrink-0 text-danger" />
+      ) : state.status === 'cancelled' ? (
+        <CircleSlash className="size-3.5 shrink-0 text-ink-400" />
       ) : state.status === 'queued' ? (
         <span className="grid size-3.5 shrink-0 place-items-center">
           <span className="size-1.5 rounded-full bg-ink-600" />
@@ -67,7 +79,9 @@ function TrackLine({
       <p
         className={clsx(
           'min-w-0 flex-1 truncate text-mini',
-          state.status === 'error' ? 'text-ink-400' : 'text-ink-100',
+          state.status === 'error' || state.status === 'cancelled'
+            ? 'text-ink-400'
+            : 'text-ink-100',
           faNumerals(title),
           startAlign,
         )}
@@ -98,6 +112,8 @@ function TrackLine({
         </>
       ) : state.status === 'error' ? (
         <span className="text-xs text-danger">{m.dock.failed}</span>
+      ) : state.status === 'cancelled' ? (
+        <span className="text-xs text-ink-400">{m.dock.cancelled}</span>
       ) : entry.expired ? (
         <span className="text-xs text-ink-400">{m.dock.deleted}</span>
       ) : (
@@ -132,19 +148,31 @@ function TrackLine({
 }
 
 function JobCard({ entry, capped = true }: { entry: DownloadEntry; capped?: boolean }) {
-  const { dismiss } = useDownloads()
+  const { cancel, dismiss } = useDownloads()
+  const { push } = useToast()
   const m = useMessages()
   const startAlign = useStartAlign()
   const job = entry.job
   const done = job?.done ?? 0
   const failed = job?.failed ?? 0
+  const stopped = job?.cancelled ?? 0
   const total = job?.total ?? entry.tracks.length
   const expired = entry.expired === true
   const finished = expired || (job?.finished ?? false)
   const inFlight = job ? inFlightFraction(job) : 0
+  // Cancelled tracks are settled but nothing came of them, so counting them
+  // toward the bar would fill it on the way to stopping.
   const fraction = total ? Math.min(1, (done + failed + inFlight) / total) : 0
   // ZIP is for batches — a single song is just the mp3 link on its row.
   const showZip = total > 1 && done > 0 && !expired
+
+  const onCancel = async () => {
+    try {
+      await cancel(entry.jobId)
+    } catch (err) {
+      push(apiError(err, m), 'error')
+    }
+  }
 
   // With one track, this bar and the row's own hairline are the same number
   // drawn twice. The card keeps it — it is the wider of the two and the one
@@ -185,6 +213,7 @@ function JobCard({ entry, capped = true }: { entry: DownloadEntry; capped?: bool
               <>
                 {m.dock.progress(done, total)}
                 {failed > 0 && <span className="text-danger"> · {m.dock.failedCount(failed)}</span>}
+                {stopped > 0 && <span> · {m.dock.cancelledCount(stopped)}</span>}
               </>
             ) : (
               <>
@@ -218,13 +247,30 @@ function JobCard({ entry, capped = true }: { entry: DownloadEntry; capped?: bool
             <Archive className="size-3.5" />
           </a>
         )}
-        {finished && (
+        {finished ? (
           <button
             onClick={() => dismiss(entry.jobId)}
             title={m.dock.remove}
             className="tap-target grid size-7 shrink-0 place-items-center rounded-ctl text-ink-400 transition hover:bg-ink-800 hover:text-ink-100"
           >
             <X className="size-3.5" />
+          </button>
+        ) : (
+          // Its own glyph, and not the X the finished card uses: the two sit in
+          // the same corner, and "remove this row" landing on "throw away the
+          // download" because the job hadn't finished yet is not recoverable.
+          <button
+            onClick={onCancel}
+            disabled={entry.cancelling}
+            title={entry.cancelling ? m.dock.cancelling : m.dock.cancel}
+            aria-label={entry.cancelling ? m.dock.cancelling : m.dock.cancel}
+            className="tap-target grid size-7 shrink-0 place-items-center rounded-ctl text-ink-400 transition hover:bg-ink-800 hover:text-danger disabled:opacity-50 disabled:hover:text-ink-400"
+          >
+            {entry.cancelling ? (
+              <LoaderCircle className="size-3.5 animate-spin" />
+            ) : (
+              <CircleStop className="size-3.5" />
+            )}
           </button>
         )}
       </div>

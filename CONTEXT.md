@@ -34,6 +34,12 @@ _Avoid_: بارگیری، دریافت
 Finding tracks, albums, artists or playlists by free text.
 _Avoid_: سرچ، پیدا کردن
 
+**لغو** (Cancel):
+Stopping a download that is already running, or a search still being waited on.
+One word for both, even though only the download is really called off — what
+the person means is the same in each case.
+_Avoid_: کنسل، توقف، متوقف کردن
+
 **کیفیت** (Audio quality):
 The bitrate chosen for a download.
 _Avoid_: کوالیتی

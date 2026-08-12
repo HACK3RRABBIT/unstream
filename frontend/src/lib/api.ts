@@ -21,8 +21,10 @@ export interface Collection {
   tracks: Track[]
 }
 
+/** `cancelled` is terminal like `done` and `error`, and is not a failure: it
+ *  means someone stopped this job. Mirrors the statuses in backend/app/jobs.py. */
 export type TrackStatus =
-  'queued' | 'searching' | 'downloading' | 'tagging' | 'retrying' | 'done' | 'error'
+  'queued' | 'searching' | 'downloading' | 'tagging' | 'retrying' | 'done' | 'error' | 'cancelled'
 
 export interface JobTrack {
   id: string
@@ -40,6 +42,9 @@ export interface Job {
   tracks: JobTrack[]
   done: number
   failed: number
+  /** Tracks stopped by a cancel. Counts toward `finished` without counting as
+   *  a failure, so a cancelled job is not reported as a broken one. */
+  cancelled: number
   total: number
   finished: boolean
 }
@@ -165,9 +170,19 @@ const URL_PATTERNS = [
 
 export const isCatalogUrl = (input: string) => URL_PATTERNS.some((re) => re.test(input))
 
-export async function searchCatalog(query: string, page = 0): Promise<SearchPage> {
+/** True when a request ended because we aborted it, not because it failed.
+ *  Everything that takes a `signal` below can end this way, and a cancelled
+ *  request has no error to report — the user is the one who stopped it. */
+export const isCanceled = (err: unknown): boolean => axios.isCancel(err)
+
+export async function searchCatalog(
+  query: string,
+  page = 0,
+  signal?: AbortSignal,
+): Promise<SearchPage> {
   const { data } = await client.get<SearchPage>('/search', {
     params: { q: query, page },
+    signal,
   })
   return data
 }
@@ -184,13 +199,13 @@ export function mergeResults(current: SearchResult[], incoming: SearchResult[]):
   return fresh.length > 0 ? [...current, ...fresh] : current
 }
 
-export async function getArtist(id: string): Promise<ArtistDetail> {
-  const { data } = await client.get<ArtistDetail>(`/artist/${id}`)
+export async function getArtist(id: string, signal?: AbortSignal): Promise<ArtistDetail> {
+  const { data } = await client.get<ArtistDetail>(`/artist/${id}`, { signal })
   return data
 }
 
-export async function resolveUrl(url: string): Promise<Collection> {
-  const { data } = await client.post<Collection>('/resolve', { url })
+export async function resolveUrl(url: string, signal?: AbortSignal): Promise<Collection> {
+  const { data } = await client.post<Collection>('/resolve', { url }, { signal })
   return data
 }
 
@@ -241,6 +256,14 @@ export async function getJobs(jobIds: string[]): Promise<Job[]> {
     params: { ids: jobIds.join(',') },
   })
   return data.jobs
+}
+
+/** Stop a running job. Answers with the job's new state — every unfinished
+ *  track already `cancelled` — so the dock doesn't have to wait for the next
+ *  poll to stop claiming the download is still going. */
+export async function cancelJob(jobId: string): Promise<Job> {
+  const { data } = await client.post<Job>(`/jobs/${jobId}/cancel`)
+  return data
 }
 
 export const trackFileUrl = (jobId: string, trackId: string) =>

@@ -419,6 +419,30 @@ def job_status(job_id: str) -> dict:
     return job.as_dict()
 
 
+@app.post("/api/jobs/{job_id}/cancel")
+def cancel_job(job_id: str, request: Request) -> dict:
+    """Stop a running job and answer with its new state.
+
+    Unmetered, like the polling routes and for the same reasons: the job id is
+    the capability (it is unguessable, and holding one is the whole of the
+    authorization model here), the call is idempotent, and it only ever takes
+    work away from the process. It also frees a slot against MAX_ACTIVE_JOBS
+    immediately, which is the point for anyone who queued the wrong album.
+    """
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Unknown job")
+    stopped = jobs.cancel(job)
+    analytics.record(
+        "download_cancel",
+        visitor=limits.visitor(request),
+        detail=job.quality,
+        label=job.name,
+        value=stopped,
+    )
+    return job.as_dict()
+
+
 @app.get("/api/jobs/{job_id}/tracks/{track_id}/file")
 def track_file(job_id: str, track_id: str, request: Request) -> FileResponse:
     limits.enforce("file", request)

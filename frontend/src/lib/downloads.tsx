@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from 'react'
 import {
+  cancelJob,
   DEFAULT_QUALITY,
   getJobs,
   isQuality,
@@ -45,6 +46,10 @@ export interface DownloadEntry {
   /** The backend no longer knows this job: swept past its TTL, or lost to a
    *  restart. Last known state is kept, but its download links are dead. */
   expired?: boolean
+  /** A cancel is in flight. Only ever true for as long as one request takes —
+   *  `storedEntries` clears it on restore, or a tab closed mid-cancel would
+   *  come back with a button that never re-enables. */
+  cancelling?: boolean
 }
 
 interface DownloadsContextValue {
@@ -61,6 +66,8 @@ interface DownloadsContextValue {
   start: (url: string, collection: Collection, trackIds?: string[]) => Promise<void>
   /** One-click download of a single search result: resolve, then queue. */
   startFromResult: (result: SearchResult) => Promise<void>
+  /** Stop a running job. Rejects if the server wouldn't; callers report it. */
+  cancel: (jobId: string) => Promise<void>
   dismiss: (jobId: string) => void
   /** Latest entry started from this URL — lets CollectionView show inline progress. */
   entryForUrl: (url: string) => DownloadEntry | undefined
@@ -109,9 +116,17 @@ function storedEntries(): DownloadEntry[] {
     const parsed: unknown = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
     const cutoff = Date.now() - JOBS_TTL_MS
-    return (parsed as DownloadEntry[]).filter(
-      (e) =>
-        e && typeof e.jobId === 'string' && typeof e.startedAt === 'number' && e.startedAt > cutoff,
+    return (
+      (parsed as DownloadEntry[])
+        .filter(
+          (e) =>
+            e &&
+            typeof e.jobId === 'string' &&
+            typeof e.startedAt === 'number' &&
+            e.startedAt > cutoff,
+        )
+        // A request cannot survive the page it was made from.
+        .map((e) => (e.cancelling ? { ...e, cancelling: false } : e))
     )
   } catch {
     return [] // storage disabled, or a shape from an older release
@@ -190,6 +205,27 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
       await start(result.url, collection)
     },
     [start],
+  )
+
+  const patch = useCallback((jobId: string, changes: Partial<DownloadEntry>) => {
+    setEntries((prev) => prev.map((e) => (e.jobId === jobId ? { ...e, ...changes } : e)))
+  }, [])
+
+  const cancel = useCallback(
+    async (jobId: string) => {
+      patch(jobId, { cancelling: true })
+      try {
+        // The response is the job with everything unfinished already marked
+        // cancelled, so the card settles on the click rather than on the tick.
+        const job = await cancelJob(jobId)
+        samplesRef.current.delete(jobId)
+        patch(jobId, { job, etaSeconds: null, cancelling: false })
+      } catch (err) {
+        patch(jobId, { cancelling: false })
+        throw err
+      }
+    },
+    [patch],
   )
 
   const dismiss = useCallback((jobId: string) => {
@@ -282,6 +318,7 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
       setEmbedLyrics,
       start,
       startFromResult,
+      cancel,
       dismiss,
       entryForUrl,
       entriesForUrl,
@@ -296,6 +333,7 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
       setEmbedLyrics,
       start,
       startFromResult,
+      cancel,
       dismiss,
       entryForUrl,
       entriesForUrl,

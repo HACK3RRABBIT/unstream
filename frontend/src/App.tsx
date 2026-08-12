@@ -5,6 +5,7 @@ import clsx from 'clsx'
 import {
   apiError,
   getArtist,
+  isCanceled,
   isCatalogUrl,
   mergeResults,
   resolveUrl,
@@ -96,7 +97,11 @@ function DownloadNotifier() {
       if (finished && was === false) {
         const done = entry.job!.done
         const failed = entry.job!.failed
-        if (done > 0 && failed === 0) {
+        // Someone stopped this one. It is not an outcome to be told about in
+        // the language of success or failure — they know, they asked.
+        if (entry.job!.cancelled > 0) {
+          push(m.notify.cancelled(entry.name, done), 'info')
+        } else if (done > 0 && failed === 0) {
           push(m.notify.ready(entry.name, done), 'success')
         } else if (done > 0) {
           push(m.notify.partial(entry.name, done, failed), 'info')
@@ -120,11 +125,29 @@ function Shell() {
 
   const { push } = useToast()
 
-  const resolve = useMutation({ mutationFn: resolveUrl })
+  // One controller for whatever the page is currently waiting on. A search
+  // fans out to four providers for up to 20 seconds, and there is no way to
+  // call that off server-side — so cancelling means dropping our end of it and
+  // giving the person their page back, which is what they are asking for.
+  // Starting anything new aborts the last one for the same reason.
+  const pendingRef = useRef<AbortController | null>(null)
+  const nextSignal = () => {
+    pendingRef.current?.abort()
+    const controller = new AbortController()
+    pendingRef.current = controller
+    return controller.signal
+  }
+  const cancelPending = useCallback(() => {
+    pendingRef.current?.abort()
+    pendingRef.current = null
+  }, [])
+
+  const resolve = useMutation({ mutationFn: (url: string) => resolveUrl(url, nextSignal()) })
   const search = useMutation({
-    mutationFn: ({ query, page }: { query: string; page?: number }) => searchCatalog(query, page),
+    mutationFn: ({ query, page }: { query: string; page?: number }) =>
+      searchCatalog(query, page, nextSignal()),
   })
-  const artist = useMutation({ mutationFn: getArtist })
+  const artist = useMutation({ mutationFn: (id: string) => getArtist(id, nextSignal()) })
 
   // Infinite scroll: appended pages must not blank the results already on
   // screen, so they never go through the `search` mutation's pending state.
@@ -229,6 +252,9 @@ function Shell() {
   goBackRef.current = goBack
   const pushRef = useRef(push)
   pushRef.current = push
+  // Assigned below, once the mutations have been asked; the shortcut handler
+  // only reads it when a key is actually pressed.
+  const busyRef = useRef(false)
   // Same reason as `push`: the global paste/update listeners are mounted once,
   // but must announce in whatever language is current when they fire.
   const mRef = useRef(m)
@@ -358,6 +384,14 @@ function Shell() {
         return
       }
       if (e.key === 'Escape') {
+        // Ahead of the blur, and of going back: with a request in flight, the
+        // thing on screen the user wants stopped is the request. The search box
+        // still holds focus from the Enter that started it, so checking for a
+        // typing target first would spend the key on a blur every time.
+        if (busyRef.current) {
+          cancelPending()
+          return
+        }
         if (isTypingTarget(e.target)) {
           ;(e.target as HTMLElement).blur()
           return
@@ -376,10 +410,15 @@ function Shell() {
       document.removeEventListener('paste', onPaste)
       window.removeEventListener('keydown', onKey)
     }
-  }, [])
+  }, [cancelPending])
 
   const busy = resolve.isPending || search.isPending || artist.isPending
-  const error = resolve.error ?? search.error ?? artist.error
+  busyRef.current = busy
+  // An aborted request lands in a mutation's error slot like any other
+  // rejection. Filtered rather than reset, because the abort and the rejection
+  // are not in the same tick — resetting on the click would be undone by the
+  // error arriving after it.
+  const error = [resolve.error, search.error, artist.error].find((e) => e && !isCanceled(e)) ?? null
   const view = stack.at(-1)
   const previous = stack.at(-2)
   // Nothing asked for yet: the only time the hero earns its screen space.
@@ -526,6 +565,7 @@ function Shell() {
               )}
               loading={busy}
               onSubmit={handleSubmit}
+              onCancel={cancelPending}
               inputRef={inputRef}
               focusPulse={focusPulse}
             />

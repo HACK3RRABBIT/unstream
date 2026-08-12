@@ -73,6 +73,14 @@ Lyrics are **nice-to-have, like cover art**: the lookup is wrapped so a failed f
 
 Jobs live in memory, not a database. A restart loses in-flight progress and that is an accepted trade: the files on disk are the durable artifact, and a queue would be a second stateful service for a project whose premise is that it needs none.
 
+### Stopping a download, and "stopping" a search
+
+The two cancels in the UI are not the same mechanism, because only one of them has anything to cancel.
+
+A **download** is ours: `jobs.py` owns the threads, so `POST /api/jobs/{id}/cancel` sets a flag the workers actually read — between retry attempts, and from inside yt-dlp's progress hook, which is the only place a transfer can be interrupted while bytes are moving. Three details are load-bearing. The cancellation travels as its own exception type, or the retry loop in `downloader.py` reads being called off as a broken upload and goes looking for three more; the status is written by `cancel()` rather than left to the workers, because a track stuck in a provider search can take seconds to notice and a button with no visible effect for that long reads as broken; and anything a worker is still holding when it does notice is deleted, files included, so the counts the job reported stay true. Tracks that had already finished keep their files — cancelling an album halfway is "stop here", not "undo".
+
+A **search** is not ours. It fans out to four providers inside one synchronous request, and there is no handle to call that off — so cancelling drops our end of it and gives the person their page back, which is the whole of what they were asking for. The work finishes into a response nobody reads. Both wear the same word in the UI («لغو», "stop") because the difference is ours, not theirs: what someone means by cancelling is that they want the screen back.
+
 <a id="farsi-only"></a>
 
 ## Farsi first, with a language layer
