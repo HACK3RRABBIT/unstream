@@ -73,7 +73,7 @@ Streaming services are DRM-protected, so nothing is downloaded from them directl
    Search fans out to four of these in parallel and merges the results, deduped by name + artist. There is deliberately no Spotify Web API integration — since 2025 it requires the app owner to hold an active Premium subscription, and this project stays free and keyless.
 
 2. **yt-dlp** finds the audio: tracks already pointing at a YouTube/SoundCloud page download directly; everything else is searched (`ytsearch8:` on "artists - title") picking the result whose duration is closest to the catalog's, which rejects live versions and hour-long mixes. Retries exclude broken uploads, and the last attempt searches SoundCloud instead of YouTube.
-3. The best audio stream is downloaded at the **quality** you picked — **ffmpeg** encodes mp3 at 128, 192 (default) or 320 kbps. **Original** skips the encode and keeps the upload's own stream (m4a, or opus remuxed out of webm so it can carry tags) — best fidelity, since re-encoding an already-lossy source can only lose more.
+3. The best audio stream is downloaded at the **quality** you picked — **ffmpeg** encodes mp3 at 128, 192 (default) or 320 kbps. **Original** skips the encode and keeps the upload's own stream — copy-codec remuxed into a pure audio file (opus out of webm, m4a out of a combined mp4) so it can carry tags and never arrives as a music video — best fidelity, since re-encoding an already-lossy source can only lose more.
 4. **mutagen** embeds tags and cover art (and lyrics, when the user wants them and a source has them), as ID3, MP4 atoms or Vorbis comments depending on what came out.
 
 ```
