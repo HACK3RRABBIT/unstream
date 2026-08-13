@@ -65,7 +65,11 @@ ZIPS_PER_HOUR = int(os.getenv("RATE_ZIPS_PER_HOUR", "30"))
 # off switch should imply, since these cost threads and memory rather than
 # somebody else's fair share.
 MAX_ACTIVE_JOBS = int(os.getenv("MAX_ACTIVE_JOBS_PER_CLIENT", "3"))
-MAX_TRACKS_PER_JOB = int(os.getenv("MAX_TRACKS_PER_JOB", "100"))
+# A Spotify playlist resolves in full now, so the per-job ceiling has to sit
+# above the embed's 100-row cap or "download all" on a long playlist would
+# resolve everything and then refuse to download it. Downloads still run on a
+# few threads and a playlist of this size is a bounded, visible unit of work.
+MAX_TRACKS_PER_JOB = int(os.getenv("MAX_TRACKS_PER_JOB", "500"))
 
 
 def client_ip(request: Request) -> str:

@@ -63,7 +63,7 @@ macOS and Windows can skip that — Docker Desktop handles it.
 Streaming services are DRM-protected, so nothing is downloaded from them directly. Instead:
 
 1. **Metadata** comes from free, keyless providers:
-   - **Spotify embed pages** (`open.spotify.com/embed/…`) — the public iframe widget ships full track lists as JSON. Used for pasted Spotify URLs.
+   - **Spotify embed pages** (`open.spotify.com/embed/…`) — the public iframe widget ships track lists as JSON. Used for pasted Spotify URLs; playlists longer than the widget's 100-row cap have their tail paged out of `api-partner.spotify.com/pathfinder`, the GraphQL endpoint the web player itself uses, with the anonymous token the widget mints.
    - **Deezer public API** — keyless; powers search (songs, albums, **artists**, playlists), full artist discographies, and Deezer URLs.
    - **iTunes Search API** — keyless; adds Apple Music coverage to search and resolves `music.apple.com` URLs.
    - **SoundCloud web API** — the site's own `api-v2` endpoints, using a client id scraped from its public JS bundles (the same trick yt-dlp uses). Full search parity: tracks, people, albums and playlists. Go-only (DRM) tracks are filtered out.
