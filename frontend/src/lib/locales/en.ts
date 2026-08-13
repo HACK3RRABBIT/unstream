@@ -98,6 +98,55 @@ const en = {
     back: 'Back',
     backToResults: 'Back to results',
     backToArtist: 'Back to artist',
+    backToAnime: 'Back to results',
+    backToSeason: 'Back to seasons',
+  },
+
+  tabs: {
+    music: 'Music',
+    anime: 'Anime',
+  },
+
+  anime: {
+    searchPlaceholder: 'Search anime by name…',
+    searchLabel: 'Search anime',
+    noResultsBefore: 'No anime found for',
+    noResultsAfter: '',
+    count: (n: number, more: boolean) => (more ? `${n} results` : `${n} results`),
+    series: 'Series',
+    movies: 'Movies',
+    seasons: 'Seasons',
+    season: (n: number) => `Season ${n}`,
+    episodes: (n: number) => (n > 0 ? `${n} episodes` : 'Episodes unknown'),
+    airingAvailable: (available: number, planned: number) =>
+      `airing · ${available} of ${planned} episodes`,
+    episodeLabel: (n: number) => `Episode ${n}`,
+    downloadSeason: 'Download season',
+    downloadSelected: 'Download selected',
+    downloadEpisode: 'Download this episode',
+    downloadFor: (n: number) => `Download episode ${n}`,
+    selectAll: 'Select all',
+    deselectAll: 'Deselect all',
+    clearSelection: 'Clear selection',
+    clearAll: 'Clear all',
+    selectedOf: (selected: number, total: number) => `${selected} of ${total} selected`,
+    starting: 'Starting…',
+    queuedSeason: (name: string) => `Queued ${name}`,
+    queuedSelected: (n: number) => `${n} episodes added to the queue`,
+    queuedOne: () => `Episode added to the queue`,
+    finished: (done: number, total: number) => `${done} of ${total} episodes downloaded`,
+    failedCount: (n: number) => `${n} failed`,
+    loginNeeded:
+      'Telegram is configured but not logged in. Run the one-time login to download from the bot.',
+    provider: {
+      telegram: 'Telegram',
+      hianime: 'Streaming site',
+    },
+    quality: {
+      label: 'Video quality',
+      original: 'Original',
+      hint: 'The resolution every anime download starts at.',
+    },
   },
 
   shared: {
@@ -258,6 +307,7 @@ const en = {
     },
     originalQuality: 'Downloaded without re-encoding',
     encodedQuality: (kbps: string) => `Encoded at ${kbps} kbps`,
+    videoQuality: 'Video resolution',
     zip: 'Download everything as a ZIP',
     zipLong: 'Download all tracks as a ZIP',
     remove: 'Remove from the list',

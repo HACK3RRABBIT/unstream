@@ -441,6 +441,13 @@ def download_track(
     Attempt order: the track's own source page if it has one, then YouTube
     search (excluding failed uploads), then SoundCloud as the last resort.
     """
+    if track.media == "video":
+        # Anime episodes take a different pipeline (provider plan -> mp4 + subs).
+        # Imported here so this module never imports the anime package at load;
+        # the local import also avoids a cycle (anime.downloader imports us).
+        from .anime.downloader import download_video_track
+
+        return download_video_track(track, out_dir, on_progress, quality, filename, should_cancel)
     if quality not in QUALITIES:
         raise DownloadError(f"Unsupported quality: {quality}")
     out_dir.mkdir(parents=True, exist_ok=True)

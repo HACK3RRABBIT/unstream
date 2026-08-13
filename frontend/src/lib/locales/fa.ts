@@ -85,6 +85,55 @@ const fa: Messages = {
     back: 'برگشت',
     backToResults: 'برگشت به نتایج',
     backToArtist: 'برگشت به آرتیست',
+    backToAnime: 'برگشت به نتایج',
+    backToSeason: 'برگشت به فصل‌ها',
+  },
+
+  tabs: {
+    music: 'موزیک',
+    anime: 'انیمه',
+  },
+
+  anime: {
+    searchPlaceholder: 'جستجوی انیمه با نام…',
+    searchLabel: 'جستجوی انیمه',
+    noResultsBefore: 'انیمه‌ای برای',
+    noResultsAfter: 'پیدا نشد',
+    count: (n: number, more: boolean) => (more ? `${fd(n)} نتیجه` : `${fd(n)} نتیجه`),
+    series: 'سری‌ها',
+    movies: 'فیلم‌ها',
+    seasons: 'فصل‌ها',
+    season: (n: number) => `فصل ${fd(n)}`,
+    episodes: (n: number) => (n > 0 ? `${fd(n)} قسمت` : 'تعداد قسمت نامشخص'),
+    airingAvailable: (available: number, planned: number) =>
+      `در حال پخش · ${fd(available)} از ${fd(planned)} قسمت`,
+    episodeLabel: (n: number) => `قسمت ${fd(n)}`,
+    downloadSeason: 'دانلود فصل',
+    downloadSelected: 'دانلود انتخاب‌شده‌ها',
+    downloadEpisode: 'دانلود این قسمت',
+    downloadFor: (n: number) => `دانلود قسمت ${fd(n)}`,
+    selectAll: 'انتخاب همه',
+    deselectAll: 'لغو انتخاب همه',
+    clearSelection: 'پاک کردن انتخاب',
+    clearAll: 'پاک کردن همه',
+    selectedOf: (selected: number, total: number) => `${fd(selected)} از ${fd(total)} انتخاب شده`,
+    starting: 'در حال شروع…',
+    queuedSeason: (name: string) => `در صف: ${name}`,
+    queuedSelected: (n: number) => `${fd(n)} قسمت به صف اضافه شد`,
+    queuedOne: () => 'قسمت به صف اضافه شد',
+    finished: (done: number, total: number) => `${fd(done)} از ${fd(total)} قسمت دانلود شد`,
+    failedCount: (n: number) => `${fd(n)} ناموفق`,
+    loginNeeded:
+      'تلگرام تنظیم شده ولی وارد نشده. برای دانلود از ربات، یک‌بار لاگین تعاملی را اجرا کن.',
+    provider: {
+      telegram: 'تلگرام',
+      hianime: 'سایت پخش',
+    },
+    quality: {
+      label: 'کیفیت ویدیو',
+      original: 'اصلی',
+      hint: 'کیفیتی که هر دانلود انیمه با آن شروع می‌شود.',
+    },
   },
 
   shared: {
@@ -228,6 +277,7 @@ const fa: Messages = {
     },
     originalQuality: 'بدون انکود دوباره دانلود شده',
     encodedQuality: (kbps) => `انکود شده با ${fd(kbps)} kbps`,
+    videoQuality: 'کیفیت ویدیو',
     zip: 'دانلود همه به‌صورت ZIP',
     zipLong: 'دانلود همه‌ی آهنگ‌ها به‌صورت ZIP',
     remove: 'حذف از لیست',

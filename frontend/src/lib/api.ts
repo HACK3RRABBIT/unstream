@@ -270,3 +270,118 @@ export const trackFileUrl = (jobId: string, trackId: string) =>
   `/api/jobs/${jobId}/tracks/${trackId}/file`
 
 export const jobZipUrl = (jobId: string) => `/api/jobs/${jobId}/zip`
+
+// ---------------------------------------------------------------------------
+// Anime — a second catalog searched through AniList (keyless GraphQL), with
+// seasons grouped into a franchise. Video resolution is a *different* quality
+// axis from audio bitrate, so it gets its own constant, type and storage key.
+
+/** Resolutions the anime section asks a video provider for, plus "original" —
+ *  the provider's own untouched stream, like the audio section's `original`.
+ *  Independent of the audio `QUALITIES` above; a 720p episode is not the same
+ *  choice as a 192 kbps mp3. */
+export const VIDEO_QUALITIES = ['360', '480', '720', '1080', 'original'] as const
+
+export type VideoQuality = (typeof VIDEO_QUALITIES)[number]
+
+export const DEFAULT_VIDEO_QUALITY: VideoQuality = 'original'
+
+export const videoQualityLabel = (quality: VideoQuality, m: Messages): string =>
+  quality === 'original' ? m.anime.quality.original : m.app.num(quality)
+
+export const isVideoQuality = (value: unknown): value is VideoQuality =>
+  VIDEO_QUALITIES.includes(value as VideoQuality)
+
+/** One anime in a search result — the card the Anime tab renders.
+ *  `season_count` is how many seasons the franchise has (series only), and
+ *  `description` is AniList's English synopsis, shown under the title.
+ *  `episodes` is the planned total; `available_episodes` is what exists now —
+ *  for a RELEASING show they differ (12 planned, 6 aired). */
+export interface AnimeSearchResult {
+  id: number
+  title: string
+  format: string
+  episodes: number
+  available_episodes: number
+  year: number | null
+  status: string
+  cover_url: string | null
+  description: string | null
+  season_count: number
+}
+
+/** Search results split so series are never confused with movies. */
+export interface AnimeSearchPage {
+  series: AnimeSearchResult[]
+  movies: AnimeSearchResult[]
+}
+
+/** One season of a franchise — a single AniList Media entry.
+ *  `episodes` is the planned total; `available_episodes` what exists now. */
+export interface AnimeSeason {
+  season: number
+  media_id: number
+  title: string
+  year: number | null
+  episodes: number
+  available_episodes: number
+  status: string
+  cover_url: string | null
+}
+
+/** A franchise the user opened: the seed anime plus its ordered seasons. */
+export interface AnimeDetail {
+  id: number
+  title: string
+  cover_url: string | null
+  description: string | null
+  seasons: AnimeSeason[]
+}
+
+/** Translate an anime synopsis to `to` (default fa). Keyless, cached, and
+ *  returns the original text when the translation service is unreachable. */
+export async function translateAnime(
+  text: string,
+  to = 'fa',
+  signal?: AbortSignal,
+): Promise<string> {
+  const { data } = await client.get<{ text: string }>('/anime/translate', {
+    params: { text, to },
+    signal,
+  })
+  return data.text
+}
+
+/** Search AniList for anime by name — returns series (grouped into
+ *  franchises) and movies, kept apart so the two are never mixed. */
+export async function searchAnime(query: string, signal?: AbortSignal): Promise<AnimeSearchPage> {
+  const { data } = await client.get<AnimeSearchPage>('/anime/search', {
+    params: { q: query },
+    signal,
+  })
+  return data
+}
+
+/** A franchise: the seed anime plus its ordered seasons. */
+export async function getAnime(id: number, signal?: AbortSignal): Promise<AnimeDetail> {
+  const { data } = await client.get<AnimeDetail>(`/anime/${id}`, { signal })
+  return data
+}
+
+/** Queue a season's episodes as a download job. `episodeIds` selects a
+ *  subset; omitted = the whole season. Quality is the header's global video
+ *  quality — the same way music's bitrate applies to every track. */
+export async function startAnimeDownload(
+  animeId: number,
+  season: number,
+  quality: VideoQuality = DEFAULT_VIDEO_QUALITY,
+  episodeIds?: string[],
+): Promise<string> {
+  const { data } = await client.post<{ job_id: string }>('/anime/download', {
+    media_id: animeId,
+    season,
+    quality,
+    ...(episodeIds && episodeIds.length > 0 ? { episode_ids: episodeIds } : {}),
+  })
+  return data.job_id
+}

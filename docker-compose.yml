@@ -61,6 +61,20 @@ services:
       # Raising this finishes a long album sooner and gets you bot-checked
       # sooner, in that order.
       - DOWNLOAD_WORKERS=${DOWNLOAD_WORKERS:-3}
+      # Anime episodes are big — video jobs keep their own, smaller pool so a
+      # season download doesn't hammer the scraper or the Telegram bot.
+      - ANIME_DOWNLOAD_WORKERS=${ANIME_DOWNLOAD_WORKERS:-2}
+      # Anime sources, in order tried (first wins): Nyaa torrents by default,
+      # then the hianime scraper, then the Telegram bot. See .env.example.
+      - ANIME_PROVIDER_ORDER=${ANIME_PROVIDER_ORDER:-nyaa,hianime,telegram}
+      # Anime: Telegram bot source (optional — the one credential in the
+      # project). Empty API_ID means the Telegram provider is unavailable.
+      # See .env.example for the login flow.
+      - TELEGRAM_API_ID=${TELEGRAM_API_ID:-}
+      - TELEGRAM_API_HASH=${TELEGRAM_API_HASH:-}
+      - TELEGRAM_SESSION=/app/data/animeplus.session
+      - TELEGRAM_BOT_USERNAME=${TELEGRAM_BOT_USERNAME:-AniPlusMiniBot}
+      - TELEGRAM_CHANNEL=${TELEGRAM_CHANNEL:-AniPlus}
 
       # Owner of everything written to DOWNLOADS_DIR. 1001 is the image's own
       # user; use `id -u` / `id -g` if you want to open those files yourself.

@@ -20,3 +20,8 @@ cookies.txt
 # Dokploy writes File Mounts here, beside the checkout — including the
 # cookie file compose.dokploy.yml mounts.
 files/
+
+# Runtime state the server writes and never the repo's business: analytics
+# and lyrics SQLite files, and the Telegram session (which acts as the
+# owner's account, so committing it would publish their identity).
+backend/data/

@@ -55,3 +55,24 @@ _Avoid_: دانلود کامل
 **متن آهنگ** (Lyrics):
 The words of a song, shown in the app and embedded into downloaded files.
 _Avoid_: لیریک، شعر، کلمه‌های آهنگ
+
+**انیمه** (Anime):
+A Japanese animation series browsable and downloadable in the anime section.
+_Avoid_: آنیمی، کارتون (except in marketing copy where کارتون carries search intent)
+
+**فصل** (Season):
+One run of an anime — the grouping a franchise's episodes are shown under.
+_Avoid_: سِیسن، سری
+
+**قسمت** (Episode):
+A single downloadable video of a season.
+_Avoid_: اپیزود
+
+**کیفیت ویدیو** (Video quality):
+The resolution chosen for an anime download (360 / 480 / 720 / 1080).
+Distinct from **کیفیت** (Audio quality), which stays the mp3 bitrate.
+_Avoid_: کوالیتی، رزولوشن
+
+**زیرنویس** (Subtitle):
+The text track carried by a downloaded episode (soft-sub, muxed in).
+_Avoid_: ساب، سابتایتل

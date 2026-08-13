@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 from . import analytics, deezer, downloader, embed, itunes, jobs, limits, lyrics, soundcloud, ytdlp
+from .anime import routes as anime_routes
 from .models import Collection, ProviderError, SearchResult
 
 # Every provider here is keyless and free — no accounts, no API credentials.
@@ -184,6 +185,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(anime_routes.router)
+
 
 class ResolveRequest(BaseModel):
     url: str
@@ -209,6 +212,15 @@ _MEDIA_TYPES = {
     ".aac": "audio/aac",
     ".wav": "audio/wav",
     ".flac": "audio/flac",
+}
+
+# Anime episodes land as video mp4s. A video served as audio/mp4 won't stream
+# in the browser's <video> element, so video jobs pick from this table instead.
+_VIDEO_MEDIA_TYPES = {
+    ".mp4": "video/mp4",
+    ".mkv": "video/x-matroska",
+    ".m4v": "video/mp4",
+    ".webm": "video/webm",
 }
 
 
@@ -460,9 +472,10 @@ def track_file(job_id: str, track_id: str, request: Request) -> FileResponse:
         detail=job.quality,
         label=f"{', '.join(state.track.artists)} - {state.track.title}",
     )
+    table = _VIDEO_MEDIA_TYPES if state.track.media == "video" else _MEDIA_TYPES
     return FileResponse(
         state.file_path,
-        media_type=_MEDIA_TYPES.get(
+        media_type=table.get(
             state.file_path.suffix.lower(), "application/octet-stream"
         ),
         filename=state.file_path.name,
@@ -662,3 +675,38 @@ def admin_extraction(request: Request) -> dict:
     """
     require_admin(request)
     return ytdlp.status()
+
+
+# --------------------------------------------------------------------------
+# Single-process serving of the built frontend (dev convenience).
+#
+# In the shipped topology nginx serves the frontend and proxies /api to this
+# app. For a bare `uvicorn app.main:app` that is not available, so when
+# UNSTREAM_SERVE_STATIC points at a built `frontend/dist`, this app serves it
+# directly on the same port — same origin, no CORS. Both the config route and
+# the mount come after every /api route (so the API always wins the match),
+# and the config route is registered *before* the mount so it beats the static
+# dir for /config.js.
+import os as _os
+from fastapi.staticfiles import StaticFiles
+
+_SERVE_STATIC = _os.getenv("UNSTREAM_SERVE_STATIC", "")
+if _SERVE_STATIC and _os.path.isdir(_SERVE_STATIC):
+
+    @app.get("/config.js")
+    def _config_js() -> Response:
+        """The runtime config nginx generates in production, served here so a
+        bare single-process launch reads UNSTREAM_DEFAULT_LOCALE too."""
+        import json as _json
+
+        config = {"defaultLocale": _os.getenv("UNSTREAM_DEFAULT_LOCALE", "")}
+        return Response(
+            content=f"window.__UNSTREAM_CONFIG__ = {_json.dumps(config)}\n",
+            media_type="application/javascript",
+        )
+
+    app.mount(
+        "/",
+        StaticFiles(directory=_SERVE_STATIC, html=True),
+        name="frontend",
+    )

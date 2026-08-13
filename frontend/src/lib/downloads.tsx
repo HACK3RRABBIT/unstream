@@ -11,15 +11,20 @@ import {
 import {
   cancelJob,
   DEFAULT_QUALITY,
+  DEFAULT_VIDEO_QUALITY,
   getJobs,
   isQuality,
+  isVideoQuality,
   resolveUrl,
+  startAnimeDownload,
   startDownload,
+  type AnimeSeason,
   type Collection,
   type Job,
   type Quality,
   type SearchResult,
   type Track,
+  type VideoQuality,
 } from './api'
 
 /** All the dock needs of a track — the job payload carries ids but no titles.
@@ -33,15 +38,18 @@ export interface DownloadEntry {
   jobId: string
   url: string
   name: string
-  kind: Collection['kind']
+  kind: Collection['kind'] | 'anime'
   cover_url: string | null
   tracks: DockTrack[]
   job: Job | null // latest polled backend state
   /** Seconds until the job finishes, estimated from recent poll deltas. */
   etaSeconds: number | null
   /** Quality this job started at — changing the preference later must not
-   *  relabel jobs already encoding at the old one. */
-  quality: Quality
+   *  relabel jobs already encoding at the old one. Anime jobs carry a
+   *  resolution here; music jobs a bitrate. */
+  quality: Quality | VideoQuality
+  /** Video resolution anime jobs started at; undefined for music. */
+  videoQuality?: VideoQuality
   startedAt: number
   /** The backend no longer knows this job: swept past its TTL, or lost to a
    *  restart. Last known state is kept, but its download links are dead. */
@@ -60,12 +68,23 @@ interface DownloadsContextValue {
   /** Audio quality every new job is started at; persisted across sessions. */
   quality: Quality
   setQuality: (quality: Quality) => void
+  /** Video resolution anime seasons default to; a separate axis from audio
+   *  quality, persisted under its own key. */
+  videoQuality: VideoQuality
+  setVideoQuality: (quality: VideoQuality) => void
   /** Whether new jobs embed lyrics in the finished files' tags. */
   embedLyrics: boolean
   setEmbedLyrics: (embed: boolean) => void
   start: (url: string, collection: Collection, trackIds?: string[]) => Promise<void>
   /** One-click download of a single search result: resolve, then queue. */
   startFromResult: (result: SearchResult) => Promise<void>
+  /** Queue a season's episodes (each becomes a track in one job). `episodeIds`
+   *  selects a subset — omitted means the whole season. */
+  startAnime: (
+    anime: { id: number; title: string; coverUrl: string | null },
+    season: AnimeSeason,
+    episodeIds?: string[],
+  ) => Promise<void>
   /** Stop a running job. Rejects if the server wouldn't; callers report it. */
   cancel: (jobId: string) => Promise<void>
   dismiss: (jobId: string) => void
@@ -82,6 +101,7 @@ const isFinished = (e: DownloadEntry) => e.job?.finished ?? false
 const isSettled = (e: DownloadEntry) => e.expired === true || isFinished(e)
 
 const QUALITY_KEY = 'unstream:quality'
+const VIDEO_QUALITY_KEY = 'unstream:video-quality'
 const LYRICS_KEY = 'unstream:lyrics'
 const JOBS_KEY = 'unstream:jobs'
 
@@ -96,6 +116,15 @@ function storedQuality(): Quality {
     return isQuality(saved) ? saved : DEFAULT_QUALITY
   } catch {
     return DEFAULT_QUALITY // private mode / storage disabled
+  }
+}
+
+function storedVideoQuality(): VideoQuality {
+  try {
+    const saved = localStorage.getItem(VIDEO_QUALITY_KEY)
+    return isVideoQuality(saved) ? saved : DEFAULT_VIDEO_QUALITY
+  } catch {
+    return DEFAULT_VIDEO_QUALITY
   }
 }
 
@@ -137,6 +166,7 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
   const [entries, setEntries] = useState<DownloadEntry[]>(storedEntries)
   const [panelOpen, setPanelOpen] = useState(false)
   const [quality, setQualityState] = useState<Quality>(storedQuality)
+  const [videoQuality, setVideoQualityState] = useState<VideoQuality>(storedVideoQuality)
   const [embedLyrics, setEmbedLyricsState] = useState<boolean>(storedLyrics)
   const entriesRef = useRef(entries)
   entriesRef.current = entries
@@ -144,6 +174,8 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
   // download button downstream depends on it.
   const qualityRef = useRef(quality)
   qualityRef.current = quality
+  const videoQualityRef = useRef(videoQuality)
+  videoQualityRef.current = videoQuality
   const lyricsRef = useRef(embedLyrics)
   lyricsRef.current = embedLyrics
   // (time, settled-count) samples per job, for ETA estimation.
@@ -155,6 +187,15 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
       localStorage.setItem(QUALITY_KEY, next)
     } catch {
       // Not persisting is survivable; the session still honours the choice.
+    }
+  }, [])
+
+  const setVideoQuality = useCallback((next: VideoQuality) => {
+    setVideoQualityState(next)
+    try {
+      localStorage.setItem(VIDEO_QUALITY_KEY, next)
+    } catch {
+      // As above.
     }
   }, [])
 
@@ -205,6 +246,42 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
       await start(result.url, collection)
     },
     [start],
+  )
+
+  const startAnime = useCallback(
+    async (
+      anime: { id: number; title: string; coverUrl: string | null },
+      season: AnimeSeason,
+      episodeIds?: string[],
+    ) => {
+      const chosen = videoQualityRef.current
+      const url = `anime://${anime.id}/${season.season}`
+      const jobId = await startAnimeDownload(anime.id, season.season, chosen, episodeIds)
+      // A subset job lists only its own episodes in the dock.
+      const wanted = episodeIds ? new Set(episodeIds) : null
+      const tracks = Array.from({ length: season.episodes }, (_, i) => {
+        const id = `${anime.id}:s${season.season}e${i + 1}`
+        return { id, title: `Episode ${i + 1}` }
+      }).filter((t) => !wanted || wanted.has(t.id))
+      setEntries((prev) => [
+        ...prev,
+        {
+          jobId,
+          url,
+          name: season.title,
+          kind: 'anime',
+          cover_url: anime.coverUrl ?? season.cover_url,
+          tracks,
+          job: null,
+          etaSeconds: null,
+          quality: chosen,
+          videoQuality: chosen,
+          startedAt: Date.now(),
+        },
+      ])
+      setPanelOpen(true)
+    },
+    [],
   )
 
   const patch = useCallback((jobId: string, changes: Partial<DownloadEntry>) => {
@@ -314,10 +391,13 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
       setPanelOpen,
       quality,
       setQuality,
+      videoQuality,
+      setVideoQuality,
       embedLyrics,
       setEmbedLyrics,
       start,
       startFromResult,
+      startAnime,
       cancel,
       dismiss,
       entryForUrl,
@@ -329,10 +409,13 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
       panelOpen,
       quality,
       setQuality,
+      videoQuality,
+      setVideoQuality,
       embedLyrics,
       setEmbedLyrics,
       start,
       startFromResult,
+      startAnime,
       cancel,
       dismiss,
       entryForUrl,

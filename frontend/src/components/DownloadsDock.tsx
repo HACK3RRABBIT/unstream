@@ -14,11 +14,14 @@ import {
 import clsx from 'clsx'
 import {
   apiError,
+  DEFAULT_VIDEO_QUALITY,
   jobZipUrl,
   trackFileUrl,
   qualityLabel,
+  videoQualityLabel,
   type Job,
   type JobTrack,
+  type Quality,
 } from '../lib/api'
 import { useDownloads, type DownloadEntry } from '../lib/downloads'
 import { faNumerals, useMessages, useStartAlign } from '../lib/i18n'
@@ -228,13 +231,17 @@ function JobCard({ entry, capped = true }: { entry: DownloadEntry; capped?: bool
         </div>
         <span
           title={
-            entry.quality === 'original'
-              ? m.dock.originalQuality
-              : m.dock.encodedQuality(entry.quality)
+            entry.kind === 'anime'
+              ? m.dock.videoQuality
+              : entry.quality === 'original'
+                ? m.dock.originalQuality
+                : m.dock.encodedQuality(entry.quality as Quality)
           }
           className="shrink-0 rounded-ctl border border-ink-700 px-1.5 py-0.5 text-micro font-medium text-ink-400 tabular-nums"
         >
-          {qualityLabel(entry.quality, m)}
+          {entry.kind === 'anime'
+            ? videoQualityLabel(entry.videoQuality ?? DEFAULT_VIDEO_QUALITY, m)
+            : qualityLabel(entry.quality as Quality, m)}
         </span>
         {showZip && (
           <a

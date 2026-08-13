@@ -57,6 +57,12 @@ _SWEEP_INTERVAL_SECONDS = 600
 DOWNLOAD_WORKERS = max(1, int(os.getenv("DOWNLOAD_WORKERS", "3")))
 _executor = ThreadPoolExecutor(max_workers=DOWNLOAD_WORKERS)
 
+# Anime episodes are 100-700MB each — the same concurrency that politely
+# downloads a few songs would hammer a scraper site or the Telegram bot.
+# Video jobs use their own, smaller pool.
+ANIME_DOWNLOAD_WORKERS = max(1, int(os.getenv("ANIME_DOWNLOAD_WORKERS", "2")))
+_anime_executor = ThreadPoolExecutor(max_workers=ANIME_DOWNLOAD_WORKERS)
+
 
 SETTLED = ("done", "error", "cancelled")
 
@@ -282,8 +288,11 @@ def start(
         used.add(stem.lower())
         job.tracks[track.id] = TrackState(track=track, filename=stem)
     _jobs[job.id] = job
+    # A video job goes on its own pool — see ANIME_DOWNLOAD_WORKERS. Everything
+    # else (audio) uses the shared one.
+    pool = _anime_executor if tracks and tracks[0].media == "video" else _executor
     for state in job.tracks.values():
-        _executor.submit(_run_track, job, state)
+        pool.submit(_run_track, job, state)
     return job
 
 

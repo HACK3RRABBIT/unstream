@@ -10,13 +10,24 @@ export interface RecentSearch {
   at: number
 }
 
-const KEY = 'unstream:recent'
+/** Which catalog a recent search belongs to. The music and anime tabs keep
+ *  their own history — a chip is replayed on the tab it came from. */
+export type RecentDomain = 'music' | 'anime'
+
+const KEYS: Record<RecentDomain, string> = {
+  music: 'unstream:recent',
+  anime: 'unstream:recent-anime',
+}
 /** Two rows of chips under the hero without crowding it. */
 const MAX = 6
 
-export function recentSearches(): RecentSearch[] {
+function key(domain: RecentDomain): string {
+  return KEYS[domain]
+}
+
+export function recentSearches(domain: RecentDomain = 'music'): RecentSearch[] {
   try {
-    const raw = localStorage.getItem(KEY)
+    const raw = localStorage.getItem(key(domain))
     if (!raw) return []
     const parsed: unknown = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
@@ -28,22 +39,22 @@ export function recentSearches(): RecentSearch[] {
   }
 }
 
-export function rememberSearch(input: string): RecentSearch[] {
+export function rememberSearch(input: string, domain: RecentDomain = 'music'): RecentSearch[] {
   const trimmed = input.trim()
-  if (!trimmed) return recentSearches()
+  if (!trimmed) return recentSearches(domain)
   const entry: RecentSearch = { input: trimmed, isLink: isCatalogUrl(trimmed), at: Date.now() }
-  const next = [entry, ...recentSearches().filter((r) => r.input !== trimmed)].slice(0, MAX)
+  const next = [entry, ...recentSearches(domain).filter((r) => r.input !== trimmed)].slice(0, MAX)
   try {
-    localStorage.setItem(KEY, JSON.stringify(next))
+    localStorage.setItem(key(domain), JSON.stringify(next))
   } catch {
     // The chips are a convenience, not state — nothing to recover.
   }
   return next
 }
 
-export function clearRecentSearches(): RecentSearch[] {
+export function clearRecentSearches(domain: RecentDomain = 'music'): RecentSearch[] {
   try {
-    localStorage.removeItem(KEY)
+    localStorage.removeItem(key(domain))
   } catch {
     // As above.
   }

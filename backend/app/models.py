@@ -23,11 +23,15 @@ class Track:
     track_number: int = 0
     release_date: str = ""
     # Set when the track already lives on a downloadable page (YouTube or
-    # SoundCloud URL) — the downloader then skips the search step.
+    # SoundCloud URL) — the downloader then skips the search step. For anime
+    # episodes this carries a synthetic "anime://provider/..." plan instead.
     source_url: str | None = None
     # 30-second audio preview (Deezer / iTunes / Spotify embed), if the
     # provider exposes one — lets the UI play a clip before downloading.
     preview_url: str | None = None
+    # "audio" (the music pipeline) or "video" (anime episodes). The downloader
+    # dispatches on this; everything else in jobs.py is media-agnostic.
+    media: str = "audio"
 
     @property
     def query(self) -> str:

@@ -4,12 +4,18 @@ import { AudioLines, Link2 as LinkIcon, Search } from 'lucide-react'
 import clsx from 'clsx'
 import {
   apiError,
+  getAnime,
   getArtist,
   isCanceled,
   isCatalogUrl,
   mergeResults,
   resolveUrl,
+  searchAnime,
   searchCatalog,
+  type AnimeDetail,
+  type AnimeSearchPage,
+  type AnimeSearchResult,
+  type AnimeSeason,
   type ArtistDetail,
   type Collection,
   type SearchResult,
@@ -19,8 +25,13 @@ import { CollectionView } from './components/CollectionView'
 import { CollectionSkeleton } from './components/CollectionSkeleton'
 import { SearchResults } from './components/SearchResults'
 import { ArtistView } from './components/ArtistView'
+import { AnimeView } from './components/AnimeView'
+import { AnimeSeasonView } from './components/AnimeSeasonView'
+import { AnimeSearchResults } from './components/AnimeSearchResults'
+import { TabSwitch, type AppTab } from './components/TabSwitch'
 import { DownloadsDock } from './components/DownloadsDock'
 import { QualityPicker } from './components/QualityPicker'
+import { VideoQualityPicker } from './components/VideoQualityPicker'
 import { LyricsToggle } from './components/LyricsToggle'
 import { LanguagePicker } from './components/LanguagePicker'
 import { SettingsSheet } from './components/SettingsSheet'
@@ -44,10 +55,21 @@ type View =
     }
   | { type: 'artist'; artist: ArtistDetail }
   | { type: 'collection'; url: string; collection: Collection }
+  | { type: 'anime-search'; query: string; results: AnimeSearchPage }
+  | { type: 'anime'; anime: AnimeDetail }
+  | { type: 'anime-season'; anime: AnimeDetail; season: AnimeSeason }
 
 /** What the back button says, named by the view it returns *to*. */
 const backLabel = (type: View['type'], m: Messages): string =>
-  type === 'search' ? m.nav.backToResults : type === 'artist' ? m.nav.backToArtist : m.nav.back
+  type === 'search'
+    ? m.nav.backToResults
+    : type === 'anime-search'
+      ? m.nav.backToAnime
+      : type === 'anime'
+        ? m.nav.backToSeason
+        : type === 'artist'
+          ? m.nav.backToArtist
+          : m.nav.back
 
 /** Animates its children to and from zero height. `grid-template-rows`
  *  1fr→0fr is the only way to transition to `height: auto`; the inner div does
@@ -118,6 +140,9 @@ function DownloadNotifier() {
 
 function Shell() {
   const [stack, setStack] = useState<View[]>([])
+  // Which catalog the search form and views belong to. Music keeps the whole
+  // existing flow; the anime tab swaps in its own search and franchise views.
+  const [tab, setTab] = useState<AppTab>('music')
   // Deep link in the address bar (?url= / ?artist= / ?q=), captured before
   // any effect rewrites the query string.
   const [initialParams] = useState(() => new URLSearchParams(window.location.search))
@@ -148,6 +173,10 @@ function Shell() {
       searchCatalog(query, page, nextSignal()),
   })
   const artist = useMutation({ mutationFn: (id: string) => getArtist(id, nextSignal()) })
+  const animeSearch = useMutation({
+    mutationFn: (query: string) => searchAnime(query, nextSignal()),
+  })
+  const animeDetail = useMutation({ mutationFn: (id: number) => getAnime(id, nextSignal()) })
 
   // Infinite scroll: appended pages must not blank the results already on
   // screen, so they never go through the `search` mutation's pending state.
@@ -157,7 +186,7 @@ function Shell() {
   // Bumped whenever a shortcut focuses the search box, to flash the form.
   const [focusPulse, setFocusPulse] = useState(0)
 
-  const [recent, setRecent] = useState(recentSearches)
+  const [recent, setRecent] = useState(() => recentSearches('music'))
 
   // The narrow layout's home for the header's preferences.
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -191,6 +220,8 @@ function Shell() {
     resolve.reset()
     search.reset()
     artist.reset()
+    animeSearch.reset()
+    animeDetail.reset()
   }
 
   const openCollection = (url: string, pushView: boolean) => {
@@ -205,7 +236,16 @@ function Shell() {
   const handleSubmit = (input: string) => {
     resetErrors()
     setSharedArrival(null) // the user is driving now, not the link
-    setRecent(rememberSearch(input))
+    setRecent(rememberSearch(input, tab))
+
+    // On the anime tab there are no URLs to paste in v1 — every submit is a
+    // name search against AniList.
+    if (tab === 'anime') {
+      animeSearch.mutate(input, {
+        onSuccess: (results) => setStack([{ type: 'anime-search', query: input, results }]),
+      })
+      return
+    }
 
     if (isCatalogUrl(input)) {
       openCollection(input, false)
@@ -239,6 +279,20 @@ function Shell() {
       // into a playlist of everything they've uploaded.
       openCollection(result.url, true)
     }
+  }
+
+  const handlePickAnime = (result: AnimeSearchResult) => {
+    resetErrors()
+    animeDetail.mutate(result.id, {
+      onSuccess: (anime) => setStack((s) => [...s, { type: 'anime', anime }]),
+    })
+  }
+
+  // Phase 1 has no season download surface yet; the season view is Phase 2.
+  // The handler exists so AnimeView can already wire its rows to navigation
+  // and Phase 2 only fills the view itself in.
+  const handleOpenSeason = (anime: AnimeDetail, season: AnimeSeason) => {
+    setStack((s) => [...s, { type: 'anime-season', anime, season }])
   }
 
   const goBack = useCallback(() => setStack((s) => s.slice(0, -1)), [])
@@ -291,7 +345,7 @@ function Shell() {
     }
   }, [])
 
-  // Deep link restore: ?url=… / ?artist=… / ?q=…
+  // Deep link restore: ?url=… / ?artist=… / ?q=… / ?tab=anime&(aq|aid|s)=…
   const bootstrapped = useRef(false)
   useEffect(() => {
     if (bootstrapped.current) return
@@ -299,7 +353,20 @@ function Shell() {
     const url = initialParams.get('url')
     const artistId = initialParams.get('artist')
     const q = initialParams.get('q')
-    if (url && isCatalogUrl(url)) {
+    const animeQ = initialParams.get('aq')
+    const animeId = initialParams.get('aid')
+    if (initialParams.get('tab') === 'anime') {
+      setTab('anime')
+      if (animeId) {
+        animeDetail.mutate(Number(animeId), {
+          onSuccess: (anime) => setStack([{ type: 'anime', anime }]),
+        })
+      } else if (animeQ) {
+        animeSearch.mutate(animeQ, {
+          onSuccess: (results) => setStack([{ type: 'anime-search', query: animeQ, results }]),
+        })
+      }
+    } else if (url && isCatalogUrl(url)) {
       setSharedArrival({ kind: 'url' })
       openCollection(url, false)
     } else if (artistId) {
@@ -335,9 +402,22 @@ function Shell() {
     if (view?.type === 'collection') params.set('url', view.url)
     else if (view?.type === 'artist') params.set('artist', view.artist.id)
     else if (view?.type === 'search') params.set('q', view.query)
+    else if (view?.type === 'anime-search') {
+      params.set('tab', 'anime')
+      params.set('aq', view.query)
+    } else if (view?.type === 'anime') {
+      params.set('tab', 'anime')
+      params.set('aid', String(view.anime.id))
+    } else if (view?.type === 'anime-season') {
+      params.set('tab', 'anime')
+      params.set('aid', String(view.anime.id))
+      params.set('s', String(view.season.season))
+    } else if (tab === 'anime') {
+      params.set('tab', 'anime')
+    }
     const qs = params.toString()
     window.history.replaceState(null, '', qs ? `?${qs}` : window.location.pathname)
-  }, [stack])
+  }, [stack, tab])
 
   // A new release's service worker took over — offer a reload. (Hidden tabs
   // already reload themselves; see main.tsx.)
@@ -412,13 +492,21 @@ function Shell() {
     }
   }, [cancelPending])
 
-  const busy = resolve.isPending || search.isPending || artist.isPending
+  const busy =
+    resolve.isPending ||
+    search.isPending ||
+    artist.isPending ||
+    animeSearch.isPending ||
+    animeDetail.isPending
   busyRef.current = busy
   // An aborted request lands in a mutation's error slot like any other
   // rejection. Filtered rather than reset, because the abort and the rejection
   // are not in the same tick — resetting on the click would be undone by the
   // error arriving after it.
-  const error = [resolve.error, search.error, artist.error].find((e) => e && !isCanceled(e)) ?? null
+  const error =
+    [resolve.error, search.error, artist.error, animeSearch.error, animeDetail.error].find(
+      (e) => e && !isCanceled(e),
+    ) ?? null
   const view = stack.at(-1)
   const previous = stack.at(-2)
   // Nothing asked for yet: the only time the hero earns its screen space.
@@ -440,7 +528,13 @@ function Shell() {
       ? `collection:${view.url}`
       : view.type === 'artist'
         ? `artist:${view.artist.id}`
-        : `search:${view.query}`
+        : view.type === 'anime'
+          ? `anime:${view.anime.id}`
+          : view.type === 'anime-season'
+            ? `anime-season:${view.anime.id}:${view.season.season}`
+            : view.type === 'anime-search'
+              ? `anime-search:${view.query}`
+              : `search:${view.query}`
 
   return (
     <div className="safe-x flex min-h-screen flex-col bg-ink-950">
@@ -460,14 +554,33 @@ function Shell() {
             {m.app.name}
           </span>
         </button>
+        {/* The catalog switch is navigation, not a preference, so it stays
+            beside the wordmark on every view — and visible on phones. */}
+        <TabSwitch
+          tab={tab}
+          onChange={(next) => {
+            setTab(next)
+            setStack([])
+            resetErrors()
+            // Each tab has its own search history.
+            setRecent(recentSearches(next))
+          }}
+        />
         {/* Preferences, so they share the trailing edge; the two that change
             what a download *is* come first. Below `sm` they move into a sheet:
             three chip strips do not fit beside the wordmark, and a flex row
             will not shrink below its content, so leaving them here gave the
-            document a horizontal scrollbar. */}
+            document a horizontal scrollbar. Each tab shows the quality axis
+            that applies to it — music picks a bitrate, anime a resolution. */}
         <div className="ms-auto hidden items-center gap-2.5 sm:flex">
-          <LyricsToggle />
-          <QualityPicker />
+          {tab === 'music' ? (
+            <>
+              <LyricsToggle />
+              <QualityPicker />
+            </>
+          ) : (
+            <VideoQualityPicker />
+          )}
           <LanguagePicker />
         </div>
         <button
@@ -583,7 +696,7 @@ function Shell() {
               <RecentSearches
                 items={recent}
                 onPick={handleSubmit}
-                onClear={() => setRecent(clearRecentSearches())}
+                onClear={() => setRecent(clearRecentSearches(tab))}
               />
             </Collapsible>
 
@@ -623,6 +736,19 @@ function Shell() {
             {view.type === 'artist' && <ArtistView artist={view.artist} onPick={handlePick} />}
             {view.type === 'collection' && (
               <CollectionView key={view.url} url={view.url} collection={view.collection} />
+            )}
+            {view.type === 'anime-search' && (
+              <AnimeSearchResults
+                query={view.query}
+                results={view.results}
+                onPick={handlePickAnime}
+              />
+            )}
+            {view.type === 'anime' && (
+              <AnimeView anime={view.anime} onOpenSeason={handleOpenSeason} />
+            )}
+            {view.type === 'anime-season' && (
+              <AnimeSeasonView anime={view.anime} season={view.season} />
             )}
           </div>
         )}
