@@ -93,33 +93,62 @@ class NyaaProvider:
     def _search_episode(self, src: EpisodeSource, episode: int, quality: str = "") -> dict:
         """Return the best-seeded torrent dict for one episode.
 
-        The year is deliberately left out of the search query — Nyaa's search
-        treats parentheses specially and "(1999)" zeroes out results. The
-        episode number is zero-padded (001) so it matches the way fansub
-        titles write episodes, and it must appear as a real episode marker —
-        not a stray digit inside a hash or resolution — so "One Piece 1" can't
-        accidentally match "One Piece 1173 [90E1B1FA]".
+        Tries the `S{season}E{episode}` form first when the season is known
+        (so "JUJUTSU KAISEN S01E01" isn't matched as S03E01), then falls back
+        to the bare episode number for series that Nyaa names by number alone
+        (One Piece "1100"). The year is left out (parentheses break Nyaa's
+        search), and quality is not filtered (torrents carry whatever
+        resolution the fansub released).
         """
         title = src.anime_id
-        padded = f"{episode:03d}"
-        # Quality hints the search when given (e.g. "720p"), narrowing to the
-        # right release.
-        query = f"{title} {padded}" + (f" {quality}p" if quality else "")
-        try:
-            resp = _client.get(
-                f"{BASE_URL}/",
-                params={
-                    "f": 0,
-                    "c": _CATEGORY_ENGLISH,
-                    "q": query,
-                    "s": "seeders",
-                    "o": "desc",
-                },
-            )
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            raise ProviderError(f"Could not reach Nyaa: {exc}") from exc
+        queries = []
+        if src.season > 0:
+            queries.append(f"{title} S{src.season:02d}E{episode:02d}")
+        queries.append(f"{title} {episode}")
 
+        best: dict | None = None
+        best_batch: dict | None = None
+        for query in queries:
+            try:
+                resp = _client.get(
+                    f"{BASE_URL}/",
+                    params={
+                        "f": 0,
+                        "c": _CATEGORY_ENGLISH,
+                        "q": query,
+                        "s": "seeders",
+                        "o": "desc",
+                    },
+                )
+                resp.raise_for_status()
+            except Exception as exc:  # noqa: BLE001
+                raise ProviderError(f"Could not reach Nyaa: {exc}") from exc
+
+            single, batch = self._parse_rows(resp.text, episode)
+            if single and (best is None or single["seeders"] > best["seeders"]):
+                best = single
+            if batch and (best_batch is None or batch["seeders"] > best_batch["seeders"]):
+                best_batch = batch
+            if best:
+                break  # a true single-episode match; don't fall back
+
+        if (best is None or best["seeders"] == 0) and best_batch is not None:
+            best = {**best_batch, "batch": True}
+        if best is None or best["seeders"] == 0:
+            raise ProviderError(
+                f"No seeded torrent containing '{title}' episode {episode} found on Nyaa."
+            )
+        return best
+
+    @staticmethod
+    def _parse_rows(html: str, episode: int) -> tuple[dict | None, dict | None]:
+        """Parse a Nyaa search page into (best single-episode, best batch).
+
+        An episode number is "real" when it appears with a delimiter or marker
+        (EP 01, E01, - 001, (001), 001 [) — never as bare digits that could be
+        a hash, a year, or a resolution. A range (001-574, E01-E06) is a
+        batch: the episode is in it, and it's kept as an extractable fallback.
+        """
         # An episode number is "real" when it appears with a delimiter or
         # marker (EP 01, E01, - 001, (001), 001 [) — never as bare digits
         # that could be a hash, a year, or a resolution.
@@ -128,15 +157,16 @@ class NyaaProvider:
             rf"|(?:^|[\s\-–—(\[])\s*0*{episode}\s*(?=[\]\s\-–—,]|$)"
         )
         # A range of episodes (001-574, E01-E06) — the episode is *in* it but
-        # the torrent is a whole batch, which we cannot single out yet.
+        # the torrent is a whole batch; we can still extract the single file.
         batch_re = re.compile(rf"(?:EP|Ep|Episode|E)?\s*0*{episode}\s*[-–—]\s*0*\d+")
 
-        rows = re.findall(r"<tr[^>]*>.*?</tr>", resp.text, re.S)
-        best = None
-        batch_only = False
+        rows = re.findall(r"<tr[^>]*>.*?</tr>", html, re.S)
+        best: dict | None = None
+        best_batch: dict | None = None
         for row in rows[1:]:  # first row is the header
             title_m = re.search(r'href="/view/\d+"[^>]*title="([^"]+)"', row)
             magnet = re.search(r'href="(magnet:\?[^"]+)"', row)
+            view_m = re.search(r'href="(/view/\d+)"', row)
             seeders_m = re.search(r'class="text-center"[^>]*>(\d+)<', row)
             size_m = re.search(r"([\d.]+\s+(?:GiB|MiB))", row)
             if not title_m or not magnet:
@@ -145,32 +175,26 @@ class NyaaProvider:
             if not ep_re.search(title):
                 continue
             seeders = int(seeders_m.group(1)) if seeders_m else 0
+            common = {
+                "title": title,
+                "magnet": magnet.group(1),
+                "torrent_id": (view_m.group(1) if view_m else "").rsplit("/", 1)[-1],
+                "seeders": seeders,
+                "size": size_m.group(1) if size_m else "",
+            }
 
             marker = r"(?:EP|Ep|Episode|E|#)\s*0*%d(?!\d)" % episode
             explicit = bool(re.search(marker, title))
             is_batch = bool(batch_re.search(title))
             if is_batch:
-                batch_only = True
-                continue  # a range is not a single-episode download
+                # Keep the best-seeded batch as a fallback for extraction.
+                if best_batch is None or seeders > best_batch["seeders"]:
+                    best_batch = common
+                continue
             score = seeders + (200 if explicit else 0)
             if best is None or score > best["score"]:
-                best = {
-                    "title": title,
-                    "magnet": magnet.group(1),
-                    "seeders": seeders,
-                    "size": size_m.group(1) if size_m else "",
-                    "score": score,
-                }
-        if best is None or best["seeders"] == 0:
-            if batch_only:
-                raise ProviderError(
-                    f"'{title}' episode {episode} only exists in a multi-episode "
-                    "batch on Nyaa, which isn't downloadable as a single episode yet."
-                )
-            raise ProviderError(
-                f"No seeded single-episode torrent found on Nyaa for '{query}'."
-            )
-        return best
+                best = {**common, "score": score}
+        return best, best_batch
 
     def episode_count(self, src: EpisodeSource) -> int | None:
         """Nyaa has no per-show episode registry — the episode number is in
@@ -181,12 +205,19 @@ class NyaaProvider:
         return None
 
     def episode_stream(self, src: EpisodeSource, quality: str) -> EpisodeStream:
-        """The best-seeded magnet for `src.episode`, at `quality` when offered."""
+        """The best-seeded magnet for `src.episode`, at `quality` when offered.
+
+        When the episode only exists inside a batch, the stream carries the
+        batch flag + torrent id so download() can extract just that episode.
+        """
         torrent = self._search_episode(src, src.episode, quality)
         return EpisodeStream(
             provider=self.name,
             url=torrent["magnet"],
             headers={},
+            episode=src.episode,
+            batch=torrent.get("batch", False),
+            torrent_id=torrent.get("torrent_id", ""),
         )
 
     def download(
@@ -213,7 +244,14 @@ class NyaaProvider:
         workdir.mkdir(parents=True, exist_ok=True)
 
         client = _pick_torrent_client()
-        video = self._download_torrent(client, magnet, workdir, on_progress, should_cancel)
+        # A batch torrent needs the single episode's file selected up front;
+        # a single-episode torrent downloads whole.
+        if stream.batch and stream.torrent_id:
+            video = self._download_batch_episode(
+                client, stream, workdir, on_progress, should_cancel
+            )
+        else:
+            video = self._download_torrent(client, magnet, workdir, on_progress, should_cancel)
         if video is None:
             raise DownloadError("No video file found in the torrent.")
 
@@ -225,6 +263,65 @@ class NyaaProvider:
         # Clean the torrent working directory.
         shutil.rmtree(workdir, ignore_errors=True)
         return out
+
+    def _download_batch_episode(self, client: str, stream: EpisodeStream, workdir: Path,
+                                on_progress: Callable[[float], None],
+                                should_cancel: Callable[[], bool] | None) -> Path | None:
+        """Download only the requested episode's file from a batch torrent.
+
+        Fetch the .torrent (Nyaa serves /download/<id>.torrent), list its
+        files with aria2 --show-files, find the file whose name carries the
+        episode number, and select just that file index so a whole season
+        batch doesn't download to extract one episode.
+        """
+        torrent_url = f"{BASE_URL}/download/{stream.torrent_id}.torrent"
+        try:
+            resp = _client.get(torrent_url, timeout=_TIMEOUT)
+            resp.raise_for_status()
+        except Exception as exc:  # noqa: BLE001
+            raise DownloadError(f"Could not fetch torrent file: {exc}") from exc
+
+        torrent_file = workdir / f"batch-{stream.torrent_id}.torrent"
+        torrent_file.write_bytes(resp.content)
+
+        # aria2 lists files as "idx|path|length" lines.
+        listing = subprocess.run(
+            ["aria2c", "--show-files", str(torrent_file)],
+            capture_output=True, text=True, timeout=30,
+        )
+        if listing.returncode != 0:
+            raise DownloadError("Could not list torrent files.")
+        if client == "aria2c":
+            target_idx = None
+            for line in listing.stdout.splitlines():
+                # "1|/folder/Name - 01 [1080p].mkv|1234567"
+                parts = line.split("|")
+                if len(parts) >= 3 and self._file_is_episode(parts[1], stream.episode):
+                    target_idx = parts[0]
+                    break
+            if target_idx is None:
+                raise DownloadError(
+                    f"Episode {stream.episode} not found inside the batch."
+                )
+            return self._aria2_download(
+                str(torrent_file), workdir, on_progress, should_cancel,
+                select_file=target_idx,
+            )
+        # libtorrent: find the file by name and set priorities.
+        return self._libtorrent_batch_download(
+            str(torrent_file), workdir, stream.episode, on_progress, should_cancel
+        )
+
+    @staticmethod
+    def _file_is_episode(path: str, episode: int) -> bool:
+        """Does a batch file name identify this episode (EP 01 / E01 / - 01)?"""
+        return bool(
+            re.search(
+                rf"(?:EP|Ep|Episode|E|#)\s*0*{episode}(?!\d)"
+                rf"|(?:^|[\s\-–—(\[])\s*0*{episode}\s*(?=[\]\s\-–—.]|$)",
+                path,
+            )
+        )
 
     @staticmethod
     def _finalize(video: Path, out: Path, subs: str) -> None:
@@ -292,7 +389,8 @@ class NyaaProvider:
 
     def _aria2_download(self, magnet: str, workdir: Path,
                         on_progress: Callable[[float], None],
-                        should_cancel: Callable[[], bool] | None) -> Path | None:
+                        should_cancel: Callable[[], bool] | None,
+                        select_file: str | None = None) -> Path | None:
         # DHT + public trackers find peers even when the magnet's own trackers
         # are unreachable — the reason a fresh torrent often stalls at 0%.
         cmd = [
@@ -305,8 +403,10 @@ class NyaaProvider:
             "--summary-interval=5",
             "--console-log-level=warn",
             "--bt-tracker=" + ",".join(_PUBLIC_TRACKERS),
-            magnet,
         ]
+        if select_file:
+            cmd.append(f"--select-file={select_file}")
+        cmd.append(magnet)
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         except OSError as exc:
@@ -356,6 +456,50 @@ class NyaaProvider:
             if status.progress > last_progress + 0.02:
                 on_progress(status.progress)
                 last_progress = status.progress
+            time.sleep(1)
+        session.pause()
+        return self._largest_video(workdir)
+
+    def _libtorrent_batch_download(self, torrent_path: str, workdir: Path, episode: int,
+                                   on_progress: Callable[[float], None],
+                                   should_cancel: Callable[[], bool] | None) -> Path | None:
+        """Download only the requested episode's file from a batch torrent."""
+        import libtorrent as lt
+
+        session = lt.session({"listen_interfaces": "0.0.0.0:6881"})
+        params = lt.parse_torrent_file(torrent_path)
+        params.save_path = str(workdir)
+        handle = session.add_torrent(params)
+
+        # Wait for the file list, then download only the matching file.
+        started = time.monotonic()
+        target = None
+        while target is None and time.monotonic() - started < 60:
+            try:
+                for idx, f in enumerate(handle.torrent_file().files()):
+                    if self._file_is_episode(f.path, episode):
+                        target = idx
+                        break
+            except Exception:
+                pass
+            time.sleep(0.5)
+        if target is None:
+            session.pause()
+            raise DownloadError(f"Episode {episode} not found inside the batch.")
+        for idx in range(len(handle.torrent_file().files())):
+            handle.file_priority(idx, 1 if idx == target else 0)
+
+        last_progress = -1.0
+        while time.monotonic() - started < _TORRENT_STALL_SECONDS:
+            if should_cancel and should_cancel():
+                session.pause()
+                raise Cancelled()
+            status = handle.status()
+            if status.progress > last_progress + 0.02:
+                on_progress(status.progress)
+                last_progress = status.progress
+            if status.progress >= 1.0:
+                break
             time.sleep(1)
         session.pause()
         return self._largest_video(workdir)

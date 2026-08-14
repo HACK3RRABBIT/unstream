@@ -288,11 +288,11 @@ def test_nyaa_search_picks_best_seeded_matching_episode(monkeypatch):
     assert "ep60" in torrent["magnet"]
 
 
-def test_nyaa_batch_only_episode_is_refused_with_clear_message(monkeypatch):
-    """An episode that only exists inside a multi-episode batch is refused with
-    a clear explanation rather than a wrong-episode match."""
+def test_nyaa_batch_only_episode_falls_back_to_batch(monkeypatch):
+    """An episode that only exists inside a multi-episode batch is returned as
+    a batch fallback (marked `batch: True`) so the downloader can extract it,
+    rather than a wrong-episode single or a bare refusal."""
     from app.anime import nyaa
-    from app.models import ProviderError
 
     html = """
     <table class="torrent-list"><tbody>
@@ -313,9 +313,9 @@ def test_nyaa_batch_only_episode_is_refused_with_clear_message(monkeypatch):
 
     p = nyaa.NyaaProvider()
     src = p.resolve("One Piece", 1999)
-    with pytest.raises(ProviderError) as caught:
-        p._search_episode(src, 1)
-    assert "batch" in str(caught.value).lower()
+    torrent = p._search_episode(src, 1)
+    assert torrent.get("batch") is True
+    assert torrent["torrent_id"] == "9"
 
 
 def test_nyaa_single_episode_beats_batch(monkeypatch):

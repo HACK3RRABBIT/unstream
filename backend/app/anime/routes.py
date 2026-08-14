@@ -242,7 +242,10 @@ def anime_download(body: AnimeDownloadRequest, request: Request) -> dict:
     plan_provider = None
     for provider in providers():
         try:
-            plan = provider.resolve(anime_title, season.season_year)
+            # Resolve with the *season's* title, so Nyaa can tell Season 1's
+            # episode 1 from Season 3's — the franchise seed name alone is
+            # ambiguous ("JUJUTSU KAISEN 1" matches S03E01).
+            plan = provider.resolve(season.best_title, season.season_year)
             plan_provider = provider
             break
         except _PE:

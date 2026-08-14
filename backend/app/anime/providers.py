@@ -49,6 +49,11 @@ class EpisodeStream:
     headers: dict = field(default_factory=dict)  # Referer etc. for yt-dlp
     subtitle_url: str | None = None  # optional external .vtt/.srt
     telegram_media: object | None = None  # opaque Telethon media ref
+    # Nyaa torrent metadata: the requested episode + whether the magnet is a
+    # whole batch we must extract the single episode file from.
+    episode: int = 0
+    batch: bool = False
+    torrent_id: str = ""
 
 
 class AnimeProvider(Protocol):
