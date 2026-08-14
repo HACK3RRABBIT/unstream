@@ -7,8 +7,8 @@
 
 services:
   frontend:
-    # Pulled if published, built from source if not. `--build` forces local.
-    image: ghcr.io/amiralibg/unstream-frontend:latest
+    # Always built from this checkout's source — the published GHCR images
+    # track the upstream repo and would miss this fork's changes.
     build: ./frontend
     restart: unless-stopped
     environment:
@@ -38,7 +38,8 @@ services:
     logging: *logging
 
   api:
-    image: ghcr.io/amiralibg/unstream-api:latest
+    # Always built from this checkout's source — the published GHCR images
+    # track the upstream repo and would miss this fork's changes.
     build: ./backend
     restart: unless-stopped
     depends_on:
