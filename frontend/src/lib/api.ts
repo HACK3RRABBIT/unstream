@@ -368,19 +368,32 @@ export async function getAnime(id: number, signal?: AbortSignal): Promise<AnimeD
   return data
 }
 
+/** Subtitle language to mux into each episode — like the music lyrics toggle.
+ *  "none" downloads the episode without subtitles. */
+export const SUBTITLE_LANGUAGES = ['eng', 'fas', 'none'] as const
+
+export type SubtitleLanguage = (typeof SUBTITLE_LANGUAGES)[number]
+
+export const DEFAULT_SUBTITLE_LANGUAGE: SubtitleLanguage = 'eng'
+
+export const isSubtitleLanguage = (value: unknown): value is SubtitleLanguage =>
+  SUBTITLE_LANGUAGES.includes(value as SubtitleLanguage)
+
 /** Queue a season's episodes as a download job. `episodeIds` selects a
  *  subset; omitted = the whole season. Quality is the header's global video
- *  quality — the same way music's bitrate applies to every track. */
+ *  quality; `subs` is the subtitle language to mux in. */
 export async function startAnimeDownload(
   animeId: number,
   season: number,
   quality: VideoQuality = DEFAULT_VIDEO_QUALITY,
+  subs: SubtitleLanguage = DEFAULT_SUBTITLE_LANGUAGE,
   episodeIds?: string[],
 ): Promise<string> {
   const { data } = await client.post<{ job_id: string }>('/anime/download', {
     media_id: animeId,
     season,
     quality,
+    subs,
     ...(episodeIds && episodeIds.length > 0 ? { episode_ids: episodeIds } : {}),
   })
   return data.job_id

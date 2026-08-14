@@ -257,3 +257,24 @@ def test_finished_show_available_equals_planned():
         }
     )
     assert media.available_episodes == 24
+
+
+def test_description_html_is_stripped():
+    """AniList descriptions are HTML; the API must hand back plain text."""
+    node = {
+        "id": 1,
+        "format": "TV",
+        "episodes": 24,
+        "seasonYear": 2020,
+        "status": "FINISHED",
+        "coverImage": {"large": None},
+        "description": "<i>Fancy</i> story.<br><b>Bold</b> &amp; <a href='x'>link</a>.",
+        "title": {"romaji": "X", "english": None, "native": None},
+        "synonyms": [],
+        "relations": {"edges": []},
+    }
+    media = anilist._media_from_node(node)
+    assert "<" not in media.description
+    assert "Fancy" in media.description
+    assert "&amp;" not in media.description  # entity unescaped
+    assert "link" in media.description

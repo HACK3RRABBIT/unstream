@@ -11,9 +11,11 @@ import {
 import {
   cancelJob,
   DEFAULT_QUALITY,
+  DEFAULT_SUBTITLE_LANGUAGE,
   DEFAULT_VIDEO_QUALITY,
   getJobs,
   isQuality,
+  isSubtitleLanguage,
   isVideoQuality,
   resolveUrl,
   startAnimeDownload,
@@ -23,6 +25,7 @@ import {
   type Job,
   type Quality,
   type SearchResult,
+  type SubtitleLanguage,
   type Track,
   type VideoQuality,
 } from './api'
@@ -75,6 +78,10 @@ interface DownloadsContextValue {
   /** Whether new jobs embed lyrics in the finished files' tags. */
   embedLyrics: boolean
   setEmbedLyrics: (embed: boolean) => void
+  /** Subtitle language anime episodes mux in (eng/fas/none), like the music
+   *  lyrics toggle — persisted and applied to every anime job. */
+  subtitleLanguage: SubtitleLanguage
+  setSubtitleLanguage: (lang: SubtitleLanguage) => void
   start: (url: string, collection: Collection, trackIds?: string[]) => Promise<void>
   /** One-click download of a single search result: resolve, then queue. */
   startFromResult: (result: SearchResult) => Promise<void>
@@ -103,6 +110,7 @@ const isSettled = (e: DownloadEntry) => e.expired === true || isFinished(e)
 const QUALITY_KEY = 'unstream:quality'
 const VIDEO_QUALITY_KEY = 'unstream:video-quality'
 const LYRICS_KEY = 'unstream:lyrics'
+const SUBTITLE_KEY = 'unstream:anime-subtitles'
 const JOBS_KEY = 'unstream:jobs'
 
 /** Mirrors DOWNLOADS_TTL_HOURS in backend/app/jobs.py — past this a stored
@@ -133,6 +141,15 @@ function storedLyrics(): boolean {
     return localStorage.getItem(LYRICS_KEY) !== '0'
   } catch {
     return true // private mode / storage disabled
+  }
+}
+
+function storedSubtitleLanguage(): SubtitleLanguage {
+  try {
+    const saved = localStorage.getItem(SUBTITLE_KEY)
+    return isSubtitleLanguage(saved) ? saved : DEFAULT_SUBTITLE_LANGUAGE
+  } catch {
+    return DEFAULT_SUBTITLE_LANGUAGE
   }
 }
 
@@ -168,6 +185,7 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
   const [quality, setQualityState] = useState<Quality>(storedQuality)
   const [videoQuality, setVideoQualityState] = useState<VideoQuality>(storedVideoQuality)
   const [embedLyrics, setEmbedLyricsState] = useState<boolean>(storedLyrics)
+  const [subtitleLanguage, setSubtitleLanguageState] = useState<SubtitleLanguage>(storedSubtitleLanguage)
   const entriesRef = useRef(entries)
   entriesRef.current = entries
   // Read through a ref so `start` stays referentially stable — every
@@ -178,6 +196,8 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
   videoQualityRef.current = videoQuality
   const lyricsRef = useRef(embedLyrics)
   lyricsRef.current = embedLyrics
+  const subtitleLanguageRef = useRef(subtitleLanguage)
+  subtitleLanguageRef.current = subtitleLanguage
   // (time, settled-count) samples per job, for ETA estimation.
   const samplesRef = useRef<Map<string, { t: number; settled: number }[]>>(new Map())
 
@@ -205,6 +225,15 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
       localStorage.setItem(LYRICS_KEY, next ? '1' : '0')
     } catch {
       // Not persisting is survivable; the session still honours the choice.
+    }
+  }, [])
+
+  const setSubtitleLanguage = useCallback((next: SubtitleLanguage) => {
+    setSubtitleLanguageState(next)
+    try {
+      localStorage.setItem(SUBTITLE_KEY, next)
+    } catch {
+      // As above.
     }
   }, [])
 
@@ -255,8 +284,9 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
       episodeIds?: string[],
     ) => {
       const chosen = videoQualityRef.current
+      const subs = subtitleLanguageRef.current
       const url = `anime://${anime.id}/${season.season}`
-      const jobId = await startAnimeDownload(anime.id, season.season, chosen, episodeIds)
+      const jobId = await startAnimeDownload(anime.id, season.season, chosen, subs, episodeIds)
       // A subset job lists only its own episodes in the dock.
       const wanted = episodeIds ? new Set(episodeIds) : null
       const tracks = Array.from({ length: season.episodes }, (_, i) => {
@@ -395,6 +425,8 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
       setVideoQuality,
       embedLyrics,
       setEmbedLyrics,
+      subtitleLanguage,
+      setSubtitleLanguage,
       start,
       startFromResult,
       startAnime,
@@ -413,6 +445,8 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
       setVideoQuality,
       embedLyrics,
       setEmbedLyrics,
+      subtitleLanguage,
+      setSubtitleLanguage,
       start,
       startFromResult,
       startAnime,

@@ -286,3 +286,64 @@ def test_nyaa_search_picks_best_seeded_matching_episode(monkeypatch):
     torrent = p._search_episode(src, 1100)
     assert torrent["seeders"] == 60  # the best-seeded episode, not the batch
     assert "ep60" in torrent["magnet"]
+
+
+def test_nyaa_batch_only_episode_is_refused_with_clear_message(monkeypatch):
+    """An episode that only exists inside a multi-episode batch is refused with
+    a clear explanation rather than a wrong-episode match."""
+    from app.anime import nyaa
+    from app.models import ProviderError
+
+    html = """
+    <table class="torrent-list"><tbody>
+      <tr><th>Category</th><th>Name</th></tr>
+      <tr><td><a title="Anime - English-translated"></a></td>
+          <td colspan="2"><a href="/view/9" title="[Hxod] One Piece 001-206 [Dual Audio]"></a>
+          <a href="magnet:?xt=urn:btih:batch"></a></td>
+          <td class="text-center">253</td></tr>
+    </tbody></table>
+    """
+    class FakeResp:
+        text = html
+
+        def raise_for_status(self):
+            return None
+
+    monkeypatch.setattr(nyaa._client, "get", lambda *a, **k: FakeResp())
+
+    p = nyaa.NyaaProvider()
+    src = p.resolve("One Piece", 1999)
+    with pytest.raises(ProviderError) as caught:
+        p._search_episode(src, 1)
+    assert "batch" in str(caught.value).lower()
+
+
+def test_nyaa_single_episode_beats_batch(monkeypatch):
+    """A true single-episode release (E1100) beats a batch (001-206)."""
+    from app.anime import nyaa
+
+    html = """
+    <table class="torrent-list"><tbody>
+      <tr><th>Category</th><th>Name</th></tr>
+      <tr><td><a title="Anime - English-translated"></a></td>
+          <td colspan="2"><a href="/view/1" title="[Hxod] One Piece 001-206 [Dual Audio]"></a>
+          <a href="magnet:?xt=urn:btih:batch"></a></td>
+          <td class="text-center">253</td></tr>
+      <tr><td><a title="Anime - English-translated"></a></td>
+          <td colspan="2"><a href="/view/2" title="[ToonsHub] One Piece - E1100 (1080p)"></a>
+          <a href="magnet:?xt=urn:btih:ep1100"></a></td>
+          <td class="text-center">9</td></tr>
+    </tbody></table>
+    """
+    class FakeResp:
+        text = html
+
+        def raise_for_status(self):
+            return None
+
+    monkeypatch.setattr(nyaa._client, "get", lambda *a, **k: FakeResp())
+
+    p = nyaa.NyaaProvider()
+    src = p.resolve("One Piece", 1999)
+    torrent = p._search_episode(src, 1100)
+    assert "ep1100" in torrent["magnet"]  # the single, not the batch

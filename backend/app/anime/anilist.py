@@ -13,13 +13,29 @@ separate provider (see providers.py); here we just tell the UI what exists
 and how many episodes each season has.
 """
 
+import html
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 from ..models import ProviderError
+
+# AniList descriptions are HTML (<br>, <i>, <b>, <a>). The UI shows them as
+# plain text, and the translation endpoint would otherwise translate the tags
+# themselves — strip them at the source so both are clean.
+_HTML_TAG = re.compile(r"<[^>]+>")
+
+
+def _strip_html(text: str | None) -> str | None:
+    if not text:
+        return text
+    # <br> is a newline; other tags vanish, then entities unescape (&amp; → &).
+    text = re.sub(r"<br\s*/?>", " ", text, flags=re.IGNORECASE)
+    text = _HTML_TAG.sub("", text)
+    return html.unescape(text).strip()
 
 API = "https://graphql.anilist.co"
 _TIMEOUT = 15
@@ -126,7 +142,7 @@ def _media_from_node(node: dict) -> AniMedia:
         season_year=node.get("seasonYear"),
         status=node.get("status") or "",
         cover_url=(node.get("coverImage") or {}).get("large"),
-        description=node.get("description"),
+        description=_strip_html(node.get("description")),
         next_airing_episode=(node.get("nextAiringEpisode") or {}).get("episode"),
         relations=relations,
     )

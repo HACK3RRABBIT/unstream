@@ -90,15 +90,21 @@ class NyaaProvider:
             episode=0,
         )
 
-    def _search_episode(self, src: EpisodeSource, episode: int) -> dict:
+    def _search_episode(self, src: EpisodeSource, episode: int, quality: str = "") -> dict:
         """Return the best-seeded torrent dict for one episode.
 
         The year is deliberately left out of the search query — Nyaa's search
         treats parentheses specially and "(1999)" zeroes out results. The
-        episode number in the title is the strong disambiguator.
+        episode number is zero-padded (001) so it matches the way fansub
+        titles write episodes, and it must appear as a real episode marker —
+        not a stray digit inside a hash or resolution — so "One Piece 1" can't
+        accidentally match "One Piece 1173 [90E1B1FA]".
         """
         title = src.anime_id
-        query = f"{title} {episode}".strip()
+        padded = f"{episode:03d}"
+        # Quality hints the search when given (e.g. "720p"), narrowing to the
+        # right release.
+        query = f"{title} {padded}" + (f" {quality}p" if quality else "")
         try:
             resp = _client.get(
                 f"{BASE_URL}/",
@@ -114,13 +120,20 @@ class NyaaProvider:
         except Exception as exc:  # noqa: BLE001
             raise ProviderError(f"Could not reach Nyaa: {exc}") from exc
 
-        # Rows: category, title, download, size, seeders, leechers, date.
-        # The real torrent title is on the /view/<id> link's title attribute
-        # (the earlier title= is the category name). We require the row's
-        # title to mention the episode number, so a "One Piece 1100" query
-        # doesn't match a full-season batch.
+        # An episode number is "real" when it appears with a delimiter or
+        # marker (EP 01, E01, - 001, (001), 001 [) — never as bare digits
+        # that could be a hash, a year, or a resolution.
+        ep_re = re.compile(
+            rf"(?:EP|Ep|Episode|E|#)\s*0*{episode}(?!\d)"
+            rf"|(?:^|[\s\-–—(\[])\s*0*{episode}\s*(?=[\]\s\-–—,]|$)"
+        )
+        # A range of episodes (001-574, E01-E06) — the episode is *in* it but
+        # the torrent is a whole batch, which we cannot single out yet.
+        batch_re = re.compile(rf"(?:EP|Ep|Episode|E)?\s*0*{episode}\s*[-–—]\s*0*\d+")
+
         rows = re.findall(r"<tr[^>]*>.*?</tr>", resp.text, re.S)
         best = None
+        batch_only = False
         for row in rows[1:]:  # first row is the header
             title_m = re.search(r'href="/view/\d+"[^>]*title="([^"]+)"', row)
             magnet = re.search(r'href="(magnet:\?[^"]+)"', row)
@@ -129,24 +142,17 @@ class NyaaProvider:
             if not title_m or not magnet:
                 continue
             title = title_m.group(1)
-            # The episode must appear as a standalone number in the title.
-            if not re.search(rf"(?<!\d){episode}(?!\d)", title):
+            if not ep_re.search(title):
                 continue
             seeders = int(seeders_m.group(1)) if seeders_m else 0
 
-            # Score how precisely this title names our episode, so a single
-            # "EP 01" release beats a "S00E01-E06" batch that merely contains
-            # episode 1. Explicit episode markers are weighted over a bare
-            # number; batch ranges (a dash between two episode numbers, e.g.
-            # "E01-E06" or "01-06") are penalized.
             marker = r"(?:EP|Ep|Episode|E|#)\s*0*%d(?!\d)" % episode
             explicit = bool(re.search(marker, title))
-            batch = bool(
-                re.search(rf"(?:EP|Ep|Episode|E)?\s*0*{episode}\s*[-–—]\s*0*\d+", title)
-            )
-            score = seeders + (200 if explicit else 0) - (100 if batch else 0)
-            if explicit and batch:
-                score = seeders - 100  # a range that names it, not a single
+            is_batch = bool(batch_re.search(title))
+            if is_batch:
+                batch_only = True
+                continue  # a range is not a single-episode download
+            score = seeders + (200 if explicit else 0)
             if best is None or score > best["score"]:
                 best = {
                     "title": title,
@@ -156,8 +162,13 @@ class NyaaProvider:
                     "score": score,
                 }
         if best is None or best["seeders"] == 0:
+            if batch_only:
+                raise ProviderError(
+                    f"'{title}' episode {episode} only exists in a multi-episode "
+                    "batch on Nyaa, which isn't downloadable as a single episode yet."
+                )
             raise ProviderError(
-                f"No seeded torrent found on Nyaa for '{query}'."
+                f"No seeded single-episode torrent found on Nyaa for '{query}'."
             )
         return best
 
@@ -170,8 +181,8 @@ class NyaaProvider:
         return None
 
     def episode_stream(self, src: EpisodeSource, quality: str) -> EpisodeStream:
-        """The best-seeded magnet for `src.episode`."""
-        torrent = self._search_episode(src, src.episode)
+        """The best-seeded magnet for `src.episode`, at `quality` when offered."""
+        torrent = self._search_episode(src, src.episode, quality)
         return EpisodeStream(
             provider=self.name,
             url=torrent["magnet"],
@@ -185,12 +196,14 @@ class NyaaProvider:
         quality: str,
         on_progress: Callable[[float], None],
         should_cancel: Callable[[], bool] | None,
+        subs: str = "eng",
     ) -> Path:
-        """Download the torrent, extract the video file, return it as mp4.
+        """Download the torrent, extract the video, return it as mp4.
 
-        `dest` is a stem (no extension). The torrent may contain one video
-        (mkv/mp4) or a folder; we find the largest video and rename/remux it
-        to dest.mp4 so the job's file naming holds.
+        `dest` is a stem (no extension). Anime fansubs embed soft subtitle
+        tracks inside the mkv; when the user asked for subtitles, the track
+        matching the requested language is muxed into the mp4 (mov_text) so it
+        can be toggled in any player. `subs="none"` keeps the video bare.
         """
         magnet = stream.url
         if not magnet or not magnet.startswith("magnet:"):
@@ -208,13 +221,66 @@ class NyaaProvider:
         if video.suffix.lower() == ".mp4":
             video.rename(out)
         else:
-            from ..downloader import _run_ffmpeg
-
-            _run_ffmpeg(["-i", str(video), "-c", "copy"], out, "torrent mux")
-            video.unlink(missing_ok=True)
+            self._finalize(video, out, subs)
         # Clean the torrent working directory.
         shutil.rmtree(workdir, ignore_errors=True)
         return out
+
+    @staticmethod
+    def _finalize(video: Path, out: Path, subs: str) -> None:
+        """Remux a non-mp4 video to mp4, muxing the requested subtitle track.
+
+        `subs` is "eng"/"fas"/"none". The subtitle track is matched from the
+        file's embedded stream metadata (language/title); when none matches the
+        requested language, the video is muxed without subtitles rather than
+        failing the download — subtitles are nice-to-have.
+        """
+        from ..downloader import _run_ffmpeg
+
+        if subs == "none":
+            _run_ffmpeg(["-i", str(video), "-c", "copy"], out, "torrent mux")
+            video.unlink(missing_ok=True)
+            return
+
+        # Probe the video's streams: index + language per stream.
+        probe = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-select_streams", "s",
+                "-show_entries", "stream=index:stream_tags=language,title",
+                "-of", "csv=p=0", str(video),
+            ],
+            capture_output=True, text=True, timeout=30,
+        )
+        target = "eng" if subs == "eng" else "fas"
+        chosen = None
+        for line in probe.stdout.strip().splitlines():
+            parts = [p.strip() for p in line.split(",")]
+            idx = parts[0]
+            tags = " ".join(parts[1:]).lower()
+            # Match English (eng/en) or Persian (fas/fa/per) language tags.
+            if subs == "eng" and re.search(r"(^|_)eng?($|_)", tags.replace("-", "_")):
+                chosen = idx
+                break
+            if subs == "fas" and re.search(r"(^|_)fas|per|fa($|_)", tags.replace("-", "_")):
+                chosen = idx
+                break
+
+        if chosen is None:
+            # No matching embedded sub — ship the bare video.
+            _run_ffmpeg(["-i", str(video), "-c", "copy"], out, "torrent mux")
+            video.unlink(missing_ok=True)
+            return
+
+        # Mux the chosen subtitle track into the mp4 as mov_text.
+        args = [
+            "-i", str(video),
+            "-map", "0:v", "-map", "0:a?",
+            "-map", f"0:s:{chosen}",
+            "-c", "copy", "-c:s", "mov_text",
+        ]
+        _run_ffmpeg(args, out, "subtitle mux")
+        video.unlink(missing_ok=True)
 
     def _download_torrent(self, client: str, magnet: str, workdir: Path,
                           on_progress: Callable[[float], None],

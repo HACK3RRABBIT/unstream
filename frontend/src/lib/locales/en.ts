@@ -136,16 +136,19 @@ const en = {
     queuedOne: () => `Episode added to the queue`,
     finished: (done: number, total: number) => `${done} of ${total} episodes downloaded`,
     failedCount: (n: number) => `${n} failed`,
-    loginNeeded:
-      'Telegram is configured but not logged in. Run the one-time login to download from the bot.',
-    provider: {
-      telegram: 'Telegram',
-      hianime: 'Streaming site',
-    },
     quality: {
       label: 'Video quality',
       original: 'Original',
       hint: 'The resolution every anime download starts at.',
+    },
+    subtitles: {
+      label: 'Subtitles',
+      languages: { eng: 'EN', fas: 'FA', none: 'Off' },
+      hints: {
+        eng: 'Mux English soft subtitles into each episode',
+        fas: 'Mux Persian subtitles (when the release has them)',
+        none: 'Download without subtitles',
+      },
     },
   },
 

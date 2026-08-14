@@ -123,16 +123,19 @@ const fa: Messages = {
     queuedOne: () => 'قسمت به صف اضافه شد',
     finished: (done: number, total: number) => `${fd(done)} از ${fd(total)} قسمت دانلود شد`,
     failedCount: (n: number) => `${fd(n)} ناموفق`,
-    loginNeeded:
-      'تلگرام تنظیم شده ولی وارد نشده. برای دانلود از ربات، یک‌بار لاگین تعاملی را اجرا کن.',
-    provider: {
-      telegram: 'تلگرام',
-      hianime: 'سایت پخش',
-    },
     quality: {
       label: 'کیفیت ویدیو',
       original: 'اصلی',
       hint: 'کیفیتی که هر دانلود انیمه با آن شروع می‌شود.',
+    },
+    subtitles: {
+      label: 'زیرنویس',
+      languages: { eng: 'EN', fas: 'فا', none: 'خاموش' },
+      hints: {
+        eng: 'زیرنویس انگلیسی به هر قسمت اضافه شود',
+        fas: 'زیرنویس فارسی (اگر نسخه داشته باشد)',
+        none: 'دانلود بدون زیرنویس',
+      },
     },
   },
 

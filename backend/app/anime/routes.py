@@ -26,6 +26,9 @@ class AnimeDownloadRequest(BaseModel):
     quality: str = DEFAULT_VIDEO_QUALITY
     # Optional subset of episode_ids to download; None/omitted = the whole season.
     episode_ids: list[str] | None = None
+    # Subtitle language to mux into each episode ("eng"/"fas"/"none"),
+    # captured at job start like quality. Defaults to English soft subs.
+    subs: str = "eng"
 
 
 def _episode_id(media_id: int, season: int, episode: int) -> str:
@@ -291,6 +294,7 @@ def anime_download(body: AnimeDownloadRequest, request: Request) -> dict:
                 cover_url=season.cover_url,
                 track_number=episode,
                 media="video",
+                subs=body.subs,
                 source_url=(
                     f"anime://{plan.provider}/{plan.anime_id}/"
                     f"{season_component}/{episode}"

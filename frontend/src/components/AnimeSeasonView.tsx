@@ -13,6 +13,7 @@ import {
 import { faNumerals, useMessages, useStartAlign } from '../lib/i18n'
 import { useDownloads } from '../lib/downloads'
 import { useToast } from '../lib/toast'
+import { SubtitlePicker } from './SubtitlePicker'
 
 interface Props {
   anime: AnimeDetail
@@ -149,6 +150,8 @@ export function AnimeSeasonView({ anime, season }: Props) {
               : m.anime.episodes(season.episodes)}
           </p>
         </div>
+
+        <SubtitlePicker className="w-full sm:w-auto" />
 
         <div className="flex items-center gap-2">
           {zipEntry && (zipEntry.job?.total ?? zipEntry.tracks.length) > 1 && (

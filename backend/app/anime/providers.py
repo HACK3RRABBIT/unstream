@@ -24,8 +24,8 @@ from typing import Callable, Protocol
 # Order providers are tried, in priority order. Empty/unset names are skipped;
 # a name whose provider is unavailable (no credentials, no session) is skipped.
 # Nyaa is first: it is the complete, permanent, keyless archive, and the only
-# source that works from any network. The others follow as fallbacks.
-PROVIDER_ORDER = os.getenv("ANIME_PROVIDER_ORDER", "nyaa,hianime,telegram")
+# source that works from any network. hianime follows as a stream fallback.
+PROVIDER_ORDER = os.getenv("ANIME_PROVIDER_ORDER", "nyaa,hianime")
 
 
 @dataclass
@@ -85,11 +85,13 @@ class AnimeProvider(Protocol):
         quality: str,
         on_progress: Callable[[float], None],
         should_cancel: Callable[[], bool] | None,
+        subs: str = "eng",
     ) -> Path:
         """Fetch the stream's bytes into `dest` (a path without extension).
 
-        Returns the video file actually produced. Only MTProto providers
-        (Telegram) implement this; HLS providers leave it to
+        `subs` is the subtitle language to mux ("eng"/"fas"/"none"). Returns
+        the video file actually produced. Only self-downloading providers
+        (Nyaa torrents) implement this; HLS providers leave it to
         anime/downloader.py.
         """
         raise NotImplementedError  # noqa: PLC0415 — HLS providers don't need it
@@ -103,12 +105,10 @@ def providers() -> list[AnimeProvider]:
     """
     from . import hianime
     from . import nyaa
-    from . import telegram  # noqa: PLC0415 — heavy import, keep it lazy
 
     registry: dict[str, type[AnimeProvider]] = {
         "nyaa": nyaa.NyaaProvider,
         "hianime": hianime.HianimeProvider,
-        "telegram": telegram.TelegramProvider,
     }
     order = [name.strip() for name in PROVIDER_ORDER.split(",") if name.strip()]
     result: list[AnimeProvider] = []

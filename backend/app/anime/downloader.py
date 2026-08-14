@@ -250,11 +250,12 @@ def download_video_track(
                         should_cancel, resolution,
                     )
                 else:
-                    # MTProto provider pulls the bytes itself.
+                    # The provider fetches the bytes itself (Nyaa torrents).
                     video = provider.download(
                         stream, dest, resolution,
                         lambda f: on_progress("downloading", f),
                         should_cancel,
+                        subs=track.subs,
                     )
                 on_progress("tagging", 1.0)
                 sub = _fetch_subs(stream, dest)
