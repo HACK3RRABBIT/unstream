@@ -267,7 +267,7 @@ export async function cancelJob(jobId: string): Promise<Job> {
 }
 
 export const trackFileUrl = (jobId: string, trackId: string) =>
-  `/api/jobs/${jobId}/tracks/${trackId}/file`
+  `/api/jobs/${jobId}/tracks/${encodeURIComponent(trackId)}/file`
 
 export const jobZipUrl = (jobId: string) => `/api/jobs/${jobId}/zip`
 

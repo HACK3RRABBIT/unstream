@@ -48,11 +48,6 @@ _client = httpx.Client(
     follow_redirects=True,
 )
 
-# How long to wait for a torrent to make progress before giving up (seconds).
-# The first minutes are tracker announce + piece discovery; a fresh swarm can
-# take ~30s to ramp. Past this with nothing, the swarm is likely dead.
-_TORRENT_STALL_SECONDS = 240
-
 # Public UDP trackers as a fallback — some Nyaa swarms only announce here.
 _PUBLIC_TRACKERS = [
     "udp://tracker.opentrackr.org:1337/announce",
@@ -244,25 +239,35 @@ class NyaaProvider:
         workdir.mkdir(parents=True, exist_ok=True)
 
         client = _pick_torrent_client()
-        # A batch torrent needs the single episode's file selected up front;
-        # a single-episode torrent downloads whole.
-        if stream.batch and stream.torrent_id:
-            video = self._download_batch_episode(
-                client, stream, workdir, on_progress, should_cancel
-            )
-        else:
-            video = self._download_torrent(client, magnet, workdir, on_progress, should_cancel)
-        if video is None:
-            raise DownloadError("No video file found in the torrent.")
+        try:
+            # A batch torrent needs the single episode's file selected up front;
+            # a single-episode torrent downloads whole.
+            if stream.batch and stream.torrent_id:
+                video = self._download_batch_episode(
+                    client, stream, workdir, on_progress, should_cancel
+                )
+            else:
+                video = self._download_torrent(
+                    client, magnet, workdir, on_progress, should_cancel
+                )
+            if video is None or not video.is_file():
+                raise DownloadError("No video file found in the torrent.")
 
-        out = dest.with_name(dest.name + ".mp4")
-        if video.suffix.lower() == ".mp4":
-            video.rename(out)
-        else:
-            self._finalize(video, out, subs)
-        # Clean the torrent working directory.
-        shutil.rmtree(workdir, ignore_errors=True)
-        return out
+            out = dest.with_name(dest.name + ".mp4")
+            if video.suffix.lower() == ".mp4":
+                video.rename(out)
+            else:
+                self._finalize(video, out, subs)
+            return out
+        except Exception:
+            import traceback
+
+            raise DownloadError(
+                f"Nyaa download failed: {traceback.format_exc(limit=6)}"
+            ) from None
+        finally:
+            # Clean the torrent working directory either way.
+            shutil.rmtree(workdir, ignore_errors=True)
 
     def _download_batch_episode(self, client: str, stream: EpisodeStream, workdir: Path,
                                 on_progress: Callable[[float], None],
@@ -399,7 +404,9 @@ class NyaaProvider:
             "--seed-time=0",
             "--enable-dht=true",
             "--bt-tracker-timeout=10",
-            "--bt-stop-timeout=300",
+            # aria2's own cap — long enough for a large episode even on a slow
+            # swarm (the job's own progress-aware stall check is stricter).
+            "--bt-stop-timeout=3600",
             "--summary-interval=5",
             "--console-log-level=warn",
             "--bt-tracker=" + ",".join(_PUBLIC_TRACKERS),
@@ -407,22 +414,36 @@ class NyaaProvider:
         if select_file:
             cmd.append(f"--select-file={select_file}")
         cmd.append(magnet)
+        # Output goes to a log file, NOT a pipe: aria2 writes summaries every
+        # few seconds, and an unread pipe buffer fills in ~30s, which blocks
+        # aria2 mid-transfer (a large episode never finishes).
+        log_file = workdir / "aria2.log"
         try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            with log_file.open("wb") as out:
+                proc = subprocess.Popen(cmd, stdout=out, stderr=subprocess.STDOUT)
         except OSError as exc:
             raise DownloadError(f"Could not run aria2c: {exc}") from exc
-        # Poll for progress / completion / cancellation.
-        started = time.monotonic()
-        while proc.poll() is None:
+
+        # A large episode can take 30+ minutes at modest speeds, so there is no
+        # stall timeout: the download runs until aria2 exits or the user
+        # cancels. Completion is signalled by aria2's exit code, NOT by the
+        # absence of the ".aria2" control file — aria2 can leave it after a
+        # successful download. The job reports "downloading" meanwhile.
+        while True:
             if should_cancel and should_cancel():
                 proc.terminate()
                 raise Cancelled()
-            if time.monotonic() - started > _TORRENT_STALL_SECONDS:
-                proc.terminate()
-                raise DownloadError("Torrent made no progress in time.")
+            if proc.poll() is not None:
+                break  # aria2 exited on its own
             time.sleep(2)
-        if proc.returncode != 0:
+        proc.wait(timeout=300)
+        if proc.returncode not in (0, -15):
             raise DownloadError("aria2c failed to download the torrent.")
+        # aria2 can leave "<name>.aria2" control files after a successful
+        # download; they'd make _largest_video skip the complete file, so drop
+        # them now that the process has exited 0.
+        for ctl in workdir.rglob("*.aria2"):
+            ctl.unlink(missing_ok=True)
         return self._largest_video(workdir)
 
     def _libtorrent_download(self, magnet: str, workdir: Path,
@@ -443,15 +464,11 @@ class NyaaProvider:
         handle = session.add_torrent(params)
         started = time.monotonic()
         last_progress = -1.0
+        # No stall timeout — a large episode downloads until done or cancelled.
         while not handle.is_seed():
             if should_cancel and should_cancel():
                 session.pause()
                 raise Cancelled()
-            # Trackers announce over a few seconds; give a fresh torrent time
-            # to find peers before declaring it stalled.
-            if time.monotonic() - started > _TORRENT_STALL_SECONDS:
-                session.pause()
-                raise DownloadError("Torrent made no progress in time.")
             status = handle.status()
             if status.progress > last_progress + 0.02:
                 on_progress(status.progress)
@@ -490,7 +507,7 @@ class NyaaProvider:
             handle.file_priority(idx, 1 if idx == target else 0)
 
         last_progress = -1.0
-        while time.monotonic() - started < _TORRENT_STALL_SECONDS:
+        while True:
             if should_cancel and should_cancel():
                 session.pause()
                 raise Cancelled()
@@ -506,10 +523,15 @@ class NyaaProvider:
 
     @staticmethod
     def _largest_video(workdir: Path) -> Path | None:
+        # A file still being written has a "<name>.aria2" control file next to
+        # it — skipping those avoids remuxing a half-downloaded episode.
+        incomplete = {p.with_suffix("") for p in workdir.rglob("*.aria2") if p.is_file()}
         vids = [
             p
             for p in workdir.rglob("*")
-            if p.is_file() and p.suffix.lower() in (".mp4", ".mkv", ".avi", ".webm")
+            if p.is_file()
+            and p not in incomplete
+            and p.suffix.lower() in (".mp4", ".mkv", ".avi", ".webm")
         ]
         return max(vids, key=lambda p: p.stat().st_size) if vids else None
 

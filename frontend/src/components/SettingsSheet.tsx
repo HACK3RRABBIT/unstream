@@ -2,15 +2,20 @@ import { X } from 'lucide-react'
 import { useMessages } from '../lib/i18n'
 import { LyricsToggle } from './LyricsToggle'
 import { QualityPicker } from './QualityPicker'
+import { VideoQualityPicker } from './VideoQualityPicker'
+import { SubtitlePicker } from './SubtitlePicker'
 import { LanguagePicker } from './LanguagePicker'
 import { Sheet } from './Sheet'
+import type { AppTab } from './TabSwitch'
 
-/** The header's three preferences, on the layouts too narrow to hold them.
+/** The header's preferences, on the layouts too narrow to hold them.
  *
- *  The same three components the wide header uses, not phone-only copies of
- *  them — otherwise the next quality option would have to be added twice.
- *  `w-full justify-between` is all they need to become rows. */
-export function SettingsSheet({ onClose }: { onClose: () => void }) {
+ *  The same components the wide header uses, not phone-only copies of them —
+ *  otherwise the next quality option would have to be added twice. Which set
+ *  shows follows the active tab: music gets lyrics + audio quality, anime
+ *  gets video quality + subtitles. `w-full justify-between` is all they need
+ *  to become rows. */
+export function SettingsSheet({ tab, onClose }: { tab: AppTab; onClose: () => void }) {
   const m = useMessages()
 
   return (
@@ -31,12 +36,25 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
             a 320px phone beside its label, and a row that cannot fit must drop
             to a second line rather than scroll sideways. */}
         <div className="divide-y divide-ink-800">
-          <div className="py-4">
-            <LyricsToggle className="w-full flex-wrap justify-between gap-y-3" />
-          </div>
-          <div className="py-4">
-            <QualityPicker className="w-full flex-wrap justify-between gap-y-3" />
-          </div>
+          {tab === 'music' ? (
+            <>
+              <div className="py-4">
+                <LyricsToggle className="w-full flex-wrap justify-between gap-y-3" />
+              </div>
+              <div className="py-4">
+                <QualityPicker className="w-full flex-wrap justify-between gap-y-3" />
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="py-4">
+                <VideoQualityPicker className="w-full flex-wrap justify-between gap-y-3" />
+              </div>
+              <div className="py-4">
+                <SubtitlePicker className="w-full flex-wrap justify-between gap-y-3" />
+              </div>
+            </>
+          )}
           <div className="py-4">
             <LanguagePicker className="w-full flex-wrap justify-between gap-y-3" />
           </div>

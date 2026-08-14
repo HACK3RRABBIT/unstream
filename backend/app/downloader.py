@@ -150,7 +150,9 @@ def _run_ffmpeg(args: list[str], produced: Path, what: str) -> None:
         ["ffmpeg", "-y", *args, str(produced)], capture_output=True, timeout=300
     )
     if proc.returncode != 0 or not produced.exists():
-        produced.unlink(missing_ok=True)  # ffmpeg may leave an empty shell
+        # ffmpeg may leave an empty shell; a directory can't be unlinked.
+        if produced.is_file():
+            produced.unlink(missing_ok=True)
         tail = proc.stderr.decode(errors="replace").strip().splitlines()[-1:]
         raise DownloadError(f"ffmpeg {what} failed: {' '.join(tail)}")
 

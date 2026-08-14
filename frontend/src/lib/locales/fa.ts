@@ -125,7 +125,7 @@ const fa: Messages = {
     failedCount: (n: number) => `${fd(n)} ناموفق`,
     quality: {
       label: 'کیفیت ویدیو',
-      original: 'اصلی',
+      original: 'اورجینال',
       hint: 'کیفیتی که هر دانلود انیمه با آن شروع می‌شود.',
     },
     subtitles: {

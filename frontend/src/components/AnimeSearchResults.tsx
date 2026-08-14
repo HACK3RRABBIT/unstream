@@ -57,7 +57,7 @@ function Summary({ description }: { description: string | null }) {
 
   if (!text) return null
   return (
-    <p dir="auto" className="mt-1.5 line-clamp-2 text-xs leading-relaxed text-ink-400">
+    <p dir="auto" className="mt-1.5 line-clamp-1 text-xs leading-relaxed text-ink-400">
       {text}
     </p>
   )

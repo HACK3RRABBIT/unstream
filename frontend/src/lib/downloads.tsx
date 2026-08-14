@@ -289,7 +289,10 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
       const jobId = await startAnimeDownload(anime.id, season.season, chosen, subs, episodeIds)
       // A subset job lists only its own episodes in the dock.
       const wanted = episodeIds ? new Set(episodeIds) : null
-      const tracks = Array.from({ length: season.episodes }, (_, i) => {
+      // Match the backend's episode count: an airing season lists what has
+      // actually aired, so the dock's rows align with the job's tracks.
+      const count = season.available_episodes > 0 ? season.available_episodes : season.episodes
+      const tracks = Array.from({ length: count }, (_, i) => {
         const id = `${anime.id}:s${season.season}e${i + 1}`
         return { id, title: `Episode ${i + 1}` }
       }).filter((t) => !wanted || wanted.has(t.id))
