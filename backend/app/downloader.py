@@ -172,27 +172,43 @@ def _downloaded_audio(dest: Path) -> Path | None:
 
 
 def _keep_original(dest: Path) -> Path:
-    """Return the untouched stream, moving webm audio into an Ogg container.
+    """Return the untouched stream, moved into a pure-audio container.
 
-    Nothing is re-encoded — the webm case is a copy-codec container swap,
-    done only because mutagen (and plenty of players) cannot handle audio
-    in webm, so the file would otherwise arrive untagged.
+    Nothing is re-encoded — every case below is a copy-codec container swap.
+    It exists because "original" promises the upload's own *audio*, and both
+    of the containers that can smuggle a video track in (webm, mp4) either
+    baffle mutagen or arrive as a music video instead of a song:
+
+      * YouTube's audio-only streams are webm (Opus), which mutagen cannot
+        tag, so they are remuxed into .opus (or .ogg for the Vorbis cases).
+      * A video with no audio-only stream falls back to a combined mp4 whose
+        audio track *is* the song — dropping the picture keeps the music and
+        names the file honestly (.m4a) instead of shipping a video clip.
+
+    A real m4a/opus/ogg/aac/flac stream is already pure audio and is returned
+    untouched.
     """
     source = _downloaded_audio(dest)
     if source is None:
         raise DownloadError("no audio file was produced")
-    if source.suffix.lower() != ".webm":
+    suffix = source.suffix.lower()
+    if suffix not in (".webm", ".mp4"):
         return source
 
     remux = ["-i", str(source), "-vn", "-codec:a", "copy"]
-    try:
-        # YouTube's webm audio is Opus in practice; .opus is the honest name.
-        out = _with_ext(dest, "opus")
+    if suffix == ".mp4":
+        # The mp4 fallback's audio is AAC; .m4a is its honest, taggable name.
+        out = _with_ext(dest, "m4a")
         _run_ffmpeg(remux, out, "remux")
-    except DownloadError:
-        # Vorbis (or anything else the Opus muxer rejects) still fits in Ogg.
-        out = _with_ext(dest, "ogg")
-        _run_ffmpeg(remux, out, "remux")
+    else:
+        try:
+            # YouTube's webm audio is Opus in practice; .opus is the honest name.
+            out = _with_ext(dest, "opus")
+            _run_ffmpeg(remux, out, "remux")
+        except DownloadError:
+            # Vorbis (or anything else the Opus muxer rejects) still fits in Ogg.
+            out = _with_ext(dest, "ogg")
+            _run_ffmpeg(remux, out, "remux")
     source.unlink(missing_ok=True)
     return out
 
