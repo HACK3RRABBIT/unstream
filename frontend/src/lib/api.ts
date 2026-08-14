@@ -278,9 +278,10 @@ export const jobZipUrl = (jobId: string) => `/api/jobs/${jobId}/zip`
 
 /** Resolutions the anime section asks a video provider for, plus "original" —
  *  the provider's own untouched stream, like the audio section's `original`.
- *  Independent of the audio `QUALITIES` above; a 720p episode is not the same
- *  choice as a 192 kbps mp3. */
-export const VIDEO_QUALITIES = ['360', '480', '720', '1080', 'original'] as const
+ *  360p is not offered — anime torrents are released at 480p and up, so a 360
+ *  option would only ever fail to match. Independent of the audio `QUALITIES`
+ *  above; a 720p episode is not the same choice as a 192 kbps mp3. */
+export const VIDEO_QUALITIES = ['480', '720', '1080', 'original'] as const
 
 export type VideoQuality = (typeof VIDEO_QUALITIES)[number]
 

@@ -37,8 +37,10 @@ from ..ytdlp import base_opts
 from .providers import EpisodeSource, EpisodeStream
 
 # "original" keeps the provider's own stream untouched (like the audio
-# section's original) instead of asking for a specific resolution.
-VIDEO_QUALITIES = ("360", "480", "720", "1080", "original")
+# section's original) instead of asking for a specific resolution. 360p is
+# not offered — anime torrents are released at 480p and up, so a 360 option
+# would only ever fail to match.
+VIDEO_QUALITIES = ("480", "720", "1080", "original")
 DEFAULT_VIDEO_QUALITY = "original"
 
 
