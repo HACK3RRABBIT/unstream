@@ -59,6 +59,10 @@ services:
       # 210 = Tehran, so "today" on the dashboard matches today here.
       - ANALYTICS_UTC_OFFSET_MINUTES=${ANALYTICS_UTC_OFFSET_MINUTES:-210}
       - ANALYTICS_RETENTION_DAYS=${ANALYTICS_RETENTION_DAYS:-90}
+      # Anime downloads: Nyaa torrents by default (hianime scraper fallback).
+      # Anime episodes are big, so keep the dedicated pool small.
+      - ANIME_PROVIDER_ORDER=${ANIME_PROVIDER_ORDER:-nyaa,hianime}
+      - ANIME_DOWNLOAD_WORKERS=${ANIME_DOWNLOAD_WORKERS:-2}
     volumes:
       - downloads:/app/downloads
       # The only copy of the analytics history — unlike downloads, not

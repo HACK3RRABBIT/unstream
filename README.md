@@ -127,6 +127,8 @@ YouTube treats a datacenter address differently from a home one. From a VPS it a
 
 Making a public instance work needs egress from a non-datacenter address: a residential or ISP proxy, which costs money. There is no free workaround; if there were, it would be in this repo. SoundCloud is unaffected throughout.
 
+**Anime is different.** Episode downloads come from **Nyaa torrents** (the English-subbed archive), which work from a datacenter IP the way YouTube doesn't — the hianime streaming scraper is the one that bot-checks VPS addresses, and Nyaa is tried first for exactly this reason. Torrenting does need outbound access to public UDP trackers and DHT (default: any outbound; some hosts block tracker ports, in which case set `ANIME_PROVIDER_ORDER=hianime,nyaa` or open the ports). A torrent can take a while for a large episode, and the very first episodes of an old series may only exist inside a multi-episode batch, which the downloader extracts as a single file.
+
 If you're deploying it anyway — for yourself, behind a tunnel, or with proxied egress — use [`compose.dokploy.yml`](compose.dokploy.yml), which is the live deployment's file, and **set `RATE_LIMITS_ENABLED=true`**. Without accounts, per-IP limits are the only thing between your server and everyone.
 
 ## When downloads fail
