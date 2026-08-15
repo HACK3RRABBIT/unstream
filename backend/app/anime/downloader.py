@@ -34,7 +34,7 @@ from .. import downloader as audio
 from ..downloader import Cancelled, DownloadError, _clean_partials, _run_ffmpeg, safe_filename, _with_ext
 from ..models import Track
 from ..ytdlp import base_opts
-from .providers import EpisodeSource, EpisodeStream
+from .providers import EpisodeSource, EpisodeStream, QualityUnavailable
 
 # "original" keeps the provider's own stream untouched (like the audio
 # section's original) instead of asking for a specific resolution. 360p is
@@ -77,6 +77,19 @@ def _provider_named(name: str):
     raise DownloadError(f"Provider '{name}' is unavailable.")
 
 
+def _format_selector(quality: str) -> str:
+    """The yt-dlp format string for a requested resolution.
+
+    `original` takes the upload's best available stream. An explicit
+    resolution (480/720/1080) is strict: it asks for exactly that height and
+    has NO trailing unrestricted `/best` fallback, so a missing variant fails
+    the download instead of silently upgrading to 720p/1080p.
+    """
+    if quality == "original":
+        return "bestvideo+bestaudio/best"
+    return f"bestvideo[height={quality}]+bestaudio/best[height={quality}]"
+
+
 def _download_with_ytdlp(
     stream: EpisodeStream,
     dest: Path,
@@ -99,14 +112,10 @@ def _download_with_ytdlp(
             if total:
                 on_progress(status.get("downloaded_bytes", 0) / total)
 
-    # "original" asks for the best available; a resolution caps the height.
-    video_format = (
-        "bestvideo+bestaudio/best"
-        if quality == "original"
-        else f"bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/best"
-    )
+    # An explicit resolution must be honored, not best-effort: see
+    # _format_selector — no `/best` fallback that could silently upgrade.
     opts = base_opts(
-        format=video_format,
+        format=_format_selector(quality),
         outtmpl=str(dest) + ".%(ext)s",
         noplaylist=True,
         retries=5,
@@ -201,6 +210,26 @@ def _video_has_audio(video: Path) -> bool:
         return True
 
 
+def _probe_height(video: Path) -> int | None:
+    """The actual video height of a finished file, via ffprobe.
+
+    This is the source of truth for `served_quality` — never the requested
+    quality or the filename, both of which can lie about what was downloaded.
+    """
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=height", "-of", "csv=p=0", str(video)],
+            capture_output=True, text=True, timeout=30,
+        )
+        line = proc.stdout.strip()
+        return int(line) if line else None
+    except Exception:  # noqa: BLE001 — an unreadable file isn't worth failing on
+        return None
+
+
 def download_video_track(
     track: Track,
     out_dir: Path,
@@ -208,12 +237,19 @@ def download_video_track(
     quality: str,
     filename: str | None,
     should_cancel: Callable[[], bool] | None,
+    meta: dict | None = None,
 ) -> Path:
     """Resolve the episode's stream and download it as an mp4 with soft subs.
 
     Mirrors downloader.download_track's contract (stage, fraction) callbacks
     so jobs.py drives it unchanged: 'searching' resolves the provider plan,
     'downloading' fetches bytes, 'tagging' muxes the subtitle track.
+
+    When `meta` is given, it is filled with the ground truth of what was
+    served: `provider` (the one that actually produced the file, which may
+    differ from the plan's after a fallback) and `served_quality` (the actual
+    video height, probed from the finished file with ffprobe — never the
+    requested quality, which the output can fail to honor).
     """
     if shutil.which("ffmpeg") is None:
         raise DownloadError("ffmpeg is not installed or not on PATH")
@@ -261,7 +297,12 @@ def download_video_track(
                     )
                 on_progress("tagging", 1.0)
                 sub = _fetch_subs(stream, dest)
-                return _mux_subtitles(video, sub, dest)
+                final = _mux_subtitles(video, sub, dest)
+                if meta is not None:
+                    meta["provider"] = provider.name
+                    height = _probe_height(final)
+                    meta["served_quality"] = f"{height}p" if height else None
+                return final
             except (Cancelled, KeyboardInterrupt):
                 _clean_partials(dest)
                 raise
@@ -270,6 +311,10 @@ def download_video_track(
                 last_error = exc
                 _clean_partials(dest)
 
+    if isinstance(last_error, QualityUnavailable):
+        raise DownloadError(
+            f"Requested quality {resolution}p is unavailable for this episode."
+        ) from last_error
     raise DownloadError(
         f"Failed to download episode after trying all providers: {last_error}"
     ) from last_error

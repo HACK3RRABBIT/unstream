@@ -190,7 +190,7 @@ def test_download_route_filters_episode_subset(monkeypatch):
     unknown-only selection is refused with a clean 400."""
     from fastapi.testclient import TestClient
     from app.main import app
-    from app.anime import providers as providers_module
+    from app.anime import anilist, providers as providers_module
     from app.anime.providers import EpisodeSource, EpisodeStream
 
     class FakeProvider:
@@ -213,6 +213,25 @@ def test_download_route_filters_episode_subset(monkeypatch):
             return EpisodeStream(provider="hianime", url="https://cdn.example/p.m3u8")
 
     monkeypatch.setattr(providers_module, "providers", lambda: [FakeProvider()])
+    # The franchise walk is a live AniList call, which a unit test must not
+    # depend on — stub it with one TV season for the requested media_id. The
+    # route reads best_title/season_year/cover_url off the entry.
+    monkeypatch.setattr(
+        anilist,
+        "franchise",
+        lambda media_id: [
+            anilist.AniMedia(
+                id=media_id,
+                title_romaji="SHINGEKI_NO_KYOJIN",
+                title_english="Attack on Titan",
+                format="TV",
+                episodes=25,
+                season_year=2013,
+                status="FINISHED",
+                cover_url="https://example.com/cover.jpg",
+            )
+        ],
+    )
     from app import jobs as jobs_module
 
     captured = {"tracks": None}
@@ -347,3 +366,308 @@ def test_nyaa_single_episode_beats_batch(monkeypatch):
     src = p.resolve("One Piece", 1999)
     torrent = p._search_episode(src, 1100)
     assert "ep1100" in torrent["magnet"]  # the single, not the batch
+
+
+# ── Requested quality is honored: Nyaa selects by resolution, the chain and
+#    selector never silently serve another resolution, and the job state
+#    records what actually happened (provider + ffprobe'd height). ─────────────
+
+
+def _nyaa_page(*rows: str) -> str:
+    return (
+        '<table class="torrent-list"><tbody>'
+        "<tr><th>Category</th><th>Name</th></tr>"
+        + "".join(rows)
+        + "</tbody></table>"
+    )
+
+
+def _nyaa_row(torrent_id: int, title: str, magnet: str, seeders: int, size="100.0 MiB") -> str:
+    return (
+        '<tr><td><a title="Anime - English-translated"></a></td>'
+        f'<td colspan="2"><a href="/view/{torrent_id}" title="{title}"></a>'
+        f'<a href="magnet:?xt=urn:btih:{magnet}"></a></td>'
+        f'<td class="text-center">{seeders}</td>'
+        f'<td>{size}</td></tr>'
+    )
+
+
+class _NyaaResp:
+    def __init__(self, html: str):
+        self.text = html
+
+    def raise_for_status(self):
+        return None
+
+
+def _nyaa_source(title="Show", season=1, episode=1):
+    from app.anime.providers import EpisodeSource
+
+    return EpisodeSource(provider="nyaa", anime_id=title, anime_title=title,
+                         year=2020, season=season, episode=episode)
+
+
+def _search_page(monkeypatch, html, episode=1, quality=""):
+    from app.anime import nyaa
+
+    monkeypatch.setattr(nyaa._client, "get", lambda *a, **k: _NyaaResp(html))
+    return nyaa.NyaaProvider()._search_episode(
+        _nyaa_source(episode=episode), episode, quality
+    )
+
+
+def test_resolution_matcher_is_explicit_about_p():
+    """'48000' (an audio bitrate) or '001-480' (an episode range) is not a
+    480p marker — only an explicit `p` or width×height is."""
+    from app.anime.nyaa import _title_resolution
+
+    assert _title_resolution("[X] Show - 01 [48000Hz FLAC]") is None
+    assert _title_resolution("[X] Show - 01 (48000 Hz)") is None
+    assert _title_resolution("[X] Show 001-480") is None
+    assert _title_resolution("[X] Show 480") is None  # a bare number is not 480p
+    # Positive controls.
+    assert _title_resolution("[X] Show - 01 [480p].mkv") == "480"
+    assert _title_resolution("[X] Show - 01 (1280x720)") == "720"
+    assert _title_resolution("[X] Show - 01 [1080p HEVC]") == "1080"
+
+
+def test_nyaa_requests_480_picks_480p_over_best_seeded(monkeypatch):
+    """A 480p request ignores a higher-seeded 720p release."""
+    html = _nyaa_page(
+        _nyaa_row(1, "[SubsPlease] Show - 01 [720p].mkv", "seed720", 200),
+        _nyaa_row(2, "[Judas] Show - 01 [480p].mkv", "seed480", 5),
+    )
+    torrent = _search_page(monkeypatch, html, quality="480")
+    assert torrent["torrent_id"] == "2"
+    assert "480p" in torrent["title"]
+
+
+def test_nyaa_requests_480_with_only_720_raises_quality_unavailable(monkeypatch):
+    from app.anime.nyaa import QualityUnavailable
+
+    html = _nyaa_page(_nyaa_row(1, "[SubsPlease] Show - 01 [720p].mkv", "seed720", 200))
+    with pytest.raises(QualityUnavailable):
+        _search_page(monkeypatch, html, quality="480")
+
+
+def test_nyaa_requests_720_picks_720p(monkeypatch):
+    html = _nyaa_page(
+        _nyaa_row(1, "[X] Show - 01 [1080p].mkv", "seed1080", 100),
+        _nyaa_row(2, "[X] Show - 01 [720p].mkv", "seed720", 10),
+    )
+    torrent = _search_page(monkeypatch, html, quality="720")
+    assert torrent["torrent_id"] == "2"
+
+
+def test_nyaa_requests_1080_picks_1080p(monkeypatch):
+    html = _nyaa_page(
+        _nyaa_row(1, "[X] Show - 01 [480p].mkv", "seed480", 300),
+        _nyaa_row(2, "[X] Show - 01 [1080p].mkv", "seed1080", 3),
+    )
+    torrent = _search_page(monkeypatch, html, quality="1080")
+    assert torrent["torrent_id"] == "2"
+
+
+def test_nyaa_original_keeps_best_seeded(monkeypatch):
+    """`original` still takes the best-seeded torrent whatever its resolution."""
+    html = _nyaa_page(
+        _nyaa_row(1, "[X] Show - 01 [1080p].mkv", "seed1080", 300),
+        _nyaa_row(2, "[X] Show - 01 [720p].mkv", "seed720", 5),
+    )
+    torrent = _search_page(monkeypatch, html, quality="original")
+    assert torrent["torrent_id"] == "1"
+
+
+def test_downloader_asks_fallback_for_same_quality(monkeypatch, tmp_path):
+    """When Nyaa raises QualityUnavailable, the next provider is asked for the
+    SAME resolution — never a different one."""
+    from app.anime import downloader as anime_downloader
+    from app.anime import providers as providers_module
+    from app.anime.providers import EpisodeStream, QualityUnavailable
+    from app.models import Track
+
+    class NyaaNo480:
+        name = "nyaa"
+        streams_hls = False
+
+        def available(self):
+            return True
+
+        def episode_stream(self, src, quality):
+            raise QualityUnavailable("no 480p on nyaa")
+
+        def download(self, *a, **k):
+            raise AssertionError("nyaa download must not run")
+
+    seen = []
+
+    class HiAnime:
+        name = "hianime"
+        streams_hls = True
+
+        def available(self):
+            return True
+
+        def episode_stream(self, src, quality):
+            seen.append(quality)
+            return EpisodeStream(provider="hianime", url="https://cdn.example/m.m3u8")
+
+    monkeypatch.setattr(providers_module, "providers", lambda: [NyaaNo480(), HiAnime()])
+
+    def fake_ytdlp(stream, dest, on_progress, should_cancel, quality):
+        out = dest.with_name(dest.name + ".mp4")
+        out.write_bytes(b"v")
+        return out
+
+    monkeypatch.setattr(anime_downloader, "_download_with_ytdlp", fake_ytdlp)
+    monkeypatch.setattr(anime_downloader, "_fetch_subs", lambda s, d: None)
+    monkeypatch.setattr(anime_downloader, "_mux_subtitles", lambda v, s, d: v)
+    monkeypatch.setattr(downloader.shutil, "which", lambda name: "/usr/bin/ffmpeg")
+
+    track = Track(id="1:s1e1", title="Episode 1", artists=["Show"],
+                  album="Show — Season 1", duration_ms=1, cover_url=None,
+                  track_number=1, media="video", source_url="anime://nyaa/Show/1/1")
+    out = anime_downloader.download_video_track(
+        track, tmp_path, lambda s, f: None, "480", None, None
+    )
+    assert out.exists()
+    assert seen == ["480"]  # HiAnime was asked for the same resolution
+
+
+def test_both_providers_quality_unavailable_fails_clearly(monkeypatch, tmp_path):
+    from app.anime import downloader as anime_downloader
+    from app.anime import providers as providers_module
+    from app.anime.providers import QualityUnavailable
+    from app.downloader import DownloadError
+    from app.models import Track
+
+    class NyaaNo480:
+        name = "nyaa"
+        streams_hls = False
+
+        def available(self):
+            return True
+
+        def episode_stream(self, src, quality):
+            raise QualityUnavailable("no 480p")
+
+        def download(self, *a, **k):
+            raise AssertionError
+
+    class HiAnimeNo480:
+        name = "hianime"
+        streams_hls = True
+
+        def available(self):
+            return True
+
+        def episode_stream(self, src, quality):
+            raise QualityUnavailable("no 480p")
+
+    monkeypatch.setattr(providers_module, "providers", lambda: [NyaaNo480(), HiAnimeNo480()])
+    monkeypatch.setattr(downloader.shutil, "which", lambda name: "/usr/bin/ffmpeg")
+
+    track = Track(id="1:s1e1", title="Episode 1", artists=["Show"],
+                  album="Show — Season 1", duration_ms=1, cover_url=None,
+                  track_number=1, media="video", source_url="anime://nyaa/Show/1/1")
+    with pytest.raises(DownloadError, match="Requested quality 480p is unavailable"):
+        anime_downloader.download_video_track(
+            track, tmp_path, lambda s, f: None, "480", None, None
+        )
+
+
+def test_format_selector_is_strict_for_explicit_quality():
+    """An explicit resolution has no unrestricted `/best` fallback — a missing
+    variant fails the download rather than silently upgrading."""
+    from app.anime.downloader import _format_selector
+
+    assert _format_selector("480") == "bestvideo[height=480]+bestaudio/best[height=480]"
+    assert _format_selector("720") == "bestvideo[height=720]+bestaudio/best[height=720]"
+    assert _format_selector("1080") == "bestvideo[height=1080]+bestaudio/best[height=1080]"
+    assert _format_selector("original") == "bestvideo+bestaudio/best"
+    for quality in ("480", "720", "1080"):
+        assert not _format_selector(quality).endswith("/best")
+
+
+def test_served_quality_comes_from_probed_height(monkeypatch, tmp_path):
+    """The recorded served_quality is the ffprobe'd height, not the request."""
+    from app.anime import downloader as anime_downloader
+    from app.anime import providers as providers_module
+    from app.anime.providers import EpisodeStream
+    from app.models import Track
+
+    class FakeNyaa:
+        name = "nyaa"
+        streams_hls = False
+
+        def available(self):
+            return True
+
+        def episode_stream(self, src, quality):
+            return EpisodeStream(provider="nyaa", url="magnet:?xt=urn:btih:abc")
+
+        def download(self, stream, dest, quality, on_progress, should_cancel, subs="eng"):
+            out = dest.with_name(dest.name + ".mkv")
+            out.write_bytes(b"video")
+            return out
+
+    monkeypatch.setattr(providers_module, "providers", lambda: [FakeNyaa()])
+    monkeypatch.setattr(anime_downloader, "_fetch_subs", lambda s, d: None)
+    monkeypatch.setattr(anime_downloader, "_mux_subtitles", lambda v, s, d: v)
+    monkeypatch.setattr(anime_downloader, "_probe_height", lambda p: 480)
+    monkeypatch.setattr(downloader.shutil, "which", lambda name: "/usr/bin/ffmpeg")
+
+    track = Track(id="1:s1e1", title="Episode 1", artists=["Show"],
+                  album="Show — Season 1", duration_ms=1, cover_url=None,
+                  track_number=1, media="video", source_url="anime://nyaa/Show/1/1")
+    meta: dict = {}
+    out = anime_downloader.download_video_track(
+        track, tmp_path, lambda s, f: None, "480", None, None, meta=meta
+    )
+    assert out.exists()
+    assert meta["provider"] == "nyaa"
+    assert meta["served_quality"] == "480p"
+
+
+def test_probe_height_reads_real_file(tmp_path):
+    import shutil as _shutil
+    import subprocess
+
+    if _shutil.which("ffmpeg") is None or _shutil.which("ffprobe") is None:
+        pytest.skip("ffmpeg/ffprobe not installed")
+    from app.anime import downloader as anime_downloader
+
+    video = tmp_path / "probe.mp4"
+    proc = subprocess.run(
+        ["ffmpeg", "-y", "-f", "lavfi", "-i", "testsrc=size=854x480:rate=1:duration=1",
+         "-c:v", "mpeg4", str(video)],
+        capture_output=True,
+    )
+    if proc.returncode != 0:
+        pytest.skip("ffmpeg could not encode a test frame")
+    assert anime_downloader._probe_height(video) == 480
+
+
+def test_track_state_exposes_provider_and_served_quality(monkeypatch, tmp_path):
+    """The job API exposes which provider served the episode and the actual
+    resolution, filled from the pipeline's meta rather than echoed."""
+    monkeypatch.setattr(jobs, "DOWNLOADS_DIR", tmp_path)
+    job = jobs.Job(id="jq1", name="Show — Season 1", quality="480")
+    track = make_episode_track()
+    state = jobs.TrackState(track=track, filename="Show - Episode 1")
+
+    out = tmp_path / job.id / "Show - Episode 1.mp4"
+    out.parent.mkdir(parents=True)
+    out.write_bytes(b"video")
+
+    def fake_download_track(*args, **kwargs):
+        kwargs["meta"].update(provider="nyaa", served_quality="480p")
+        return out
+
+    monkeypatch.setattr(jobs.downloader, "download_track", fake_download_track)
+    jobs._run_track(job, state)
+    assert state.status == "done"
+    assert state.provider == "nyaa"
+    assert state.served_quality == "480p"
+    assert state.as_dict()["provider"] == "nyaa"
+    assert state.as_dict()["served_quality"] == "480p"

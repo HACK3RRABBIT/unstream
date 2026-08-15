@@ -434,6 +434,7 @@ def download_track(
     on_source: Callable[[str, int], None] | None = None,
     embed_lyrics: bool = True,
     should_cancel: Callable[[], bool] | None = None,
+    meta: dict | None = None,
 ) -> Path:
     """Full pipeline for one track. Reports (stage, fraction) via callback.
 
@@ -465,7 +466,9 @@ def download_track(
         # the local import also avoids a cycle (anime.downloader imports us).
         from .anime.downloader import download_video_track
 
-        return download_video_track(track, out_dir, on_progress, quality, filename, should_cancel)
+        return download_video_track(
+            track, out_dir, on_progress, quality, filename, should_cancel, meta
+        )
     if quality not in QUALITIES:
         raise DownloadError(f"Unsupported quality: {quality}")
     out_dir.mkdir(parents=True, exist_ok=True)

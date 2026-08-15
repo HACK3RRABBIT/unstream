@@ -76,6 +76,11 @@ class TrackState:
     progress: float = 0.0
     error: str | None = None
     file_path: Path | None = None
+    # Anime only: which provider actually served the episode (after any
+    # fallback), and the actual video resolution served — probed from the
+    # finished file, never the requested quality. None for audio tracks.
+    provider: str | None = None
+    served_quality: str | None = None
 
     def as_dict(self) -> dict:
         return {
@@ -85,6 +90,8 @@ class TrackState:
             "error": self.error,
             # "mp3" / "m4a" / "opus" — the UI labels its save link with it.
             "ext": self.file_path.suffix.lstrip(".") if self.file_path else None,
+            "provider": self.provider,
+            "served_quality": self.served_quality,
         }
 
 
@@ -206,6 +213,9 @@ def _run_track(job: Job, state: TrackState) -> None:
 
     label = f"{', '.join(state.track.artists)} - {state.track.title}"
     started = time.monotonic()
+    # The video pipeline reports which provider served the episode and the
+    # actual resolution (ffprobe'd); audio leaves it empty.
+    meta: dict = {}
     try:
         path = downloader.download_track(
             state.track,
@@ -216,6 +226,7 @@ def _run_track(job: Job, state: TrackState) -> None:
             on_source=on_source,
             embed_lyrics=job.embed_lyrics,
             should_cancel=job.stopped.is_set,
+            meta=meta,
         )
         if job.stopped.is_set():
             # Finished in the window between the cancel landing and the last
@@ -227,6 +238,8 @@ def _run_track(job: Job, state: TrackState) -> None:
             state.status = "done"
             state.progress = 1.0
             state.file_path = path
+            state.provider = meta.get("provider")
+            state.served_quality = meta.get("served_quality")
         analytics.record(
             "track_done",
             visitor=job.visitor or None,

@@ -28,6 +28,17 @@ from typing import Callable, Protocol
 PROVIDER_ORDER = os.getenv("ANIME_PROVIDER_ORDER", "nyaa,hianime")
 
 
+class QualityUnavailable(Exception):
+    """The episode exists, but not at the requested resolution.
+
+    Distinct from `ProviderError` (the provider itself is unavailable /
+    unreachable) so the downloader can try the next provider — and, when no
+    provider can serve the requested resolution, fail with a clear
+    "requested quality is unavailable" rather than a generic error. Never
+    used to mean "download something else instead."
+    """
+
+
 @dataclass
 class EpisodeSource:
     """Enough to ask a provider for one episode. Encoded into Track.source_url."""

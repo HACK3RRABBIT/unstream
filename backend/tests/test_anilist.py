@@ -172,10 +172,11 @@ def test_routes_search_shape(monkeypatch):
     from fastapi.testclient import TestClient
     from app.main import app
 
-    def fake_search(query, limit=12):
-        return [anilist._media_from_node(node(20, romaji="NARUTO", episodes=220))]
-
-    monkeypatch.setattr(anilist, "search", fake_search)
+    naruto = anilist._media_from_node(node(20, romaji="NARUTO", episodes=220))
+    monkeypatch.setattr(anilist, "search", lambda query, limit=12: [naruto])
+    # The search route walks each TV result's franchise to size season_count;
+    # stub that live AniList call with the result's own single-season chain.
+    monkeypatch.setattr(anilist, "franchise", lambda media_id: [naruto])
     client = TestClient(app)
     resp = client.get("/api/anime/search?q=naruto")
     assert resp.status_code == 200
@@ -193,13 +194,15 @@ def test_routes_search_splits_movies_from_series(monkeypatch):
     from fastapi.testclient import TestClient
     from app.main import app
 
-    def fake_search(query, limit=12):
-        return [
-            anilist._media_from_node(node(20, romaji="NARUTO", episodes=220)),
-            anilist._media_from_node(node(936, romaji="NARUTO Movie", fmt="MOVIE", episodes=1)),
-        ]
+    naruto = anilist._media_from_node(node(20, romaji="NARUTO", episodes=220))
+    movie = anilist._media_from_node(
+        node(936, romaji="NARUTO Movie", fmt="MOVIE", episodes=1)
+    )
 
-    monkeypatch.setattr(anilist, "search", fake_search)
+    monkeypatch.setattr(anilist, "search", lambda query, limit=12: [naruto, movie])
+    # Only the TV result triggers a franchise walk; stub that live AniList call
+    # with naruto's own single-season chain.
+    monkeypatch.setattr(anilist, "franchise", lambda media_id: [naruto])
     client = TestClient(app)
     resp = client.get("/api/anime/search?q=naruto")
     body = resp.json()

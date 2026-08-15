@@ -28,7 +28,7 @@ import httpx
 
 from ..downloader import Cancelled, DownloadError
 from ..models import ProviderError
-from .providers import EpisodeSource, EpisodeStream
+from .providers import EpisodeSource, EpisodeStream, QualityUnavailable
 
 BASE_URL = "https://nyaa.si"
 # The English-translated category filter (f=0 means "no filter", c=1_2 means
@@ -62,6 +62,46 @@ def _magnet(btih: str, name: str) -> str:
     return f"magnet:?xt=urn:btih:{btih}&dn={quote(name)}"
 
 
+# A resolution marker in a release title. `p` after 3-4 digits (480p, 1080p)
+# is the unambiguous form; dimensions (1280x720, 854×480) are the other. The
+# leading `(?<![0-9])` stops "1480p"/"48000" from matching inside a longer
+# number, and the trailing `(?![0-9])` on the dimension stops "001-4801".
+_RES_TAG = re.compile(r"(?<![0-9])(\d{3,4})p(?!\d)", re.IGNORECASE)
+_DIM_TAG = re.compile(r"(?<![0-9])(\d{3,4})\s*[x×]\s*(480|720|1080)(?!\d)", re.IGNORECASE)
+
+
+def _title_resolution(title: str) -> str | None:
+    """The resolution a release title clearly claims, or None.
+
+    Returns "480"/"720"/"1080"/"2160"... (the digits before a `p`), or the
+    height half of a width×height tag. Explicitly NOT a loose substring: an
+    audio bitrate like "48000" or an episode range like "001-480" carries no
+    `p` and is not a resolution. A title with no explicit marker returns
+    None, so a caller asking for a specific quality never accepts it.
+    """
+    m = _RES_TAG.search(title)
+    if m:
+        return m.group(1)
+    m = _DIM_TAG.search(title)
+    if m:
+        width, height = int(m.group(1)), int(m.group(2))
+        # A plausible frame for that height: 16:9 (854/1280/1920) or 4:3
+        # (720/960/1440). Guards against junk like a random "1080" digit run.
+        if 1.0 <= width / height <= 2.1:
+            return m.group(2)
+    return None
+
+
+def _best_seeded(candidates: dict[str, dict]) -> dict | None:
+    """Pick the best-scored candidate: a true single-episode marker adds 200."""
+    best = None
+    for t in candidates.values():
+        score = t["seeders"] + (200 if t.get("explicit") else 0)
+        if best is None or score > best["score"]:
+            best = {**t, "score": score}
+    return best
+
+
 class NyaaProvider:
     name = "nyaa"
     # The provider fetches the torrent itself (torrents aren't an HLS url), so
@@ -92,8 +132,13 @@ class NyaaProvider:
         (so "JUJUTSU KAISEN S01E01" isn't matched as S03E01), then falls back
         to the bare episode number for series that Nyaa names by number alone
         (One Piece "1100"). The year is left out (parentheses break Nyaa's
-        search), and quality is not filtered (torrents carry whatever
-        resolution the fansub released).
+        search).
+
+        For an explicit quality (480/720/1080) only torrents whose title
+        clearly claims that resolution are eligible; if none exist this raises
+        QualityUnavailable rather than silently picking another resolution.
+        `original` (or an empty/unknown quality) keeps the best-seeded
+        behavior: torrents carry whatever resolution the fansub released.
         """
         title = src.anime_id
         queries = []
@@ -101,8 +146,10 @@ class NyaaProvider:
             queries.append(f"{title} S{src.season:02d}E{episode:02d}")
         queries.append(f"{title} {episode}")
 
-        best: dict | None = None
-        best_batch: dict | None = None
+        wanted = quality if quality in ("480", "720", "1080") else ""
+
+        singles: dict[str, dict] = {}
+        batches: dict[str, dict] = {}
         for query in queries:
             try:
                 resp = _client.get(
@@ -119,30 +166,49 @@ class NyaaProvider:
             except Exception as exc:  # noqa: BLE001
                 raise ProviderError(f"Could not reach Nyaa: {exc}") from exc
 
-            single, batch = self._parse_rows(resp.text, episode)
-            if single and (best is None or single["seeders"] > best["seeders"]):
-                best = single
-            if batch and (best_batch is None or batch["seeders"] > best_batch["seeders"]):
-                best_batch = batch
-            if best:
-                break  # a true single-episode match; don't fall back
+            page_singles, page_batches = self._parse_rows(resp.text, episode)
+            for t in page_singles:
+                singles.setdefault(t["torrent_id"], t)
+            for t in page_batches:
+                batches.setdefault(t["torrent_id"], t)
 
+        # An explicit request accepts only releases that claim that resolution.
+        if wanted:
+            singles = {
+                k: t
+                for k, t in singles.items()
+                if _title_resolution(t["title"]) == wanted
+            }
+            batches = {
+                k: t
+                for k, t in batches.items()
+                if _title_resolution(t["title"]) == wanted
+            }
+
+        best = _best_seeded(singles)
+        best_batch = _best_seeded(batches)
         if (best is None or best["seeders"] == 0) and best_batch is not None:
             best = {**best_batch, "batch": True}
         if best is None or best["seeders"] == 0:
+            if wanted:
+                raise QualityUnavailable(
+                    f"No {wanted}p release of '{title}' episode {episode} on Nyaa."
+                )
             raise ProviderError(
                 f"No seeded torrent containing '{title}' episode {episode} found on Nyaa."
             )
         return best
 
     @staticmethod
-    def _parse_rows(html: str, episode: int) -> tuple[dict | None, dict | None]:
-        """Parse a Nyaa search page into (best single-episode, best batch).
+    def _parse_rows(html: str, episode: int) -> tuple[list[dict], list[dict]]:
+        """Parse a Nyaa search page into (single-episode rows, batch rows).
 
-        An episode number is "real" when it appears with a delimiter or marker
-        (EP 01, E01, - 001, (001), 001 [) — never as bare digits that could be
-        a hash, a year, or a resolution. A range (001-574, E01-E06) is a
-        batch: the episode is in it, and it's kept as an extractable fallback.
+        Every row naming the episode is returned (not just the best), so the
+        caller can filter by resolution before choosing. An episode number is
+        "real" when it appears with a delimiter or marker (EP 01, E01, - 001,
+        (001), 001 [) — never as bare digits that could be a hash, a year, or
+        a resolution. A range (001-574, E01-E06) is a batch: the episode is
+        *in* it, and it's kept as an extractable fallback.
         """
         # An episode number is "real" when it appears with a delimiter or
         # marker (EP 01, E01, - 001, (001), 001 [) — never as bare digits
@@ -154,10 +220,11 @@ class NyaaProvider:
         # A range of episodes (001-574, E01-E06) — the episode is *in* it but
         # the torrent is a whole batch; we can still extract the single file.
         batch_re = re.compile(rf"(?:EP|Ep|Episode|E)?\s*0*{episode}\s*[-–—]\s*0*\d+")
+        marker = r"(?:EP|Ep|Episode|E|#)\s*0*%d(?!\d)" % episode
 
         rows = re.findall(r"<tr[^>]*>.*?</tr>", html, re.S)
-        best: dict | None = None
-        best_batch: dict | None = None
+        singles: list[dict] = []
+        batches: list[dict] = []
         for row in rows[1:]:  # first row is the header
             title_m = re.search(r'href="/view/\d+"[^>]*title="([^"]+)"', row)
             magnet = re.search(r'href="(magnet:\?[^"]+)"', row)
@@ -177,19 +244,11 @@ class NyaaProvider:
                 "seeders": seeders,
                 "size": size_m.group(1) if size_m else "",
             }
-
-            marker = r"(?:EP|Ep|Episode|E|#)\s*0*%d(?!\d)" % episode
-            explicit = bool(re.search(marker, title))
-            is_batch = bool(batch_re.search(title))
-            if is_batch:
-                # Keep the best-seeded batch as a fallback for extraction.
-                if best_batch is None or seeders > best_batch["seeders"]:
-                    best_batch = common
-                continue
-            score = seeders + (200 if explicit else 0)
-            if best is None or score > best["score"]:
-                best = {**common, "score": score}
-        return best, best_batch
+            if batch_re.search(title):
+                batches.append(common)
+            else:
+                singles.append({**common, "explicit": bool(re.search(marker, title))})
+        return singles, batches
 
     def episode_count(self, src: EpisodeSource) -> int | None:
         """Nyaa has no per-show episode registry — the episode number is in
