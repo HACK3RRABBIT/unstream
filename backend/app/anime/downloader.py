@@ -297,6 +297,12 @@ def download_video_track(
     # existed. Failing providers are remembered so we don't retry them.
     failed: set[str] = set()
     last_error: Exception | None = None
+    # The requested resolution was explicitly unavailable from at least one
+    # provider that could evaluate it (a missing release, or a mislabeled one
+    # refused post-download). Remembered separately so a later provider's
+    # unrelated ProviderError (rot, unreachable) can't mask the far more
+    # meaningful "this quality doesn't exist" signal as a generic failure.
+    quality_error: QualityUnavailable | None = None
     for attempt in range(2):
         if attempt:
             on_progress("retrying", 0.0)
@@ -341,15 +347,20 @@ def download_video_track(
             except (Cancelled, KeyboardInterrupt):
                 _clean_partials(dest)
                 raise
+            except QualityUnavailable as exc:
+                failed.add(provider.name)
+                last_error = exc
+                quality_error = exc
+                _clean_partials(dest)
             except Exception as exc:  # noqa: BLE001 — per-provider failure
                 failed.add(provider.name)
                 last_error = exc
                 _clean_partials(dest)
 
-    if isinstance(last_error, QualityUnavailable):
+    if quality_error is not None:
         raise DownloadError(
             f"Requested quality {resolution}p is unavailable for this episode."
-        ) from last_error
+        ) from quality_error
     raise DownloadError(
         f"Failed to download episode after trying all providers: {last_error}"
     ) from last_error

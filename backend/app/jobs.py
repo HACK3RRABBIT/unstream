@@ -259,6 +259,12 @@ def _run_track(job: Job, state: TrackState) -> None:
         with job.lock:
             state.status = "error"
             state.error = str(exc)
+            # The pipeline writes provider/served_quality into `meta` before it
+            # can fail (a mislabeled release is probed, then refused), so a
+            # failed track still reports what was actually served. Audio leaves
+            # `meta` empty and keeps both None.
+            state.provider = meta.get("provider")
+            state.served_quality = meta.get("served_quality")
         analytics.record(
             "track_error",
             visitor=job.visitor or None,

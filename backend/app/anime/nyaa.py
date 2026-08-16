@@ -83,6 +83,20 @@ _RANGE_RE = re.compile(
 # parsed out of the title (Show 001 [BATCH]).
 _BATCH_TAG_RE = re.compile(r"\bbatch\b", re.IGNORECASE)
 
+# A multi-episode *list* with no range separator — "Show 001 002 003" or
+# "Show E01 E02" — as opposed to a single episode beside a metadata number
+# ("Show 01 720p"). Conservative on purpose: only zero-padded episode forms
+# (001, 02, 010) and explicit E/EP markers count, and only when two stand
+# adjacent (whitespace/comma apart). A year (2001), a resolution (720p), a
+# bare number, or an SxxExx marker never does. A missed batch falls through
+# to the next provider; a false positive would break a normal single-episode
+# download, so it errs toward single.
+_MULTI_EP_LIST_RE = re.compile(
+    r"(?<!\d)(?:0\d{1,3}|(?:EP|Ep|Episode|E)\s*\d{1,4})(?!\d)"
+    r"(?:\s+|\s*,\s*)"
+    r"(?<!\d)(?:0\d{1,3}|(?:EP|Ep|Episode|E)\s*\d{1,4})(?!\d)"
+)
+
 
 def _title_resolution(title: str) -> str | None:
     """The resolution a release title clearly claims, or None.
@@ -131,6 +145,21 @@ def _episode_ranges(title: str) -> list[tuple[int, int]]:
         lo, hi = int(start), int(end)
         out.append((lo, hi) if lo <= hi else (hi, lo))
     return out
+
+
+def _multi_episode_space_list(title: str) -> bool:
+    """Does `title` list two or more episodes as a space/comma-separated run
+    (Show 001 002 003, Show E01 E02) with no range separator?
+
+    Only very strong evidence counts: two adjacent, standalone, zero-padded
+    episode numbers (01/001/010) or E/EP markers. A single episode next to a
+    metadata number (Show 01 720p, Show 01 1080p) is NOT a batch — the second
+    number is a resolution, not an episode — and neither are years or SxxExx
+    markers. Conservative on purpose: a missed batch can fall through to the
+    next provider, while a false positive would treat a normal single-episode
+    release as a batch and break its download.
+    """
+    return bool(_MULTI_EP_LIST_RE.search(title))
 
 
 class NyaaProvider:
@@ -238,9 +267,11 @@ class NyaaProvider:
         caller can filter by resolution before choosing. An episode number is
         "real" when it appears with a delimiter or marker (EP 01, E01, - 001,
         (001), 001 [) — never as bare digits that could be a hash, a year, or
-        a resolution. A multi-episode range (001-574, E01-E06, 001 ~ 079) is a
-        batch: the episode is *in* it, wherever it falls (first, middle or
-        last), and it's kept as an extractable fallback.
+        a resolution. A row is a batch when it holds more than one episode: a
+        range (001-574, E01-E06, 001 ~ 079, first/middle/last covered), an
+        explicit `[BATCH]` label, or a space/comma-separated episode list
+        (001 002 003, E01 E02). Batches are kept as an extractable fallback —
+        a single episode is always extracted, never the whole multi-GiB torrent.
         """
         # An episode number is "real" when it appears with a delimiter or
         # marker (EP 01, E01, - 001, (001), 001 [) — never as bare digits
@@ -274,7 +305,7 @@ class NyaaProvider:
                 "seeders": seeders,
                 "size": size_m.group(1) if size_m else "",
             }
-            if ranges or _BATCH_TAG_RE.search(title):
+            if ranges or _BATCH_TAG_RE.search(title) or _multi_episode_space_list(title):
                 batches.append(common)
             else:
                 singles.append({**common, "explicit": bool(re.search(marker, title))})
@@ -387,20 +418,40 @@ class NyaaProvider:
             raise DownloadError("Could not list torrent files.")
         if client == "aria2c":
             target_idx = None
+            target_rel = None
             for line in listing.stdout.splitlines():
-                # "1|/folder/Name - 01 [1080p].mkv|1234567"
+                # aria2 1.37 prints each file as TWO lines — "idx|path" then
+                # "|length" — where the length-only line has an empty index.
+                # Only a line whose first field is a numeric file index names
+                # a file; the path is validated by _file_is_episode. This also
+                # accepts the older single-line "idx|path|length" form.
                 parts = line.split("|")
-                if len(parts) >= 3 and self._file_is_episode(parts[1], stream.episode):
-                    target_idx = parts[0]
+                if (
+                    len(parts) >= 2
+                    and parts[0].strip().isdigit()
+                    and self._file_is_episode(parts[1], stream.episode)
+                ):
+                    target_idx = parts[0].strip()
+                    target_rel = self._batch_rel_path(parts[1])
                     break
             if target_idx is None:
                 raise DownloadError(
                     f"Episode {stream.episode} not found inside the batch."
                 )
-            return self._aria2_download(
+            self._aria2_download(
                 str(torrent_file), workdir, on_progress, should_cancel,
                 select_file=target_idx,
             )
+            # aria2 preallocates every file in the torrent, so unselected files
+            # sit in the workdir as zero-filled look-alikes — _largest_video
+            # would pick the wrong (empty) one. Return the exact file that
+            # --select-file downloaded; never fall back to another episode.
+            video = workdir / target_rel
+            if not video.is_file():
+                raise DownloadError(
+                    f"Episode {stream.episode} was not downloaded from the batch."
+                )
+            return video
         # libtorrent: find the file by name and set priorities.
         return self._libtorrent_batch_download(
             str(torrent_file), workdir, stream.episode, on_progress, should_cancel
@@ -416,6 +467,21 @@ class NyaaProvider:
                 path,
             )
         )
+
+    @staticmethod
+    def _batch_rel_path(raw: str) -> Path:
+        """The workdir-relative path of a torrent file, from aria2's listing.
+
+        aria2 prints "./folder/file"; strip the leading "." component and
+        refuse anything that could escape the working directory (absolute
+        paths, `..` components).
+        """
+        p = Path(raw.strip())
+        if p.parts and p.parts[0] == ".":
+            p = Path(*p.parts[1:])
+        if p.is_absolute() or ".." in p.parts:
+            raise DownloadError("batch file path escapes the working directory")
+        return p
 
     @staticmethod
     def _finalize(video: Path, out: Path, subs: str) -> None:

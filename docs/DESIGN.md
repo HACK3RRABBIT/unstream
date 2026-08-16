@@ -3,6 +3,7 @@
 The decisions in here are load-bearing: things that look like mistakes until you know the reason, and things that will quietly break if changed without one. The [README](../README.md) covers what the project does and how to run it.
 
 - [The shape of it](#the-shape-of-it)
+- [Anime download pipeline](#anime-download-pipeline)
 - [Farsi first, with a language layer](#farsi-only)
 - [One self-hosted typeface per script](#typeface)
 - [Which digits a number gets](#digits)
@@ -80,6 +81,110 @@ The two cancels in the UI are not the same mechanism, because only one of them h
 A **download** is ours: `jobs.py` owns the threads, so `POST /api/jobs/{id}/cancel` sets a flag the workers actually read — between retry attempts, and from inside yt-dlp's progress hook, which is the only place a transfer can be interrupted while bytes are moving. Three details are load-bearing. The cancellation travels as its own exception type, or the retry loop in `downloader.py` reads being called off as a broken upload and goes looking for three more; the status is written by `cancel()` rather than left to the workers, because a track stuck in a provider search can take seconds to notice and a button with no visible effect for that long reads as broken; and anything a worker is still holding when it does notice is deleted, files included, so the counts the job reported stay true. Tracks that had already finished keep their files — cancelling an album halfway is "stop here", not "undo".
 
 A **search** is not ours. It fans out to four providers inside one synchronous request, and there is no handle to call that off — so cancelling drops our end of it and gives the person their page back, which is the whole of what they were asking for. The work finishes into a response nobody reads. Both wear the same word in the UI («لغو», "stop") because the difference is ours, not theirs: what someone means by cancelling is that they want the screen back.
+
+## Anime download pipeline
+
+An episode is a `Track` with `media="video"` whose `source_url` is a synthetic
+plan — `anime://<provider>/<animeId>/<season>/<episode>` — built from AniList
+metadata by `anime/routes.py`. The batch goes through the same `jobs` machinery
+as music (thread pool, progress, cancel, ZIP, sweeper), so the download dock
+renders anime jobs unchanged. The difference downstream is
+`anime/downloader.py#download_video_track()`, the video pipeline.
+
+### Provider chain and strict quality
+
+`download_video_track` walks the **provider chain** (`ANIME_PROVIDER_ORDER`,
+default `nyaa,hianime`). Each provider is asked for the episode at the **same
+requested resolution**; a failing provider is skipped and the next is asked at
+that same resolution — a request is never silently re-served at another height.
+Two kinds of provider:
+
+- **nyaa** (self-downloading, `streams_hls=False`) — torrents via aria2c (or
+  libtorrent). Works from any IP; first in the chain.
+- **hianime** (HLS, `streams_hls=True`) — yt-dlp with a strict format selector.
+  Bot-blocked from datacenter IPs, so Nyaa carries most real downloads.
+
+Explicit resolutions (480/720/1080) are **invariants**: only releases whose
+title clearly claims that resolution are eligible, and after the file exists
+`_probe_height()` (ffprobe — the source of truth, never the filename or the
+request) is checked against it by `_check_served_quality()`. A release labeled
+480p that is really 720p raises `QualityUnavailable` and the chain continues at
+the same request. `original` accepts whatever the source released and is never
+checked. `served_quality` in the job API is that probed height — recorded even
+on a failed track, so the requested-vs-served truth survives an error.
+
+### Error aggregation: when the quality message wins
+
+`QualityUnavailable` means "the episode exists, but not at the requested
+resolution" — distinct from `ProviderError` ("the provider itself is
+unreachable"). The downloader remembers every `QualityUnavailable` it saw; if
+any provider could evaluate the resolution and said it was unavailable, the
+final error is the clean `Requested quality Xp is unavailable for this
+episode.` — even when the last provider to fail was an unrelated `ProviderError`
+(rot, unreachable). Only when NO provider could evaluate the resolution do the
+real technical errors surface, as `Failed to download episode after trying all
+providers: …`. A successful download always wins.
+
+### Nyaa release classification
+
+`nyaa._parse_rows` classifies each search row as a **single** or a **batch**:
+
+- a multi-episode **range** (`001-079`, `001 ~ 079`, `E01–E06`) covering the
+  requested episode (first/middle/last) → batch;
+- an explicit `[BATCH]` label → batch;
+- a **space/comma-separated episode list** (`001 002 003`, `E01 E02`) → batch,
+  via `_multi_episode_space_list` — deliberately conservative: only adjacent,
+  standalone **zero-padded** episode forms or `E`/`EP` markers count, so
+  `Show 01 720p` (episode + resolution) stays a single. A false positive would
+  break a normal single-episode download; a false negative only means the batch
+  falls through to the next provider, so it errs toward single.
+
+An episode number is "real" only when it appears with a delimiter or marker —
+never as a bare digit that could be a year, a resolution, or a hash.
+
+### Batch extraction
+
+A multi-episode torrent is **never** whole-downloaded as if it were a single
+episode. Batches go through `_download_batch_episode`: fetch the `.torrent`,
+list its files, match the requested episode by filename (`_file_is_episode`),
+and download only that file via aria2 `--select-file` (or libtorrent file
+priorities). If the episode can't be extracted, the download fails cleanly so
+the chain can try the next provider. Two aria2 facts make this fiddly, and both
+were exposed by a real VPS download (Montana Jones `01, 02, 03`, episode 2)
+rather than the hermetic tests, which mock the aria2 boundary:
+
+- **aria2 1.37 lists files as two lines** — `idx|path` then `|length` — not
+  `idx|path|length` on one. The parser accepts a line whose first pipe-field is
+  a numeric file index and validates the path with `_file_is_episode`; the
+  length-only line is ignored.
+- **aria2 preallocates every file** in a batch, so unselected files sit in the
+  workdir as full-size, zero-filled look-alikes — "largest file" is wrong for a
+  selected-file download. The batch path returns the **exact `--select-file`-ed
+  file**, never `_largest_video` (the whole-torrent path still uses
+  `_largest_video`, where every file genuinely downloaded).
+
+The selected path is normalized by `_batch_rel_path`: a leading `./` is
+stripped, and an absolute path or `..` component is refused, so a malicious
+torrent cannot make the download escape its working directory.
+
+### VPS validation strategy
+
+Hermetic tests stub every network boundary, so the real swarm, real ffprobe,
+and real aria2 are validated on a small disposable VPS (`docs/TEST_VPS.md`)
+through the production `jobs` machinery (a parameterized `vps_drive_run.py`).
+Confirmed end-to-end: One Piece 1100 @ 480p and @ 720p (ffprobe 848×480 /
+1280×720, `served_quality` matching, job `done`), a real space-list batch
+(Montana Jones episode 2 extracted alone, ~126 MiB, valid 640×480), and the
+quality-unavailable aggregation (Dandadan 480p → clean quality message).
+
+### Known limitations
+
+- Non-zero-padded episode lists (`1 2 3`) and `S01E01 S01E02` forms are not
+  detected as batches (conservative by design — a false negative is cheap).
+- The libtorrent batch path is not live-verified and may share the
+  preallocation hazard; only the aria2 path is.
+- HiAnime is bot-blocked from datacenter IPs and can't be live-tested there; its
+  strictness relies on the yt-dlp format selector erroring.
 
 <a id="farsi-only"></a>
 

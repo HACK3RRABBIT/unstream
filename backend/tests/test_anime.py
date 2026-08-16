@@ -583,6 +583,94 @@ def test_both_providers_quality_unavailable_fails_clearly(monkeypatch, tmp_path)
         )
 
 
+def test_quality_unavailable_not_masked_by_later_provider_error(monkeypatch, tmp_path):
+    """A provider that could evaluate the resolution (QualityUnavailable) must
+    not be masked by a later provider's unrelated ProviderError (rot,
+    unreachable): the clean quality message survives, not the generic error."""
+    from app.anime import downloader as anime_downloader
+    from app.anime import providers as providers_module
+    from app.anime.providers import QualityUnavailable
+    from app.downloader import DownloadError
+    from app.models import ProviderError, Track
+
+    class NyaaNo480:
+        name = "nyaa"
+        streams_hls = False
+
+        def available(self):
+            return True
+
+        def episode_stream(self, src, quality):
+            raise QualityUnavailable("no 480p")
+
+        def download(self, *a, **k):
+            raise AssertionError("nyaa download must not run")
+
+    class HiAnimeDown:
+        name = "hianime"
+        streams_hls = True
+
+        def available(self):
+            return True
+
+        def episode_stream(self, src, quality):
+            raise ProviderError("hianime unreachable")
+
+    monkeypatch.setattr(providers_module, "providers", lambda: [NyaaNo480(), HiAnimeDown()])
+    monkeypatch.setattr(downloader.shutil, "which", lambda name: "/usr/bin/ffmpeg")
+
+    track = Track(id="1:s1e1", title="Episode 1", artists=["Show"],
+                  album="Show — Season 1", duration_ms=1, cover_url=None,
+                  track_number=1, media="video", source_url="anime://nyaa/Show/1/1")
+    with pytest.raises(DownloadError, match="Requested quality 480p is unavailable"):
+        anime_downloader.download_video_track(
+            track, tmp_path, lambda s, f: None, "480", None, None
+        )
+
+
+def test_provider_errors_without_quality_unavailable_keep_generic_error(monkeypatch, tmp_path):
+    """No provider raised QualityUnavailable -> the real technical error
+    survives (never hidden behind the quality message)."""
+    from app.anime import downloader as anime_downloader
+    from app.anime import providers as providers_module
+    from app.downloader import DownloadError
+    from app.models import ProviderError, Track
+
+    class NyaaDown:
+        name = "nyaa"
+        streams_hls = False
+
+        def available(self):
+            return True
+
+        def episode_stream(self, src, quality):
+            raise ProviderError("nyaa unreachable")
+
+        def download(self, *a, **k):
+            raise AssertionError
+
+    class HiAnimeDown:
+        name = "hianime"
+        streams_hls = True
+
+        def available(self):
+            return True
+
+        def episode_stream(self, src, quality):
+            raise ProviderError("hianime unreachable")
+
+    monkeypatch.setattr(providers_module, "providers", lambda: [NyaaDown(), HiAnimeDown()])
+    monkeypatch.setattr(downloader.shutil, "which", lambda name: "/usr/bin/ffmpeg")
+
+    track = Track(id="1:s1e1", title="Episode 1", artists=["Show"],
+                  album="Show — Season 1", duration_ms=1, cover_url=None,
+                  track_number=1, media="video", source_url="anime://nyaa/Show/1/1")
+    with pytest.raises(DownloadError, match="Failed to download episode after trying all providers"):
+        anime_downloader.download_video_track(
+            track, tmp_path, lambda s, f: None, "480", None, None
+        )
+
+
 def test_format_selector_is_strict_for_explicit_quality():
     """An explicit resolution has no unrestricted `/best` fallback — a missing
     variant fails the download rather than silently upgrading."""
@@ -678,6 +766,35 @@ def test_track_state_exposes_provider_and_served_quality(monkeypatch, tmp_path):
     assert state.served_quality == "480p"
     assert state.as_dict()["provider"] == "nyaa"
     assert state.as_dict()["served_quality"] == "480p"
+
+
+def test_failed_track_still_records_served_quality(monkeypatch, tmp_path):
+    """A failed download still reports what the pipeline served.
+
+    The video pipeline fills `meta` (provider + ffprobe'd height) *before* it
+    can fail — a mislabeled release is probed, then refused as quality
+    unavailable. That truth must survive on the error path, not just the
+    success path: the job API shows requested-vs-served even when the track
+    ends in error. Audio leaves `meta` empty and keeps both None.
+    """
+    monkeypatch.setattr(jobs, "DOWNLOADS_DIR", tmp_path)
+    job = jobs.Job(id="jq2", name="Show — Season 1", quality="480")
+    track = make_episode_track()
+    state = jobs.TrackState(track=track, filename="Show - Episode 1")
+
+    def fake_download_track(*args, **kwargs):
+        kwargs["meta"].update(provider="nyaa", served_quality="720p")
+        raise downloader.DownloadError(
+            "Requested quality 480p is unavailable for this episode."
+        )
+
+    monkeypatch.setattr(jobs.downloader, "download_track", fake_download_track)
+    jobs._run_track(job, state)
+    assert state.status == "error"
+    assert state.provider == "nyaa"
+    assert state.served_quality == "720p"
+    assert state.as_dict()["provider"] == "nyaa"
+    assert state.as_dict()["served_quality"] == "720p"
 
 
 # ── Post-download quality enforcement: a release that claims one resolution
@@ -959,6 +1076,75 @@ def test_nyaa_batch_label_is_not_a_single(monkeypatch):
     assert torrent["torrent_id"] == "1"
 
 
+def test_multi_episode_space_list_detection():
+    """The conservative space-list detector: only adjacent zero-padded episode
+    forms (001, 02, 010) or E/EP markers count; a year, a resolution, an
+    SxxExx marker, or a codec number never does."""
+    from app.anime.nyaa import _multi_episode_space_list
+
+    # Positive: explicit multi-episode lists.
+    assert _multi_episode_space_list("Show 001 002 003 [1080p]")
+    assert _multi_episode_space_list("Show 01 02 03 [720p]")
+    assert _multi_episode_space_list("Show 010 011 012")  # >9, zero-padded
+    assert _multi_episode_space_list("Show 01 02")  # bare two-episode list
+    assert _multi_episode_space_list("Show E01 E02 [720p]")
+    assert _multi_episode_space_list("Show 001, 002, 003")  # comma-separated
+
+    # Negative: a single episode beside metadata numbers.
+    assert not _multi_episode_space_list("Show 01 720p")
+    assert not _multi_episode_space_list("Show 01 1080p")
+    assert not _multi_episode_space_list("Show 01 2160p")
+    assert not _multi_episode_space_list("Show S01E01 720p")
+    assert not _multi_episode_space_list("Show 001 [480p]")
+    assert not _multi_episode_space_list("[Group] Show 001 [HEVC x265 10bit]")
+    assert not _multi_episode_space_list("Show 2001 2002")  # years
+    assert not _multi_episode_space_list("Show 01 (2024)")
+    assert not _multi_episode_space_list("Show - 01 [480p].mkv")  # single episode
+    assert not _multi_episode_space_list("Show 01-02")  # a range, not a space list
+
+
+def test_nyaa_space_list_first_middle_last_are_batches(monkeypatch):
+    """A space-separated episode list (001 002 003) is a batch wherever the
+    requested episode falls — first, middle or last — and is never treated as
+    a single (which would pull the whole multi-episode torrent)."""
+    html = _nyaa_page(
+        _nyaa_row(1, "[X] Show 001 002 003 [480p]", "seedbatch", 50),
+    )
+    for ep in (1, 2, 3):
+        torrent = _search_page(monkeypatch, html, episode=ep, quality="480")
+        assert torrent.get("batch") is True, ep
+        assert torrent["torrent_id"] == "1", ep
+
+
+def test_nyaa_space_list_ep_markers_are_batches(monkeypatch):
+    """E/EP-prefixed space-separated episodes (E01 E02 E03) are a batch too."""
+    html = _nyaa_page(
+        _nyaa_row(1, "[X] Show E01 E02 E03 [720p]", "seedbatch", 40),
+    )
+    for ep in (1, 2, 3):
+        torrent = _search_page(monkeypatch, html, episode=ep, quality="720")
+        assert torrent.get("batch") is True, ep
+        assert torrent["torrent_id"] == "1", ep
+
+
+def test_nyaa_single_episode_with_metadata_numbers_not_a_batch(monkeypatch):
+    """A single episode beside a resolution / season / other number must stay a
+    single — Show 01 720p is one episode, not an episode list."""
+    from app.anime import nyaa
+    html = _nyaa_page(
+        _nyaa_row(1, "[X] Show 01 720p", "seed1", 50),
+        _nyaa_row(2, "[X] Show 01 1080p", "seed2", 60),
+        _nyaa_row(3, "[X] Show S01E01 720p", "seed3", 70),
+        _nyaa_row(4, "[X] Show 001 [480p]", "seed4", 80),
+    )
+    singles, batches = nyaa.NyaaProvider._parse_rows(html, 1)
+    assert len(batches) == 0  # none misread as a batch
+    assert len(singles) == 4
+    # And the search still picks a single (never a batch) for this episode.
+    torrent = _search_page(monkeypatch, html, episode=1, quality="")
+    assert torrent.get("batch") is not True
+
+
 def test_nyaa_unextractable_batch_never_downloads_whole_torrent(monkeypatch, tmp_path):
     """When a recognized batch can't yield the requested episode, the download
     fails cleanly rather than falling back to pulling the whole multi-GiB
@@ -989,3 +1175,159 @@ def test_nyaa_unextractable_batch_never_downloads_whole_torrent(monkeypatch, tmp
     with pytest.raises(DownloadError, match="not found inside the batch"):
         provider.download(stream, tmp_path / "out", "480", lambda f: None, None)
     assert whole["called"] is False
+
+
+class _FakeTorrentResp:
+    content = b"fake torrent bytes"
+
+    def raise_for_status(self):
+        return None
+
+
+def _run_listing_test(monkeypatch, tmp_path, listing_out, episode):
+    """Drive _download_batch_episode's aria2 file-listing step with canned
+    --show-files output; simulate aria2 writing the selected file into the
+    workdir, and return (select_file, output_path)."""
+    from app.anime import nyaa
+    from app.anime.providers import EpisodeStream
+
+    monkeypatch.setattr(nyaa._client, "get", lambda *a, **k: _FakeTorrentResp())
+
+    class _Run:
+        returncode = 0
+        stdout = listing_out
+        stderr = ""
+
+    monkeypatch.setattr(nyaa.subprocess, "run", lambda *a, **k: _Run())
+
+    captured: dict = {}
+
+    def fake_aria2_download(self, magnet, workdir, on_progress, should_cancel, select_file=None):
+        captured["select_file"] = select_file
+        d = workdir / "Show"
+        d.mkdir(parents=True, exist_ok=True)
+        f = d / f"Name - {episode:02d} [1080p].mkv"
+        f.write_bytes(b"content")
+        return None
+
+    monkeypatch.setattr(nyaa.NyaaProvider, "_aria2_download", fake_aria2_download)
+
+    stream = EpisodeStream(
+        provider="nyaa", url="magnet:?xt=urn:btih:abc",
+        episode=episode, batch=True, torrent_id="947397",
+    )
+    out = nyaa.NyaaProvider()._download_batch_episode(
+        "aria2c", stream, tmp_path, lambda f: None, None
+    )
+    return captured.get("select_file"), out
+
+
+def test_batch_episode_parses_aria2_two_line_listing(monkeypatch, tmp_path):
+    """aria2 1.37 emits each file as 'idx|path' then '|length' on two lines:
+    the episode-2 path line (numeric index 2) must win, the length-only line
+    (empty index) must be ignored, and the selected file is returned."""
+    listing = (
+        "Files:\n"
+        "idx|path/length\n"
+        "===+====\n"
+        "  1|./Show/Name - 01 [1080p].mkv\n"
+        "   |151MiB (158,951,529)\n"
+        "---+----\n"
+        "  2|./Show/Name - 02 [1080p].mkv\n"
+        "   |126MiB (132,744,762)\n"
+        "---+----\n"
+        "  3|./Show/Name - 03 [1080p].mkv\n"
+        "   |132MiB (138,731,868)\n"
+    )
+    select_idx, out = _run_listing_test(monkeypatch, tmp_path, listing, episode=2)
+    assert select_idx == "2"
+    assert out == tmp_path / "Show" / "Name - 02 [1080p].mkv"
+    assert out.read_bytes() == b"content"
+
+
+def test_batch_episode_parses_single_line_listing(monkeypatch, tmp_path):
+    """The older single-line 'idx|path|length' form still selects the file."""
+    listing = "  1|./Show/Name - 02 [1080p].mkv|1234567\n"
+    select_idx, out = _run_listing_test(monkeypatch, tmp_path, listing, episode=2)
+    assert select_idx == "1"
+    assert out == tmp_path / "Show" / "Name - 02 [1080p].mkv"
+
+
+def test_batch_episode_returns_selected_file_not_largest(monkeypatch, tmp_path):
+    """aria2 preallocates unselected files, so the batch path must return the
+    exact file --select-file downloaded — never the largest file, which may be
+    a zero-filled preallocation — and must not consult _largest_video."""
+    from app.anime import nyaa
+    from app.anime.providers import EpisodeStream
+
+    listing = (
+        "Files:\nidx|path/length\n===+====\n"
+        "  1|./Show/Name - 01 [1080p].mkv\n"
+        "   |158951529\n"
+        "---+----\n"
+        "  2|./Show/Name - 02 [1080p].mkv\n"
+        "   |132744762\n"
+        "---+----\n"
+        "  3|./Show/Name - 03 [1080p].mkv\n"
+        "   |69981\n"
+    )
+    monkeypatch.setattr(nyaa._client, "get", lambda *a, **k: _FakeTorrentResp())
+
+    class _Run:
+        returncode = 0
+        stdout = listing
+        stderr = ""
+
+    monkeypatch.setattr(nyaa.subprocess, "run", lambda *a, **k: _Run())
+
+    def fake_aria2_download(self, magnet, workdir, on_progress, should_cancel, select_file=None):
+        assert select_file == "2"
+        d = workdir / "Show"
+        d.mkdir(parents=True, exist_ok=True)
+        f1 = d / "Name - 01 [1080p].mkv"
+        with f1.open("wb") as fh:
+            fh.truncate(158951529)  # largest, but preallocated zero-fill
+        f2 = d / "Name - 02 [1080p].mkv"
+        f2.write_bytes(b"real episode 2 content")
+        f3 = d / "Name - 03 [1080p].mkv"
+        with f3.open("wb") as fh:
+            fh.truncate(69981)
+        return None
+
+    monkeypatch.setattr(nyaa.NyaaProvider, "_aria2_download", fake_aria2_download)
+
+    def boom(*a, **k):
+        raise AssertionError("_largest_video must not be used for the selected-file path")
+
+    monkeypatch.setattr(nyaa.NyaaProvider, "_largest_video", boom)
+
+    stream = EpisodeStream(
+        provider="nyaa", url="magnet:?xt=urn:btih:abc",
+        episode=2, batch=True, torrent_id="947397",
+    )
+    out = nyaa.NyaaProvider()._download_batch_episode(
+        "aria2c", stream, tmp_path, lambda f: None, None
+    )
+    assert out is not None
+    assert out.name == "Name - 02 [1080p].mkv"  # the selected episode, not the largest
+    assert out.read_bytes() == b"real episode 2 content"
+
+
+def test_batch_rel_path_normalizes_safely():
+    """The aria2 listing path is normalized to a workdir-relative path, and a
+    malicious absolute or `..` path is refused rather than allowed to escape."""
+    from pathlib import Path
+
+    from app.anime.nyaa import NyaaProvider
+    from app.downloader import DownloadError
+
+    assert NyaaProvider._batch_rel_path("./Show/Name - 02 [1080p].mkv") == Path(
+        "Show/Name - 02 [1080p].mkv"
+    )
+    assert NyaaProvider._batch_rel_path("./Folder/File.mkv") == Path("Folder/File.mkv")
+    with pytest.raises(DownloadError):
+        NyaaProvider._batch_rel_path("/etc/passwd")
+    with pytest.raises(DownloadError):
+        NyaaProvider._batch_rel_path("../escape.mkv")
+    with pytest.raises(DownloadError):
+        NyaaProvider._batch_rel_path("./../escape/Name - 02.mkv")

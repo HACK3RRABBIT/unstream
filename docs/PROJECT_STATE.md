@@ -130,6 +130,16 @@ unavailable). Lets the downloader try the next provider at the same quality;
 if no provider can serve it, the job fails with
 `Requested quality Xp is unavailable for this episode.`
 
+**Error aggregation (`download_video_track`):** the clean quality message wins
+whenever at least one provider raised `QualityUnavailable` — a missing release,
+or a mislabeled one refused post-download — even if a later provider (HiAnime
+rot / unreachable from the datacenter) fails with an unrelated `ProviderError`.
+Only when no provider could evaluate the resolution do the real technical
+errors survive, as `Failed to download episode after trying all providers: …`.
+Observed live on the VPS: requesting 480p for Dandadan (only 1080p/2160p
+released) now reports the quality message instead of being masked by HiAnime's
+timeout.
+
 ### Nyaa resolution matching
 
 `nyaa._title_resolution(title)` recognizes `480p`/`720p`/`1080p` markers and
@@ -145,17 +155,33 @@ filters candidates to those whose claimed resolution equals the request.
 - A row is a batch when its title has a multi-episode range covering the
   requested episode — separators `-`, `–`, `—`, `~` (any whitespace around
   them), episode at first/middle/last of the range (`_episode_ranges`) — or an
-  explicit `[BATCH]` label.
+  explicit `[BATCH]` label, or a **space/comma-separated episode list**
+  (`Show 001 002 003`, `Show E01 E02`) via `_multi_episode_space_list`.
+- The space-list detector is deliberately **conservative**: only adjacent,
+  standalone **zero-padded** episode forms (`01`/`001`/`010`) or `E`/`EP`
+  markers count. A single episode beside a metadata number (`Show 01 720p`),
+  a year (`2001`), or an `SxxExx` marker is never a batch — a missed batch
+  falls through to the next provider, while a false positive would break a
+  normal single-episode download, so it errs toward single.
 - A multi-episode torrent is **never** whole-downloaded as if it were a single
   episode. Batches go through `_download_batch_episode`: the `.torrent` is
   fetched, aria2 `--show-files` / libtorrent file list is matched by
   `_file_is_episode`, and only the requested episode's file is downloaded.
+- **Two aria2 gotchas, both fixed after being exposed live on the VPS:**
+  1. aria2 1.37 emits each file as `idx|path` then `|length` on **two lines**
+     (not `idx|path|length` on one) — the parser accepts a numeric-index line
+     and ignores the length-only line.
+  2. aria2 **preallocates every file** in a batch, so unselected files sit in
+     the workdir as zero-filled look-alikes and "largest file" is wrong —
+     the batch path returns the exact `--select-file`-ed file (verified to be
+     a real file inside the workdir) instead of `_largest_video`.
 - If the episode can't be extracted, the download fails cleanly so the chain
   can try the next provider.
 
 ## Test status
 
-**154 passed** (full backend suite, hermetic — no network). Run:
+**162 passed, 3 skipped** (165 total; the skips need ffmpeg/ffprobe on the
+machine running the suite). Run:
 
 ```sh
 cd backend && uv run pytest
@@ -167,6 +193,16 @@ provider registry (`providers()`), and feed canned Nyaa HTML. When a test
 drives the video pipeline with a fake file, it stubs `_probe_height` (real
 ffprobe returns `None` on non-video bytes, which fails the explicit-quality
 check).
+
+One dev-box caveat: if `all_proxy=socks://…` is exported (some desktop Linux
+setups), `httpx.Client(...)` at module import in `nyaa.py` fails with "Unknown
+scheme for proxy URL", failing every Nyaa test. That is the machine's proxy,
+not the code — unset the proxy vars for the test run:
+
+```sh
+env -u all_proxy -u ALL_PROXY -u http_proxy -u HTTP_PROXY -u https_proxy \
+    -u HTTPS_PROXY -u no_proxy -u NO_PROXY uv run pytest
+```
 
 ## Local development
 
@@ -198,6 +234,31 @@ CI runs `uv sync --frozen && uv run pytest -q` (backend) and
 
 ## Milestones (git history, newest first)
 
+- `609f3e9` — **Enforce served quality post-download; fix Nyaa range
+  detection**: `_check_served_quality` probes the finished file (ffprobe is the
+  source of truth) and refuses an explicit 480/720/1080 request that wasn't
+  actually served at that height; Nyaa `-`/`–`/`—`/`~` ranges and explicit
+  `[BATCH]` labels route to single-episode extraction, never a whole-batch
+  download. 13 hermetic tests.
+- *(Changes this doc is written alongside — uncommitted at writing:*
+  - *record `provider`/`served_quality` on a failed track — the pipeline fills
+    `meta` before it can fail, and `jobs._run_track` copies it onto the job
+    state in the error branch too, so the API reports requested-vs-served even
+    when a download ends in `error`.*
+  - *`QualityUnavailable` error aggregation — a resolution explicitly
+    unavailable from any provider that could evaluate it now survives a later
+    provider's unrelated `ProviderError`; the job fails with the clean
+    "requested quality is unavailable" message instead of a generic
+    provider/network error. Live-verified on the VPS (Dandadan 480p).*
+  - *space/comma-separated episode lists (`001 002 003`, `E01 E02`) are now
+    batches via `_multi_episode_space_list` — conservative: only adjacent
+    zero-padded or E/EP-marked episode numbers count, so `Show 01 720p` stays
+    a single. 4 hermetic tests.*
+  - *aria2 batch-extraction fixes, both exposed live on the VPS (Montana Jones
+    ep 2): `_download_batch_episode` now parses aria2 1.37's two-line
+    `idx|path` / `|length` listing and returns the exact `--select-file`-ed
+    file (aria2 preallocates unselected files, so "largest" would pick a
+    zero-filled look-alike). 4 hermetic tests.*
 - `b6fd892` — **Fix strict anime video quality selection**: `QualityUnavailable`,
   Nyaa resolution matching, strict yt-dlp selector, `served_quality` +
   `provider` tracking, 12 hermetic quality tests.
@@ -209,9 +270,6 @@ CI runs `uv sync --frozen && uv run pytest -q` (backend) and
 - `9c9fa69` — Add an anime section: AniList browse, Nyaa torrent downloads.
 - Earlier: Spotify embed (`embed.py`), long-playlist paging, cancel, lyrics,
   original-codec remux — see `git log`.
-
-*(The next commit, when landed: **Enforce served quality post-download; fix
-Nyaa range detection** — this doc is written alongside it.)*
 
 ## Verified on the disposable VPS
 
@@ -230,16 +288,43 @@ cover. Successful results:
   The on-disk file showed full size during download because aria2
   **preallocates**; real progress comes from aria2's summary log, which the
   test driver parses.
+- **Requested 720 → served 720 (One Piece ep 1100, current code):** Nyaa
+  selected `[SubsPlease] One Piece - 1100 (720p) [CC8AF482].mkv`; the final
+  mp4 probed at **1280×720** (h264, yuv420p, 23.976 fps, AAC 44.1 kHz stereo,
+  ~1431 s), 737 MB in ~246 s; `served_quality="720p"`, `provider="nyaa"`, job
+  `done`. Post-download enforcement passed — served == requested.
+- **Quality-unavailable aggregation (Dandadan S01E01 @ 480p):** Nyaa raised
+  `QualityUnavailable` (only 1080p/2160p released) and HiAnime then timed out
+  from the datacenter — the final job error is now the clean
+  `Requested quality 480p is unavailable for this episode.` (before the
+  aggregation fix it was masked by HiAnime's generic timeout).
+- **Space-list batch extraction (Montana Jones - 01, 02, 03, Nyaa id 947397,
+  requested episode 2):** the space/comma list was detected as `batch=True`,
+  routed to `_download_batch_episode`, aria2 `--select-file=2` downloaded only
+  episode 2, and the returned file was exactly episode 2 — 132,744,762 bytes
+  (~126 MiB, matching the torrent listing), ffprobe **h264 640×480** (yuv420p,
+  AAC, ~1509 s), `served_quality="480p"`, `provider="nyaa"`, job `done`. This
+  is the live test that exposed and then verified both aria2 fixes (two-line
+  `--show-files` + preallocation).
 
 ## Known limitations
 
-- A multi-episode torrent with **no** range and **no** `[BATCH]` label (e.g.
-  space-separated `001 002 003`) is still treated as a single.
+- A space/comma-separated episode list is now a batch when the numbers are
+  **zero-padded or E/EP-marked** (`001 002 003`, `E01 E02`) — a deliberate
+  false-negative remains for ambiguous forms (non-zero-padded `1 2 3`,
+  `S01E01 S01E02`), which are still treated as a single rather than risk a
+  false positive.
+- Current Nyaa indexing had **no seeded `001 002 003` non-comma example** to
+  live-test against (the `001 002 003` query returns nothing; the only such
+  title, a German-sub Pocket Monsters, had 0 seeders) — the live batch test
+  used the equivalent comma form `01, 02, 03`, which is the same detector path.
 - `served_quality` records the truth but doesn't itself fail a mislabeled
   release — the post-download `_check_served_quality` does that; both exist.
-- HiAnime never raises `QualityUnavailable` (its strictness relies on the
-  yt-dlp selector erroring), so the clean "quality unavailable" message only
-  fires when the last provider raised it.
+- HiAnime never raises `QualityUnavailable` itself (its strictness relies on
+  the yt-dlp selector erroring), but the downloader's error aggregation now
+  preserves a `QualityUnavailable` from any provider that could evaluate the
+  resolution, so the clean "quality unavailable" message fires even when
+  HiAnime was the last provider to fail.
 - AniList 403 on these dev boxes means the `/api/anime/download` route cannot
   build a season here; tests drive `jobs.start` with a constructed Track
   instead.
@@ -249,15 +334,30 @@ cover. Successful results:
 
 ## Recommended next work / TODOs
 
-1. **Post-download `served == requested` recorded on the job state even on
-   failure** — today a mismatch falls through and only the final success (or
-   the clean error message) is reported.
-2. **Batch detection for non-range multi-episode titles** (space-separated
-   episode lists, `[Batch]` already handled).
-3. **HiAnime `QualityUnavailable`** — surface its missing-resolution case with
-   the same message so the last-provider error is always the quality message.
-4. **Live-test the batch extraction path** on the VPS (request an episode that
-   only exists inside a batch) — covered by hermetic tests only so far.
+1. ✅ **Post-download `served == requested` recorded on the job state even on
+   failure** — **done**: the pipeline fills `meta` (provider + ffprobe'd
+   height) before it can fail, and `jobs._run_track` copies it onto the
+   `TrackState` in the error branch too. A mislabeled release that fails
+   quality enforcement now reports `provider` / `served_quality` (the truth)
+   alongside the error message. Hermetic test:
+   `test_failed_track_still_records_served_quality`.
+2. ✅ **Batch detection for non-range multi-episode titles** — **done**:
+   space/comma-separated episode lists (`001 002 003`, `E01 E02`) are batches
+   via `_multi_episode_space_list`, deliberately conservative (only adjacent
+   zero-padded or E/EP-marked numbers) so `Show 01 720p` stays a single. 4
+   hermetic tests. Live-verified on the VPS (Montana Jones ep 2, see the
+   Verified section).
+3. ✅ **HiAnime `QualityUnavailable`** — **done**: the provider-chain error
+   aggregation in `download_video_track` now preserves a `QualityUnavailable`
+   from any provider that could evaluate the resolution, so the final job
+   error is the clean quality message even when HiAnime (rot / unreachable)
+   was the last provider to fail. Live-verified on the VPS: Dandadan 480p now
+   reports the quality message instead of HiAnime's timeout.
+4. ✅ **Live-test the batch extraction path** on the VPS — **done**: Montana
+   Jones `01, 02, 03` (episode 2, a middle episode of a real space-list batch)
+   extracted only episode 2 end-to-end. This live run also exposed and fixed
+   the two aria2 gotchas (two-line `--show-files` listing; preallocation
+   making `_largest_video` pick a zero-filled file). 4 hermetic tests added.
 5. **`docs/DESIGN.md`** could gain a section on the anime quality/batch
    decisions (currently only the README and this doc cover them).
 6. Anything a fresh clone must know that this conversation learned — keep
