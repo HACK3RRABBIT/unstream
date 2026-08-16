@@ -195,6 +195,38 @@ def _mux_subtitles(video: Path, sub: Path | None, dest: Path, language: str = "e
     return out
 
 
+def _finalize_subtitles(
+    video: Path, eng_sub: Path | None, requested: list[str], dest: Path
+) -> Path:
+    """Mux the requested subtitle tracks into the video.
+
+    `eng_sub` is the provider's English subtitle file (may be VTT bytes in an
+    .srt path, or None when the source offers none). English-only keeps the
+    existing single-track path; a Persian request translates the English
+    dialogue and muxes the generated Persian (plus English when requested).
+    Any failure falls back to the English track or a bare video — never fails
+    the download.
+    """
+    if not requested or not eng_sub or not eng_sub.exists():
+        return video
+    want_eng = "eng" in requested
+    want_fas = "fas" in requested
+    if not want_fas:
+        return _mux_subtitles(video, eng_sub, dest)
+    from .subtitles import mux_subtitles as mux_n
+    from .subtitle_translate import translate_srt_file
+
+    fas_srt = translate_srt_file(eng_sub, "fa", _with_ext(dest, "fas.srt"))
+    tracks: list[tuple[str, Path]] = []
+    if want_eng:
+        tracks.append(("eng", eng_sub))
+    if fas_srt is not None:
+        tracks.append(("fas", fas_srt))
+    if not tracks:
+        return video
+    return mux_n(video, tracks, dest)
+
+
 def _video_has_audio(video: Path) -> bool:
     """Quick probe: does the mp4 already carry an audio stream?"""
     import subprocess
@@ -332,7 +364,7 @@ def download_video_track(
                     )
                 on_progress("tagging", 1.0)
                 sub = _fetch_subs(stream, dest)
-                final = _mux_subtitles(video, sub, dest)
+                final = _finalize_subtitles(video, sub, track.subs, dest)
                 # The file now exists and is probed; enforce the requested
                 # resolution BEFORE the track can be marked done. A release
                 # whose real height differs from what its title claimed is a

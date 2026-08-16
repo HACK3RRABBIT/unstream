@@ -177,6 +177,60 @@ Confirmed end-to-end: One Piece 1100 @ 480p and @ 720p (ffprobe 848×480 /
 (Montana Jones episode 2 extracted alone, ~126 MiB, valid 640×480), and the
 quality-unavailable aggregation (Dandadan 480p → clean quality message).
 
+### Persian subtitles
+
+The UI ships Farsi-first but the release sources are English-subbed, so the
+milestone's answer to «زیرنویس» is **generate Persian by translating the
+English track**, not wait for a Persian fansub that almost never exists.
+
+**Acquisition.** The two providers hand subtitles over in different shapes:
+Nyaa embeds them as streams inside the fansub `.mkv`; HiAnime offers an
+external downloaded file (usually VTT despite the `.srt` name). Both are
+English sources.
+
+**`subs` is a list.** `AnimeDownloadRequest.subs` and `Track.subs` are a list of
+requested languages (`["eng"]`, `["fas"]`, `["eng","fas"]`, or `[]` for none) —
+a legacy single string is still accepted by the request validator, and
+`"none"` normalizes to `[]`. The frontend exposes exactly four presets:
+English, فارسی, English + فارسی, and None. The Farsi-first default is
+`["eng", "fas"]`; English is never silently dropped from an explicit choice.
+
+**Translation flow.** Once English is acquired, `subtitle_translate.py`
+normalizes it to SRT (`subtitles.py` parses SRT/VTT into cues whose timestamps
+are kept verbatim), translates **only the dialogue text** through the existing
+keyless Google mechanism in `translate.py`, and rebuilds an SRT with identical
+timestamps. A `Translator` protocol is the seam for future LLM/keyed providers;
+only the keyless Google one is implemented.
+
+**Cache.** The translated SRT is cached in SQLite
+(`data/subtitle_translations.db`) keyed by `sha256(normalized English SRT) +
+target language`, so a changed English subtitle produces a fresh translation and
+a re-download of the same episode never re-translates. A cache miss on a repeat
+episode is a hit.
+
+**Muxing.** Only the languages explicitly requested are muxed (D2): `["eng"]`
+keeps the legacy single-track path untouched; `["fas"]` muxes only the
+translated Persian (English used internally as the source); `["eng","fas"]`
+muxes both. The original English stream is always kept intact when present.
+Nyaa extracts the embedded English to a temp SRT only when Persian is
+requested; HiAnime normalizes its downloaded file through the same pipeline.
+
+**Failure semantics.** A translation failure never fails the download: the job
+completes with the available English subtitle, or a bare video when there is no
+English at all.
+
+**Validation.** The real ffmpeg mux + real Google translation were verified in
+the Docker `api` container (a fansub-shaped mkv with a titled English sub:
+`["eng","fas"]` → two mov_text tracks `eng`/`fas`, `["fas"]` → one `fas` track,
+`["eng"]` → one `eng` track, and the extracted Persian text confirmed). A real
+VPS download confirmed the English-only path muxes a `subtitle,eng` stream; the
+Persian VPS runs were blocked by the swarm stalling on the final ~0.2% of a
+torrent (transient, not a code failure) — the Docker test covers the identical
+code path. Two real bugs surfaced during that validation and were fixed:
+ffmpeg's `-map 0:s:N` wants the **per-type** subtitle index (ffprobe reports the
+global one), and real fansub language tags carry a title (`2,eng,English`) that
+a naive `eng` match silently failed on.
+
 ### Known limitations
 
 - Non-zero-padded episode lists (`1 2 3`) and `S01E01 S01E02` forms are not

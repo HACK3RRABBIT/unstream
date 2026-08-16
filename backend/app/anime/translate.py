@@ -87,6 +87,16 @@ def _translate(text: str, target: str) -> str:
 _MAX_CHARS = 1200
 
 
+def translate_text(text: str, target: str) -> str:
+    """One uncached translation call; raises on network failure.
+
+    The public primitive for callers that keep their own cache (the subtitle
+    translator). The synopsis `translate()` keeps its per-line cache so browse
+    repeats are free; subtitle caching is keyed by subtitle content instead.
+    """
+    return _translate(text, target)
+
+
 def translate(text: str, target: str) -> str:
     """Translate `text` to `target`, caching misses. Never raises:
     returns the original text on any failure.

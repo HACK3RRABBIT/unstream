@@ -143,11 +143,14 @@ const en = {
     },
     subtitles: {
       label: 'Subtitles',
-      languages: { eng: 'EN', fas: 'FA', none: 'Off' },
-      hints: {
-        eng: 'Mux English soft subtitles into each episode',
-        fas: 'Mux Persian subtitles (when the release has them)',
-        none: 'Download without subtitles',
+      presets: {
+        labels: { eng: 'EN', fas: 'فارسی', both: 'EN + فارسی', none: 'Off' },
+        hints: {
+          eng: 'Mux English soft subtitles into each episode',
+          fas: 'Mux Persian subtitles (translated from English)',
+          both: 'Mux English and Persian soft subtitles',
+          none: 'Download without subtitles',
+        },
       },
     },
   },

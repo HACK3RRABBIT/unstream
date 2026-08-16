@@ -101,14 +101,14 @@ class AnimeProvider(Protocol):
         quality: str,
         on_progress: Callable[[float], None],
         should_cancel: Callable[[], bool] | None,
-        subs: str = "eng",
+        subs: list[str] | None = None,
     ) -> Path:
         """Fetch the stream's bytes into `dest` (a path without extension).
 
-        `subs` is the subtitle language to mux ("eng"/"fas"/"none"). Returns
-        the video file actually produced. Only self-downloading providers
-        (Nyaa torrents) implement this; HLS providers leave it to
-        anime/downloader.py.
+        `subs` is the list of subtitle languages to mux ("eng"/"fas"); empty or
+        None means no subtitles. Returns the video file actually produced. Only
+        self-downloading providers (Nyaa torrents) implement this; HLS
+        providers leave it to anime/downloader.py.
         """
         raise NotImplementedError  # noqa: PLC0415 — HLS providers don't need it
 

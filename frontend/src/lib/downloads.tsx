@@ -11,11 +11,12 @@ import {
 import {
   cancelJob,
   DEFAULT_QUALITY,
-  DEFAULT_SUBTITLE_LANGUAGE,
+  DEFAULT_SUBTITLE_LANGUAGES,
   DEFAULT_VIDEO_QUALITY,
   getJobs,
   isQuality,
   isSubtitleLanguage,
+  isSubtitleLanguages,
   isVideoQuality,
   resolveUrl,
   startAnimeDownload,
@@ -78,10 +79,10 @@ interface DownloadsContextValue {
   /** Whether new jobs embed lyrics in the finished files' tags. */
   embedLyrics: boolean
   setEmbedLyrics: (embed: boolean) => void
-  /** Subtitle language anime episodes mux in (eng/fas/none), like the music
-   *  lyrics toggle — persisted and applied to every anime job. */
-  subtitleLanguage: SubtitleLanguage
-  setSubtitleLanguage: (lang: SubtitleLanguage) => void
+  /** Subtitle languages anime episodes mux in ([]/["eng"]/["fas"]/["eng","fas"]),
+   *  like the music lyrics toggle — persisted and applied to every anime job. */
+  subtitleLanguages: SubtitleLanguage[]
+  setSubtitleLanguages: (langs: SubtitleLanguage[]) => void
   start: (url: string, collection: Collection, trackIds?: string[]) => Promise<void>
   /** One-click download of a single search result: resolve, then queue. */
   startFromResult: (result: SearchResult) => Promise<void>
@@ -144,12 +145,17 @@ function storedLyrics(): boolean {
   }
 }
 
-function storedSubtitleLanguage(): SubtitleLanguage {
+function storedSubtitleLanguages(): SubtitleLanguage[] {
   try {
     const saved = localStorage.getItem(SUBTITLE_KEY)
-    return isSubtitleLanguage(saved) ? saved : DEFAULT_SUBTITLE_LANGUAGE
+    if (!saved) return DEFAULT_SUBTITLE_LANGUAGES
+    // Migrate a legacy single value ("eng") to a list; "none" -> [].
+    if (isSubtitleLanguage(saved)) return saved === 'none' ? [] : [saved]
+    const parsed: unknown = JSON.parse(saved)
+    if (isSubtitleLanguages(parsed)) return parsed
+    return DEFAULT_SUBTITLE_LANGUAGES
   } catch {
-    return DEFAULT_SUBTITLE_LANGUAGE
+    return DEFAULT_SUBTITLE_LANGUAGES
   }
 }
 
@@ -185,7 +191,8 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
   const [quality, setQualityState] = useState<Quality>(storedQuality)
   const [videoQuality, setVideoQualityState] = useState<VideoQuality>(storedVideoQuality)
   const [embedLyrics, setEmbedLyricsState] = useState<boolean>(storedLyrics)
-  const [subtitleLanguage, setSubtitleLanguageState] = useState<SubtitleLanguage>(storedSubtitleLanguage)
+  const [subtitleLanguages, setSubtitleLanguagesState] =
+    useState<SubtitleLanguage[]>(storedSubtitleLanguages)
   const entriesRef = useRef(entries)
   entriesRef.current = entries
   // Read through a ref so `start` stays referentially stable — every
@@ -196,8 +203,8 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
   videoQualityRef.current = videoQuality
   const lyricsRef = useRef(embedLyrics)
   lyricsRef.current = embedLyrics
-  const subtitleLanguageRef = useRef(subtitleLanguage)
-  subtitleLanguageRef.current = subtitleLanguage
+  const subtitleLanguagesRef = useRef(subtitleLanguages)
+  subtitleLanguagesRef.current = subtitleLanguages
   // (time, settled-count) samples per job, for ETA estimation.
   const samplesRef = useRef<Map<string, { t: number; settled: number }[]>>(new Map())
 
@@ -228,10 +235,10 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  const setSubtitleLanguage = useCallback((next: SubtitleLanguage) => {
-    setSubtitleLanguageState(next)
+  const setSubtitleLanguages = useCallback((next: SubtitleLanguage[]) => {
+    setSubtitleLanguagesState(next)
     try {
-      localStorage.setItem(SUBTITLE_KEY, next)
+      localStorage.setItem(SUBTITLE_KEY, JSON.stringify(next))
     } catch {
       // As above.
     }
@@ -284,7 +291,7 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
       episodeIds?: string[],
     ) => {
       const chosen = videoQualityRef.current
-      const subs = subtitleLanguageRef.current
+      const subs = subtitleLanguagesRef.current
       const url = `anime://${anime.id}/${season.season}`
       const jobId = await startAnimeDownload(anime.id, season.season, chosen, subs, episodeIds)
       // A subset job lists only its own episodes in the dock.
@@ -428,8 +435,8 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
       setVideoQuality,
       embedLyrics,
       setEmbedLyrics,
-      subtitleLanguage,
-      setSubtitleLanguage,
+      subtitleLanguages,
+      setSubtitleLanguages,
       start,
       startFromResult,
       startAnime,
@@ -448,8 +455,8 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
       setVideoQuality,
       embedLyrics,
       setEmbedLyrics,
-      subtitleLanguage,
-      setSubtitleLanguage,
+      subtitleLanguages,
+      setSubtitleLanguages,
       start,
       startFromResult,
       startAnime,

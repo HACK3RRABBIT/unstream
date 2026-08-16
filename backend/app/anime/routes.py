@@ -9,7 +9,7 @@ music downloads use.
 import re
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from .. import analytics, jobs, limits
 from ..models import ProviderError, Track
@@ -19,6 +19,8 @@ from .providers import EpisodeSource
 
 router = APIRouter(prefix="/api/anime", tags=["anime"])
 
+SUBTITLE_LANGS = ("eng", "fas")
+
 
 class AnimeDownloadRequest(BaseModel):
     media_id: int
@@ -26,9 +28,28 @@ class AnimeDownloadRequest(BaseModel):
     quality: str = DEFAULT_VIDEO_QUALITY
     # Optional subset of episode_ids to download; None/omitted = the whole season.
     episode_ids: list[str] | None = None
-    # Subtitle language to mux into each episode ("eng"/"fas"/"none"),
-    # captured at job start like quality. Defaults to English soft subs.
-    subs: str = "eng"
+    # Subtitle languages to mux into each episode ("eng"/"fas"); an empty list
+    # (or the legacy "none") means no subtitles. Captured at job start like
+    # quality. Defaults to English soft subs.
+    subs: list[str] = Field(default_factory=lambda: ["eng"])
+
+    @field_validator("subs", mode="before")
+    @classmethod
+    def _coerce_subs(cls, value: object) -> list[str]:
+        # A legacy single string ("eng") is accepted as a one-element list.
+        if isinstance(value, str):
+            value = [value]
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise ValueError("subs must be a list of subtitle languages")
+        out: list[str] = []
+        for lang in value:
+            if lang not in SUBTITLE_LANGS + ("none",):
+                raise ValueError("subtitle language must be one of: eng, fas, none")
+            if lang != "none":
+                out.append(lang)
+        return out
 
 
 def _episode_id(media_id: int, season: int, episode: int) -> str:

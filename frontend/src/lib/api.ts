@@ -369,25 +369,32 @@ export async function getAnime(id: number, signal?: AbortSignal): Promise<AnimeD
   return data
 }
 
-/** Subtitle language to mux into each episode — like the music lyrics toggle.
- *  "none" downloads the episode without subtitles. */
+/** Subtitle languages an anime episode can mux in. The user's selection is a
+ *  list — ["eng"], ["fas"], ["eng","fas"], or [] (none). "none" is kept as a
+ *  legacy single value; the picker's None preset sends []. */
 export const SUBTITLE_LANGUAGES = ['eng', 'fas', 'none'] as const
 
 export type SubtitleLanguage = (typeof SUBTITLE_LANGUAGES)[number]
 
-export const DEFAULT_SUBTITLE_LANGUAGE: SubtitleLanguage = 'eng'
+/** Default subtitle selection for the Persian-first UI: English + Persian.
+ *  English is never dropped from an explicit selection, only from this default
+ *  choice of what a fresh user gets. */
+export const DEFAULT_SUBTITLE_LANGUAGES: SubtitleLanguage[] = ['eng', 'fas']
 
 export const isSubtitleLanguage = (value: unknown): value is SubtitleLanguage =>
   SUBTITLE_LANGUAGES.includes(value as SubtitleLanguage)
 
+export const isSubtitleLanguages = (value: unknown): value is SubtitleLanguage[] =>
+  Array.isArray(value) && value.every(isSubtitleLanguage)
+
 /** Queue a season's episodes as a download job. `episodeIds` selects a
  *  subset; omitted = the whole season. Quality is the header's global video
- *  quality; `subs` is the subtitle language to mux in. */
+ *  quality; `subs` is the list of subtitle languages to mux in. */
 export async function startAnimeDownload(
   animeId: number,
   season: number,
   quality: VideoQuality = DEFAULT_VIDEO_QUALITY,
-  subs: SubtitleLanguage = DEFAULT_SUBTITLE_LANGUAGE,
+  subs: SubtitleLanguage[] = DEFAULT_SUBTITLE_LANGUAGES,
   episodeIds?: string[],
 ): Promise<string> {
   const { data } = await client.post<{ job_id: string }>('/anime/download', {

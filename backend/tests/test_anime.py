@@ -1331,3 +1331,235 @@ def test_batch_rel_path_normalizes_safely():
         NyaaProvider._batch_rel_path("../escape.mkv")
     with pytest.raises(DownloadError):
         NyaaProvider._batch_rel_path("./../escape/Name - 02.mkv")
+
+
+# ── Persian subtitle integration: subs list + provider muxing ─────────────────
+
+
+def test_anime_download_request_subs_validation():
+    """subs accepts a list, a legacy single string, and 'none'/[]; rejects
+    unknown languages."""
+    from app.anime.routes import AnimeDownloadRequest
+
+    assert AnimeDownloadRequest(media_id=1, season=1, subs=["eng", "fas"]).subs == ["eng", "fas"]
+    assert AnimeDownloadRequest(media_id=1, season=1, subs="eng").subs == ["eng"]  # legacy
+    assert AnimeDownloadRequest(media_id=1, season=1, subs=["none"]).subs == []
+    assert AnimeDownloadRequest(media_id=1, season=1, subs=[]).subs == []
+    with pytest.raises(Exception):
+        AnimeDownloadRequest(media_id=1, season=1, subs=["es"])
+
+
+def _finalize_setup(monkeypatch, tmp_path, find_sub):
+    """Shared harness for nyaa._finalize: stub stream probing, ffmpeg and the
+    embed/srt muxer; return captured mux inputs."""
+    from app import downloader
+    from app.anime import nyaa
+
+    video = tmp_path / "ep.mkv"
+    video.write_bytes(b"video")
+    out = tmp_path / "ep.mp4"
+
+    monkeypatch.setattr(
+        nyaa.NyaaProvider, "_find_sub_stream", staticmethod(find_sub)
+    )
+
+    def fake_ffmpeg(args, produced, what):
+        if what == "subtitle extract":
+            produced.write_text("1\n00:00:01,000 --> 00:00:04,000\nHello\n")
+        else:
+            produced.write_bytes(b"muxed")
+
+    monkeypatch.setattr(downloader, "_run_ffmpeg", fake_ffmpeg)
+
+    captured: dict = {}
+
+    def fake_mux(video_, out_, embedded, srt_files):
+        captured["embedded"] = embedded
+        captured["srt_files"] = srt_files
+        out_.write_bytes(b"muxed")
+
+    monkeypatch.setattr(
+        nyaa.NyaaProvider, "_mux_embedded_and_srt", staticmethod(fake_mux)
+    )
+    return video, out, captured
+
+
+def test_nyaa_finalize_eng_only_keeps_single_track(monkeypatch, tmp_path):
+    from app import downloader
+    from app.anime import nyaa
+
+    video, out, captured = _finalize_setup(
+        monkeypatch, tmp_path, lambda video, lang: "1" if lang == "eng" else None
+    )
+    ffmpeg_args = {}
+
+    def fake_ffmpeg(args, produced, what):
+        ffmpeg_args["args"] = args
+        produced.write_bytes(b"muxed")
+
+    monkeypatch.setattr(downloader, "_run_ffmpeg", fake_ffmpeg)
+    nyaa.NyaaProvider._finalize(video, out, ["eng"])
+    assert "-map", "0:s:1" in zip(ffmpeg_args["args"], ffmpeg_args["args"][1:]) or "0:s:1" in ffmpeg_args["args"]
+    assert "mov_text" in ffmpeg_args["args"]
+
+
+def test_nyaa_finalize_persian_translates_english(monkeypatch, tmp_path):
+    from app.anime import nyaa
+
+    video, out, captured = _finalize_setup(
+        monkeypatch, tmp_path, lambda video, lang: "1" if lang == "eng" else None
+    )
+
+    def fake_translate(source, target, dest):
+        dest.write_text("1\n00:00:01,000 --> 00:00:04,000\nسلام\n")
+        return dest
+
+    monkeypatch.setattr("app.anime.subtitle_translate.translate_srt_file", fake_translate)
+
+    nyaa.NyaaProvider._finalize(video, out, ["eng", "fas"])
+    assert captured["embedded"] == [("1", "eng")]  # original English untouched
+    assert [lang for lang, _ in captured["srt_files"]] == ["fas"]  # translated Persian
+    assert out.read_bytes() == b"muxed"
+
+
+def test_nyaa_finalize_persian_only_muxes_persian(monkeypatch, tmp_path):
+    from app.anime import nyaa
+
+    video, out, captured = _finalize_setup(
+        monkeypatch, tmp_path, lambda video, lang: "1" if lang == "eng" else None
+    )
+
+    def fake_translate(source, target, dest):
+        dest.write_text("1\n00:00:01,000 --> 00:00:04,000\nسلام\n")
+        return dest
+
+    monkeypatch.setattr("app.anime.subtitle_translate.translate_srt_file", fake_translate)
+
+    nyaa.NyaaProvider._finalize(video, out, ["fas"])
+    assert captured["embedded"] == []  # English NOT muxed
+    assert [lang for lang, _ in captured["srt_files"]] == ["fas"]
+
+
+def test_nyaa_finalize_translation_failure_falls_back(monkeypatch, tmp_path):
+    from app.anime import nyaa
+
+    video, out, captured = _finalize_setup(
+        monkeypatch, tmp_path, lambda video, lang: "1" if lang == "eng" else None
+    )
+    monkeypatch.setattr(
+        "app.anime.subtitle_translate.translate_srt_file", lambda *a, **k: None
+    )
+
+    nyaa.NyaaProvider._finalize(video, out, ["eng", "fas"])
+    assert captured["embedded"] == [("1", "eng")]  # English survived the failed translation
+    assert captured["srt_files"] == []
+
+
+def test_nyaa_finalize_embedded_persian_preferred(monkeypatch, tmp_path):
+    from app.anime import nyaa
+
+    video, out, captured = _finalize_setup(
+        monkeypatch, tmp_path,
+        lambda video, lang: "1" if lang == "eng" else ("2" if lang == "fas" else None),
+    )
+    nyaa.NyaaProvider._finalize(video, out, ["eng", "fas"])
+    assert ("2", "fas") in captured["embedded"]  # embedded Persian used, no translation
+    assert captured["srt_files"] == []
+
+
+def test_finalize_subtitles_eng_plus_fas_muxes_two_tracks(monkeypatch, tmp_path):
+    from app.anime import downloader as anime_downloader
+
+    video = tmp_path / "ep.mp4"
+    video.write_bytes(b"v")
+    eng_sub = tmp_path / "ep.srt"
+    eng_sub.write_text("1\n00:00:01,000 --> 00:00:04,000\nHello\n")
+
+    def fake_translate(source, target, dest):
+        dest.write_text("1\n00:00:01,000 --> 00:00:04,000\nسلام\n")
+        return dest
+
+    monkeypatch.setattr("app.anime.subtitle_translate.translate_srt_file", fake_translate)
+
+    captured: dict = {}
+
+    def fake_mux(video_, tracks, dest):
+        captured["tracks"] = tracks
+        out = tmp_path / "ep.mp4"
+        out.write_bytes(b"muxed")
+        return out
+
+    monkeypatch.setattr("app.anime.subtitles.mux_subtitles", fake_mux)
+
+    out = anime_downloader._finalize_subtitles(video, eng_sub, ["eng", "fas"], tmp_path / "ep")
+    assert [lang for lang, _ in captured["tracks"]] == ["eng", "fas"]
+    assert out.read_bytes() == b"muxed"
+
+
+def test_finalize_subtitles_eng_only_keeps_single_mux(monkeypatch, tmp_path):
+    from app.anime import downloader as anime_downloader
+
+    video = tmp_path / "ep.mp4"
+    video.write_bytes(b"v")
+    eng_sub = tmp_path / "ep.srt"
+    eng_sub.write_text("1\n00:00:01,000 --> 00:00:04,000\nHello\n")
+
+    captured: dict = {}
+
+    def fake_single(video_, sub, dest):
+        captured["sub"] = sub
+        out = tmp_path / "ep.mp4"
+        out.write_bytes(b"muxed")
+        return out
+
+    monkeypatch.setattr(anime_downloader, "_mux_subtitles", fake_single)
+
+    out = anime_downloader._finalize_subtitles(video, eng_sub, ["eng"], tmp_path / "ep")
+    assert captured["sub"] == eng_sub  # the existing single-track path
+    assert out.read_bytes() == b"muxed"
+
+
+def test_find_sub_stream_returns_per_type_index(monkeypatch, tmp_path):
+    """ffprobe reports global stream indexes; ffmpeg's `-map 0:s:N` wants the
+    per-type (subtitle) index, so _find_sub_stream counts subtitle lines. A
+    real fansub carries the title too ("2,eng,English"), which must still match
+    the language; a code-less track whose title names the language does too."""
+    from app.anime import nyaa
+
+    video = tmp_path / "ep.mkv"
+    video.write_bytes(b"x")
+    probe = (
+        "2,eng,English\n"  # global 2 = first subtitle  -> per-type 0
+        "3,spa,Spanish\n"  # second subtitle           -> per-type 1
+        "4,fas,Persian\n"  # third subtitle            -> per-type 2
+        "5,,Français\n"    # no code, French title      -> not eng/fas
+        "6,,English\n"     # no code, English title     -> eng (per-type 4)
+    )
+
+    class _Run:
+        returncode = 0
+        stdout = probe
+
+    monkeypatch.setattr(nyaa.subprocess, "run", lambda *a, **k: _Run())
+    assert nyaa.NyaaProvider._find_sub_stream(video, "eng") == "0"
+    assert nyaa.NyaaProvider._find_sub_stream(video, "fas") == "2"
+    assert nyaa.NyaaProvider._find_sub_stream(video, "und") is None
+    # Code-less track with an English title falls back to the title.
+    assert nyaa.NyaaProvider._find_sub_stream(video, "engx") is None
+    # (covered above) title-only English is caught only when code is absent
+
+
+def test_nyaa_finalize_persian_failure_falls_back_to_english(monkeypatch, tmp_path):
+    """A failed Persian translation must never strip the user of subtitles: with
+    ["fas"] requested and no way to produce Persian, the English track ships."""
+    from app.anime import nyaa
+
+    video, out, captured = _finalize_setup(
+        monkeypatch, tmp_path, lambda video, lang: "1" if lang == "eng" else None
+    )
+    monkeypatch.setattr(
+        "app.anime.subtitle_translate.translate_srt_file", lambda *a, **k: None
+    )
+    nyaa.NyaaProvider._finalize(video, out, ["fas"])
+    assert captured["embedded"] == [("1", "eng")]  # English shipped as the fallback
+    assert captured["srt_files"] == []

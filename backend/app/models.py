@@ -32,9 +32,9 @@ class Track:
     # "audio" (the music pipeline) or "video" (anime episodes). The downloader
     # dispatches on this; everything else in jobs.py is media-agnostic.
     media: str = "audio"
-    # Subtitle language to mux into a video episode: "eng"/"fas"/"none".
-    # Captured at job start like quality; ignored for audio.
-    subs: str = "eng"
+    # Subtitle languages to mux into a video episode ("eng"/"fas"); empty means
+    # no subtitles. Captured at job start like quality; ignored for audio.
+    subs: list[str] = field(default_factory=lambda: ["eng"])
 
     @property
     def query(self) -> str:
