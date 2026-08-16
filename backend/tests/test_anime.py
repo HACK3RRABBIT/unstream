@@ -110,6 +110,10 @@ def test_downloader_falls_back_to_next_provider(monkeypatch, tmp_path):
     monkeypatch.setattr(anime_downloader, "_download_with_ytdlp", fake_ytdlp)
     monkeypatch.setattr(anime_downloader, "_mux_subtitles", lambda v, s, d: v)
     monkeypatch.setattr(anime_downloader, "_fetch_subs", lambda s, d: None)
+    # The fake file isn't a real video, so the post-download height check is
+    # stubbed to the requested 720p — this test is about provider fallback,
+    # not about the (separately covered) served-height verification.
+    monkeypatch.setattr(anime_downloader, "_probe_height", lambda p: 720)
     from app.anime import providers as providers_module
 
     monkeypatch.setattr(
@@ -522,6 +526,9 @@ def test_downloader_asks_fallback_for_same_quality(monkeypatch, tmp_path):
     monkeypatch.setattr(anime_downloader, "_download_with_ytdlp", fake_ytdlp)
     monkeypatch.setattr(anime_downloader, "_fetch_subs", lambda s, d: None)
     monkeypatch.setattr(anime_downloader, "_mux_subtitles", lambda v, s, d: v)
+    # The fake file isn't a real video; stub the height check so the fallback
+    # succeeds at the requested 480p (this test asserts the fallback quality).
+    monkeypatch.setattr(anime_downloader, "_probe_height", lambda p: 480)
     monkeypatch.setattr(downloader.shutil, "which", lambda name: "/usr/bin/ffmpeg")
 
     track = Track(id="1:s1e1", title="Episode 1", artists=["Show"],
@@ -671,3 +678,314 @@ def test_track_state_exposes_provider_and_served_quality(monkeypatch, tmp_path):
     assert state.served_quality == "480p"
     assert state.as_dict()["provider"] == "nyaa"
     assert state.as_dict()["served_quality"] == "480p"
+
+
+# ── Post-download quality enforcement: a release that claims one resolution
+#    but actually contains another is a quality mismatch, not a success. ───────
+
+
+def _fake_video_provider(name: str, streams_hls: bool = True):
+    """A minimal self-downloading (or HLS) provider that produces a real file."""
+    from app.anime import downloader as anime_downloader
+
+    provider_name = name  # distinct locals: a class body can't read a shadowed param
+    provider_hls = streams_hls
+
+    class _P:
+        name = provider_name
+        streams_hls = provider_hls
+
+        def available(self):
+            return True
+
+        def episode_stream(self, src, quality):
+            return anime_downloader.EpisodeStream(
+                provider=self.name, url=f"https://cdn.example/{self.name}.m3u8"
+            )
+
+        def download(self, stream, dest, quality, on_progress, should_cancel, subs="eng"):
+            out = dest.with_name(dest.name + ".mkv")
+            out.write_bytes(b"self-downloaded video")
+            return out
+
+    return _P()
+
+
+def _stub_video_pipeline(monkeypatch, probe):
+    """Fake the download pipeline's external edges; `probe` supplies heights."""
+    from app.anime import downloader as anime_downloader
+    from app import downloader
+
+    def fake_ytdlp(stream, dest, on_progress, should_cancel, quality):
+        out = dest.with_name(dest.name + ".mp4")
+        out.write_bytes(b"hls stream")
+        return out
+
+    monkeypatch.setattr(anime_downloader, "_download_with_ytdlp", fake_ytdlp)
+    monkeypatch.setattr(anime_downloader, "_fetch_subs", lambda s, d: None)
+    monkeypatch.setattr(anime_downloader, "_mux_subtitles", lambda v, s, d: v)
+    monkeypatch.setattr(anime_downloader, "_probe_height", probe)
+    monkeypatch.setattr(downloader.shutil, "which", lambda name: "/usr/bin/ffmpeg")
+
+
+def _video_track(source_url="anime://nyaa/Show/1/1"):
+    from app.models import Track
+
+    return Track(id="1:s1e1", title="Episode 1", artists=["Show"],
+                 album="Show — Season 1", duration_ms=1, cover_url=None,
+                 track_number=1, media="video", source_url=source_url)
+
+
+def test_check_served_quality():
+    """The served-height check accepts a match, skips original, and rejects a
+    mismatch or an unverifiable height for explicit requests."""
+    from app.anime import downloader as anime_downloader
+    from app.anime.providers import QualityUnavailable
+
+    anime_downloader._check_served_quality("480", 480)
+    anime_downloader._check_served_quality("720", 720)
+    anime_downloader._check_served_quality("original", 720)  # original: never checked
+    with pytest.raises(QualityUnavailable):
+        anime_downloader._check_served_quality("480", 720)
+    with pytest.raises(QualityUnavailable):
+        anime_downloader._check_served_quality("1080", 720)
+    with pytest.raises(QualityUnavailable):
+        anime_downloader._check_served_quality("480", None)
+
+
+def test_post_download_match_is_success(monkeypatch, tmp_path):
+    """Requested 480, served 480 → completed, with served_quality recorded."""
+    from app.anime import downloader as anime_downloader
+    from app.anime import providers as providers_module
+
+    monkeypatch.setattr(
+        providers_module, "providers",
+        lambda: [_fake_video_provider("nyaa", streams_hls=False)],
+    )
+    _stub_video_pipeline(monkeypatch, lambda p: 480)
+
+    meta: dict = {}
+    out = anime_downloader.download_video_track(
+        _video_track(), tmp_path, lambda s, f: None, "480", None, None, meta=meta
+    )
+    assert out.exists()
+    assert meta["provider"] == "nyaa"
+    assert meta["served_quality"] == "480p"
+
+
+def test_post_download_mismatch_falls_through_to_next_provider(monkeypatch, tmp_path):
+    """A release labeled 480p that actually holds a 720p file is a mismatch,
+    not a completed download — the chain continues at the same resolution."""
+    from app.anime import downloader as anime_downloader
+    from app.anime import providers as providers_module
+    from app.anime.providers import EpisodeStream
+
+    seen = []
+
+    class Nyaa720:
+        name = "nyaa"
+        streams_hls = False
+
+        def available(self):
+            return True
+
+        def episode_stream(self, src, quality):
+            return EpisodeStream(provider="nyaa", url="magnet:?xt=urn:btih:mislabeled")
+
+        def download(self, stream, dest, quality, on_progress, should_cancel, subs="eng"):
+            out = dest.with_name(dest.name + ".mkv")
+            out.write_bytes(b"the file is actually 720p")
+            return out
+
+    class HiAnime480:
+        name = "hianime"
+        streams_hls = True
+
+        def available(self):
+            return True
+
+        def episode_stream(self, src, quality):
+            seen.append(quality)
+            return EpisodeStream(provider="hianime", url="https://cdn.example/480.m3u8")
+
+    monkeypatch.setattr(providers_module, "providers", lambda: [Nyaa720(), HiAnime480()])
+    # Nyaa self-downloads an .mkv (probed 720p); HiAnime yields an .mp4 (480p).
+    _stub_video_pipeline(monkeypatch, lambda p: 720 if p.suffix == ".mkv" else 480)
+
+    meta: dict = {}
+    out = anime_downloader.download_video_track(
+        _video_track(), tmp_path, lambda s, f: None, "480", None, None, meta=meta
+    )
+    assert out.exists()
+    assert meta["provider"] == "hianime"  # the fallback that actually served 480p
+    assert meta["served_quality"] == "480p"
+    assert seen == ["480"]  # same requested resolution on the fallback
+
+
+def test_post_download_all_providers_mismatch_fails_cleanly(monkeypatch, tmp_path):
+    """Every provider serves the wrong resolution → clean quality-unavailable."""
+    from app.anime import downloader as anime_downloader
+    from app.anime import providers as providers_module
+    from app.downloader import DownloadError
+
+    monkeypatch.setattr(
+        providers_module, "providers",
+        lambda: [
+            _fake_video_provider("nyaa", streams_hls=False),
+            _fake_video_provider("hianime", streams_hls=True),
+        ],
+    )
+    _stub_video_pipeline(monkeypatch, lambda p: 720)  # both files are really 720p
+
+    with pytest.raises(DownloadError, match="Requested quality 480p is unavailable"):
+        anime_downloader.download_video_track(
+            _video_track(), tmp_path, lambda s, f: None, "480", None, None
+        )
+
+
+def test_post_download_original_not_verified(monkeypatch, tmp_path):
+    """`original` accepts whatever the source actually served — no check."""
+    from app.anime import downloader as anime_downloader
+    from app.anime import providers as providers_module
+
+    monkeypatch.setattr(
+        providers_module, "providers",
+        lambda: [_fake_video_provider("nyaa", streams_hls=False)],
+    )
+    _stub_video_pipeline(monkeypatch, lambda p: 720)  # a 720p file under "original"
+
+    meta: dict = {}
+    out = anime_downloader.download_video_track(
+        _video_track(), tmp_path, lambda s, f: None, "original", None, None, meta=meta
+    )
+    assert out.exists()
+    assert meta["served_quality"] == "720p"
+
+
+def test_audio_path_ignores_video_quality_check(monkeypatch, tmp_path):
+    """The audio pipeline is untouched by the video-quality enforcement."""
+    from app import downloader
+    from app.anime import downloader as anime_downloader
+    from app.models import Track
+
+    reached = []
+    monkeypatch.setattr(
+        downloader, "download_audio",
+        lambda *a, **k: (reached.append("audio"), tmp_path / "x.mp3")[1],
+    )
+    monkeypatch.setattr(downloader, "embed_tags", lambda *a, **k: None)
+    monkeypatch.setattr(downloader.shutil, "which", lambda name: "/usr/bin/ffmpeg")
+    monkeypatch.setattr(
+        anime_downloader, "download_video_track",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("video pipeline must not run")),
+    )
+
+    track = Track(id="a1", title="Song", artists=["Artist"], album="Album",
+                  duration_ms=1000, cover_url=None, track_number=1, media="audio",
+                  source_url="https://youtube.com/watch?v=abc")
+    meta: dict = {}
+    out = downloader.download_track(
+        track, tmp_path, lambda s, f: None, embed_lyrics=False, meta=meta
+    )
+    assert reached == ["audio"]
+    assert meta == {}  # audio leaves the video meta untouched
+
+
+# ── Nyaa batch/range detection: a multi-episode torrent must never be treated
+#    as a single episode (which would pull the whole multi-GiB batch). ─────────
+
+
+def test_nyaa_range_separators_are_batches(monkeypatch):
+    """Dash, en-dash, em-dash and tilde episode ranges are all batches."""
+    for sep in ("-", "–", "—", "~"):
+        html = _nyaa_page(_nyaa_row(1, f"[X] Show 001 {sep} 079 [480p]", "seedbatch", 50))
+        torrent = _search_page(monkeypatch, html, episode=1, quality="480")
+        assert torrent.get("batch") is True, sep
+        assert torrent["torrent_id"] == "1"
+
+
+def test_nyaa_range_first_episode_is_batch(monkeypatch):
+    """The first episode of a tilde range is a batch, not a single."""
+    html = _nyaa_page(
+        _nyaa_row(1, "[Erai-raws] Naruto Shippuuden - 001 ~ 079 [480p CR]", "seedbatch", 32),
+    )
+    torrent = _search_page(monkeypatch, html, episode=1, quality="480")
+    assert torrent.get("batch") is True
+    assert torrent["torrent_id"] == "1"
+
+
+def test_nyaa_range_middle_episode_is_batch(monkeypatch):
+    """An episode in the middle of a range is part of the batch even though its
+    number never appears in the title — extract it, don't download the lot."""
+    html = _nyaa_page(
+        _nyaa_row(1, "[X] Show 001 ~ 079 [480p]", "seedbatch", 50),
+    )
+    torrent = _search_page(monkeypatch, html, episode=40, quality="480")
+    assert torrent.get("batch") is True
+    assert torrent["torrent_id"] == "1"
+
+
+def test_nyaa_range_last_episode_is_batch(monkeypatch):
+    """The final episode of a range (the number at the range's END) is still
+    recognized as belonging to the batch."""
+    html = _nyaa_page(
+        _nyaa_row(1, "[X] Show 001-079 [480p]", "seedbatch", 50),
+    )
+    torrent = _search_page(monkeypatch, html, episode=79, quality="480")
+    assert torrent.get("batch") is True
+    assert torrent["torrent_id"] == "1"
+
+
+def test_nyaa_ordinary_single_episode_not_a_batch(monkeypatch):
+    """Ordinary single-episode titles are not misread as ranges."""
+    html = _nyaa_page(
+        _nyaa_row(1, "[SubsPlease] Show - 01 [480p].mkv", "seed1", 50),
+        _nyaa_row(2, "[SubsPlease] Show - 01 [480p] (854x480)", "seed2", 60),
+        _nyaa_row(3, "[SubsPlease] Show - E01 [480p]", "seed3", 70),
+    )
+    torrent = _search_page(monkeypatch, html, episode=1, quality="480")
+    assert torrent.get("batch") is not True
+    assert torrent["seeders"] == 70  # best-seeded single, none misread as a range
+
+
+def test_nyaa_batch_label_is_not_a_single(monkeypatch):
+    """A title explicitly labeled BATCH is a batch even without a parseable
+    range — extracting one episode beats pulling the whole torrent."""
+    html = _nyaa_page(
+        _nyaa_row(1, "[X] Show - 001 [480p][BATCH]", "seedbatch", 50),
+    )
+    torrent = _search_page(monkeypatch, html, episode=1, quality="480")
+    assert torrent.get("batch") is True
+    assert torrent["torrent_id"] == "1"
+
+
+def test_nyaa_unextractable_batch_never_downloads_whole_torrent(monkeypatch, tmp_path):
+    """When a recognized batch can't yield the requested episode, the download
+    fails cleanly rather than falling back to pulling the whole multi-GiB
+    torrent as if it were a single episode."""
+    from app.anime import nyaa
+    from app.downloader import DownloadError
+
+    html = _nyaa_page(_nyaa_row(1, "[X] Show 001 ~ 079 [480p]", "seedbatch", 50))
+    monkeypatch.setattr(nyaa._client, "get", lambda *a, **k: _NyaaResp(html))
+
+    provider = nyaa.NyaaProvider()
+    stream = provider.episode_stream(_nyaa_source(episode=40), "480")
+    assert stream.batch is True  # routed to extraction, not a plain torrent pull
+
+    whole = {"called": False}
+
+    def fail_extract(client, stream, workdir, on_progress, should_cancel):
+        raise DownloadError(f"Episode {stream.episode} not found inside the batch.")
+
+    def whole_torrent(client, magnet, workdir, on_progress, should_cancel):
+        whole["called"] = True
+        raise AssertionError("must never download the whole batch as a single")
+
+    monkeypatch.setattr(provider, "_download_batch_episode", fail_extract)
+    monkeypatch.setattr(provider, "_download_torrent", whole_torrent)
+    monkeypatch.setattr(nyaa, "_pick_torrent_client", lambda: "aria2c")
+
+    with pytest.raises(DownloadError, match="not found inside the batch"):
+        provider.download(stream, tmp_path / "out", "480", lambda f: None, None)
+    assert whole["called"] is False

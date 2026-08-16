@@ -230,6 +230,30 @@ def _probe_height(video: Path) -> int | None:
         return None
 
 
+def _check_served_quality(requested: str, served: int | None) -> None:
+    """Refuse an explicit-quality download that wasn't actually served at that
+    resolution.
+
+    A torrent's title can lie: one labeled [480p] may hold a 720p file. The
+    bytes on disk are the truth, so once the file exists we verify the probed
+    height against the request. `original` accepts whatever the source
+    released and is never checked. For an explicit request (480/720/1080) a
+    served height that differs — or that couldn't be probed at all — raises
+    QualityUnavailable, so the provider chain moves on to the next source at
+    the SAME requested resolution instead of shipping the wrong file.
+    """
+    if requested not in ("480", "720", "1080"):
+        return
+    if served is None:
+        raise QualityUnavailable(
+            f"Requested {requested}p but the served video's height could not be verified."
+        )
+    if served != int(requested):
+        raise QualityUnavailable(
+            f"Requested {requested}p but the served video is {served}p."
+        )
+
+
 def download_video_track(
     track: Track,
     out_dir: Path,
@@ -250,6 +274,11 @@ def download_video_track(
     differ from the plan's after a fallback) and `served_quality` (the actual
     video height, probed from the finished file with ffprobe — never the
     requested quality, which the output can fail to honor).
+
+    An explicit resolution is enforced after the file exists: if the probed
+    height doesn't match the request (a mislabeled release), the download is
+    treated as quality-unavailable and the chain tries the next provider at
+    the same resolution rather than shipping the wrong file.
     """
     if shutil.which("ffmpeg") is None:
         raise DownloadError("ffmpeg is not installed or not on PATH")
@@ -298,10 +327,16 @@ def download_video_track(
                 on_progress("tagging", 1.0)
                 sub = _fetch_subs(stream, dest)
                 final = _mux_subtitles(video, sub, dest)
+                # The file now exists and is probed; enforce the requested
+                # resolution BEFORE the track can be marked done. A release
+                # whose real height differs from what its title claimed is a
+                # quality mismatch, not a completed download — fall through to
+                # the next provider at the same resolution.
+                height = _probe_height(final)
                 if meta is not None:
                     meta["provider"] = provider.name
-                    height = _probe_height(final)
                     meta["served_quality"] = f"{height}p" if height else None
+                _check_served_quality(resolution, height)
                 return final
             except (Cancelled, KeyboardInterrupt):
                 _clean_partials(dest)

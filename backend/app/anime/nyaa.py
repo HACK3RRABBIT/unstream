@@ -69,6 +69,20 @@ def _magnet(btih: str, name: str) -> str:
 _RES_TAG = re.compile(r"(?<![0-9])(\d{3,4})p(?!\d)", re.IGNORECASE)
 _DIM_TAG = re.compile(r"(?<![0-9])(\d{3,4})\s*[x×]\s*(480|720|1080)(?!\d)", re.IGNORECASE)
 
+# A multi-episode range in a release title: two episode-like numbers joined by
+# a dash, en/em dash or tilde, spaces allowed around the separator (001 ~ 079,
+# 001-079, E01–E06). Either endpoint may carry an E/EP/Episode marker. The
+# digit boundaries keep it from matching inside a longer number, a width
+# (1280x720), or a hash.
+_RANGE_RE = re.compile(
+    r"(?<!\d)(?:EP|Ep|Episode|E)?\s*(\d{1,4})\s*[-–—~]\s*"
+    r"(?:EP|Ep|Episode|E)?\s*(\d{1,4})(?!\d)",
+    re.IGNORECASE,
+)
+# An explicit batch label — a multi-episode signal even when the range can't be
+# parsed out of the title (Show 001 [BATCH]).
+_BATCH_TAG_RE = re.compile(r"\bbatch\b", re.IGNORECASE)
+
 
 def _title_resolution(title: str) -> str | None:
     """The resolution a release title clearly claims, or None.
@@ -100,6 +114,23 @@ def _best_seeded(candidates: dict[str, dict]) -> dict | None:
         if best is None or score > best["score"]:
             best = {**t, "score": score}
     return best
+
+
+def _episode_ranges(title: str) -> list[tuple[int, int]]:
+    """Episode ranges a release title claims, as (start, end) pairs.
+
+    Nyaa batches are titled with the range of episodes they hold
+    (001-079, 001 ~ 079, E01–E06), so a requested episode anywhere in that
+    range — first, middle or last — belongs to the batch and must be extracted
+    from it, never pulled as a whole multi-GiB download. Both endpoints are
+    parsed so a mid-range episode whose number never appears in the title is
+    still recognized as part of the batch.
+    """
+    out = []
+    for start, end in _RANGE_RE.findall(title):
+        lo, hi = int(start), int(end)
+        out.append((lo, hi) if lo <= hi else (hi, lo))
+    return out
 
 
 class NyaaProvider:
@@ -207,8 +238,9 @@ class NyaaProvider:
         caller can filter by resolution before choosing. An episode number is
         "real" when it appears with a delimiter or marker (EP 01, E01, - 001,
         (001), 001 [) — never as bare digits that could be a hash, a year, or
-        a resolution. A range (001-574, E01-E06) is a batch: the episode is
-        *in* it, and it's kept as an extractable fallback.
+        a resolution. A multi-episode range (001-574, E01-E06, 001 ~ 079) is a
+        batch: the episode is *in* it, wherever it falls (first, middle or
+        last), and it's kept as an extractable fallback.
         """
         # An episode number is "real" when it appears with a delimiter or
         # marker (EP 01, E01, - 001, (001), 001 [) — never as bare digits
@@ -217,9 +249,6 @@ class NyaaProvider:
             rf"(?:EP|Ep|Episode|E|#)\s*0*{episode}(?!\d)"
             rf"|(?:^|[\s\-–—(\[])\s*0*{episode}\s*(?=[\]\s\-–—,]|$)"
         )
-        # A range of episodes (001-574, E01-E06) — the episode is *in* it but
-        # the torrent is a whole batch; we can still extract the single file.
-        batch_re = re.compile(rf"(?:EP|Ep|Episode|E)?\s*0*{episode}\s*[-–—]\s*0*\d+")
         marker = r"(?:EP|Ep|Episode|E|#)\s*0*%d(?!\d)" % episode
 
         rows = re.findall(r"<tr[^>]*>.*?</tr>", html, re.S)
@@ -234,7 +263,8 @@ class NyaaProvider:
             if not title_m or not magnet:
                 continue
             title = title_m.group(1)
-            if not ep_re.search(title):
+            ranges = _episode_ranges(title)
+            if not (ep_re.search(title) or any(lo <= episode <= hi for lo, hi in ranges)):
                 continue
             seeders = int(seeders_m.group(1)) if seeders_m else 0
             common = {
@@ -244,7 +274,7 @@ class NyaaProvider:
                 "seeders": seeders,
                 "size": size_m.group(1) if size_m else "",
             }
-            if batch_re.search(title):
+            if ranges or _BATCH_TAG_RE.search(title):
                 batches.append(common)
             else:
                 singles.append({**common, "explicit": bool(re.search(marker, title))})
