@@ -37,11 +37,29 @@ services:
       - unstream
     logging: *logging
 
+  # The Anivexa anime-streaming sidecar (deploy/anivexa), pinned upstream
+  # commit. On the internal `unstream` network only — no published port, no
+  # exposure to Traefik. With ANIVEXA_URL empty the provider drops out of the
+  # chain and nothing else changes.
+  anivexa:
+    build: ./deploy/anivexa
+    restart: always
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4000/"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    networks:
+      - unstream
+    logging: *logging
+
   api:
     build: ./backend
     restart: always
     depends_on:
       - pot-provider
+      - anivexa
     environment:
       - DOWNLOADS_TTL_HOURS=${DOWNLOADS_TTL_HOURS:-24}
       # Keep under what the host actually has free.
@@ -70,6 +88,12 @@ services:
       # Anime episodes are big, so keep the dedicated pool small.
       - ANIME_PROVIDER_ORDER=${ANIME_PROVIDER_ORDER:-nyaa,hianime}
       - ANIME_DOWNLOAD_WORKERS=${ANIME_DOWNLOAD_WORKERS:-2}
+      # The Anivexa sidecar on the internal network. Empty disables it.
+      - ANIVEXA_URL=${ANIVEXA_URL:-http://anivexa:4000}
+      # Optional last-resort English subtitles for HLS sources that ship none.
+      # Empty (the default) keeps the module inert; set a free opensubtitles.com
+      # API key to enable it. Never a startup requirement either way.
+      - OPENSUBTITLES_API_KEY=${OPENSUBTITLES_API_KEY:-}
     volumes:
       - downloads:/app/downloads
       # The only copy of the analytics history — unlike downloads, not

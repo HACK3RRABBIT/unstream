@@ -43,7 +43,7 @@ from .providers import (
 # Base URL of the sidecar. Empty disables the provider entirely. Set to the
 # sidecar's service name in compose (http://anivexa:4000); a bare local run
 # points it at the dev server.
-ANIVEXA_BASE = os.getenv("ANIVEXA_BASE", "").rstrip("/")
+ANIVEXA_URL = os.getenv("ANIVEXA_URL", "").rstrip("/")
 
 # The internal sources the sidecar aggregates, in the order we prefer them for
 # each requested resolution. Every one was verified against the live API (see
@@ -118,7 +118,7 @@ def _rest_sidecar() -> None:
 def _get(path: str, timeout: float | None = None) -> httpx.Response:
     """One call to the sidecar. Connection failures rest it, then raise."""
     try:
-        resp = _client.get(f"{ANIVEXA_BASE}{path}", timeout=timeout)
+        resp = _client.get(f"{ANIVEXA_URL}{path}", timeout=timeout)
         resp.raise_for_status()
         return resp
     except httpx.HTTPStatusError as exc:
@@ -411,7 +411,7 @@ class AnivexaProvider:
         # Configured, and not inside a dead-sidecar rest window. A sidecar that
         # is merely down is excluded from chain builds for SIDECAR_REST seconds
         # at a time (the capability probe sets the window), then tried again.
-        if not ANIVEXA_BASE:
+        if not ANIVEXA_URL:
             return False
         return time.monotonic() >= _sidecar_rest_until
 

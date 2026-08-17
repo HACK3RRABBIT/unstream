@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { Archive, Check, Clapperboard, Download, LoaderCircle, X } from 'lucide-react'
 import clsx from 'clsx'
 import {
   apiError,
+  getAnimeSources,
   jobZipUrl,
   trackFileUrl,
   type AnimeDetail,
@@ -14,6 +15,7 @@ import { faNumerals, useMessages, useStartAlign } from '../lib/i18n'
 import { useDownloads } from '../lib/downloads'
 import { useToast } from '../lib/toast'
 import { SubtitlePicker } from './SubtitlePicker'
+import { VideoQualityPicker } from './VideoQualityPicker'
 
 interface Props {
   anime: AnimeDetail
@@ -35,6 +37,16 @@ export function AnimeSeasonView({ anime, season }: Props) {
   const entries = downloads
     .entriesForUrl(`anime://${anime.id}/${season.season}`)
     .filter((e) => !e.expired)
+
+  // Per-source capability for this season, from the backend's /sources probe —
+  // the source of truth for which qualities are verified available. The quality
+  // picker renders from it; a failed probe degrades to no capability data
+  // (render all qualities normally) rather than hiding options that might work.
+  const sourcesQuery = useQuery({
+    queryKey: ['anime-sources', anime.id, season.season],
+    queryFn: () => getAnimeSources(anime.id, season.season),
+    staleTime: 5 * 60 * 1000,
+  })
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
 
@@ -152,6 +164,14 @@ export function AnimeSeasonView({ anime, season }: Props) {
         </div>
 
         <SubtitlePicker className="w-full sm:w-auto" />
+
+        {/* Capability-aware quality picker: renders only qualities the
+            backend's /sources probe verified for this season, and says so
+            when the global selection isn't among them. */}
+        <VideoQualityPicker
+          className="w-full sm:w-auto"
+          sources={sourcesQuery.data?.providers ?? null}
+        />
 
         <div className="flex items-center gap-2">
           {zipEntry && (zipEntry.job?.total ?? zipEntry.tracks.length) > 1 && (
@@ -320,7 +340,21 @@ export function AnimeSeasonView({ anime, season }: Props) {
                         status !== 'downloading' && 'animate-breathe',
                       )}
                     >
-                      {m.stages[status as keyof typeof m.stages]}
+                      {status === 'searching' && tj?.state.provider_progress
+                        ? (() => {
+                            const pp = tj.state.provider_progress!
+                            if (pp.current) {
+                              // A specific source is being tried — real backend
+                              // progress, shown as it happens.
+                              return m.anime.checkingSource(pp.checked, pp.total, pp.current)
+                            }
+                            if (pp.checked > 0) {
+                              // A source just finished; how many are left.
+                              return m.anime.searchingSources(pp.checked, pp.total)
+                            }
+                            return m.anime.searchingProviders
+                          })()
+                        : m.stages[status as keyof typeof m.stages]}
                       {status === 'downloading' &&
                         ` ${m.app.num(Math.round((tj?.state.progress ?? 0) * 100))}%`}
                     </span>

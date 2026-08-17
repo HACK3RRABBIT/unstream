@@ -145,7 +145,15 @@ const en = {
       label: 'Video quality',
       original: 'Original',
       hint: 'The resolution every anime download starts at.',
+      unavailable: (quality: string) => `${quality} isn't available for this anime.`,
     },
+    /** Real provider-chain search progress while a download resolves sources.
+     *  Driven by the backend's provider execution, never a timer. */
+    searchingProviders: 'Searching anime sources…',
+    checkingSource: (index: number, total: number, name: string) =>
+      `Checking source ${index} of ${total}: ${name}`,
+    searchingSources: (checked: number, total: number) =>
+      `${checked} sources checked — ${total - checked} remaining`,
     subtitles: {
       label: 'Subtitles',
       presets: {

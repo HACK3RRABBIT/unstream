@@ -132,7 +132,13 @@ const fa: Messages = {
       label: 'کیفیت ویدیو',
       original: 'اورجینال',
       hint: 'کیفیتی که هر دانلود انیمه با آن شروع می‌شود.',
+      unavailable: (quality: string) => `کیفیت ${quality} برای این انیمه در دسترس نیست.`,
     },
+    searchingProviders: 'در حال جستجو در منابع انیمه...',
+    checkingSource: (index: number, total: number, name: string) =>
+      `در حال بررسی منبع ${fd(index)} از ${fd(total)}: ${name}`,
+    searchingSources: (checked: number, total: number) =>
+      `${fd(checked)} منبع بررسی شد — ${fd(total - checked)} منبع باقی مانده`,
     subtitles: {
       label: 'زیرنویس',
       presets: {

@@ -26,6 +26,16 @@ export interface Collection {
 export type TrackStatus =
   'queued' | 'searching' | 'downloading' | 'tagging' | 'retrying' | 'done' | 'error' | 'cancelled'
 
+/** Anime: live provider-chain search progress while a track's status is
+ *  "searching". Mirrors backend TrackState.provider_progress — the source
+ *  being checked (null between attempts), which 1-based provider of how many.
+ *  Absent for audio tracks and for anime once searching ends. */
+export interface ProviderProgress {
+  checked: number
+  total: number
+  current: string | null
+}
+
 export interface JobTrack {
   id: string
   status: TrackStatus
@@ -33,6 +43,8 @@ export interface JobTrack {
   error: string | null
   /** Format the finished file actually came out as ('mp3' | 'm4a' | 'opus'). */
   ext: string | null
+  /** Anime only, while searching. Real backend progress, not a timer. */
+  provider_progress?: ProviderProgress | null
 }
 
 export interface Job {
@@ -366,6 +378,38 @@ export async function searchAnime(query: string, signal?: AbortSignal): Promise<
 /** A franchise: the seed anime plus its ordered seasons. */
 export async function getAnime(id: number, signal?: AbortSignal): Promise<AnimeDetail> {
   const { data } = await client.get<AnimeDetail>(`/anime/${id}`, { signal })
+  return data
+}
+
+/** What one configured source is verified to serve for a season. Mirrors the
+ *  backend's /sources response: `qualities` is a list of resolutions the
+ *  source is *verified* to hold ("480"/"720"/...), or null when it wasn't
+ *  probed (Nyaa/hianime) — null must never be read as "absent". */
+export interface AnimeSource {
+  name: string
+  status: 'ok' | 'unavailable' | 'unknown'
+  qualities: string[] | null
+  note: string | null
+}
+
+/** Per-provider capability for one season — the source of truth the quality
+ *  picker renders from. A quality may only be hidden when every reporting
+ *  source authoritatively lacks it; an unknown/null source keeps it shown. */
+export interface AnimeSources {
+  media_id: number
+  season: number
+  providers: AnimeSource[]
+}
+
+/** Fetch per-source capability for a season, from the backend's probe. */
+export async function getAnimeSources(
+  animeId: number,
+  season: number,
+  signal?: AbortSignal,
+): Promise<AnimeSources> {
+  const { data } = await client.get<AnimeSources>(`/anime/${animeId}/season/${season}/sources`, {
+    signal,
+  })
   return data
 }
 

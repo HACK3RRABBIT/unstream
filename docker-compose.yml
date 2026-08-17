@@ -37,6 +37,21 @@ services:
     restart: unless-stopped
     logging: *logging
 
+  # The Anivexa anime-streaming sidecar the backend's anivexa provider proxies
+  # (deploy/anivexa). Built from a pinned upstream commit; talks to the backend
+  # only over this compose-internal network. Optional: with ANIVEXA_URL empty
+  # the provider is simply not in the chain — nothing breaks.
+  anivexa:
+    build: ./deploy/anivexa
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4000/"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    logging: *logging
+
   api:
     # Always built from this checkout's source — the published GHCR images
     # track the upstream repo and would miss this fork's changes.
@@ -44,6 +59,7 @@ services:
     restart: unless-stopped
     depends_on:
       - pot-provider
+      - anivexa
     environment:
       # 0 = keep downloads forever, no disk ceiling. The code defaults to 24h
       # and 20 GB, which is right for a public server and wrong for a folder
@@ -75,6 +91,13 @@ services:
       # Anime sources, in order tried (first wins): Nyaa torrents by default,
       # then the hianime scraper fallback. See .env.example.
       - ANIME_PROVIDER_ORDER=${ANIME_PROVIDER_ORDER:-nyaa,hianime}
+      # The Anivexa sidecar, reachable only over this network. Empty disables
+      # the provider entirely (the default chain then omits it).
+      - ANIVEXA_URL=${ANIVEXA_URL:-http://anivexa:4000}
+      # Optional last-resort English subtitles for HLS sources that ship none.
+      # Empty (default) keeps the module inert; set a free opensubtitles.com
+      # API key to enable it. Never a startup requirement either way.
+      - OPENSUBTITLES_API_KEY=${OPENSUBTITLES_API_KEY:-}
 
       # Owner of everything written to DOWNLOADS_DIR. 1001 is the image's own
       # user; use `id -u` / `id -g` if you want to open those files yourself.
