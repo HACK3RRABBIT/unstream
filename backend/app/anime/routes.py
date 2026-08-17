@@ -7,6 +7,7 @@ music downloads use.
 """
 
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator
@@ -15,7 +16,7 @@ from .. import analytics, jobs, limits
 from ..models import ProviderError, Track
 from . import anilist, translate
 from .downloader import DEFAULT_VIDEO_QUALITY, VIDEO_QUALITIES
-from .providers import EpisodeSource
+from .providers import EpisodeSource, order_for, ordered_providers
 
 router = APIRouter(prefix="/api/anime", tags=["anime"])
 
@@ -255,18 +256,24 @@ def anime_download(body: AnimeDownloadRequest, request: Request) -> dict:
 
     # Provider plan: pick the first provider that resolves this show. One
     # resolve() call per job; each episode then shares the provider's id.
-    from .providers import providers
-
     from ..models import ProviderError as _PE
 
     plan: EpisodeSource | None = None
     plan_provider = None
-    for provider in providers():
+    for provider in ordered_providers(body.quality):
         try:
             # Resolve with the *season's* title, so Nyaa can tell Season 1's
             # episode 1 from Season 3's — the franchise seed name alone is
-            # ambiguous ("JUJUTSU KAISEN 1" matches S03E01).
-            plan = provider.resolve(season.best_title, season.season_year)
+            # ambiguous ("JUJUTSU KAISEN 1" matches S03E01). The season's
+            # AniList id is passed for providers keyed by it (anivexa); a
+            # provider without that kwarg (a test stub, or a provider that
+            # keys by title) is called without it.
+            try:
+                plan = provider.resolve(
+                    season.best_title, season.season_year, anilist_id=season.id
+                )
+            except TypeError:
+                plan = provider.resolve(season.best_title, season.season_year)
             plan_provider = provider
             break
         except _PE:
@@ -321,7 +328,7 @@ def anime_download(body: AnimeDownloadRequest, request: Request) -> dict:
                 subs=body.subs,
                 source_url=(
                     f"anime://{plan.provider}/{plan.anime_id}/"
-                    f"{season_component}/{episode}"
+                    f"{season_component}/{episode}#anilist={season.id}"
                 ),
             )
         )
@@ -351,6 +358,77 @@ def anime_download(body: AnimeDownloadRequest, request: Request) -> dict:
         value=len(tracks),
     )
     return {"job_id": job.id}
+
+
+@router.get("/{media_id}/season/{season}/sources")
+def anime_sources(media_id: int, season: int, request: Request) -> dict:
+    """Per-provider capability for one season — what the quality picker renders.
+
+    Each configured provider reports its verified status for this season:
+      * anivexa — a real (cached, single-flight, 25s-budgeted) capability probe:
+        which of its internal sources carry the anime, and the heights verified
+        from real master playlists. "unavailable" = the sidecar authoritatively
+        lacks the anime; "unknown" = couldn't be completed (never treated as
+        absent); "ok" with qualities = verified-servable resolutions.
+      * nyaa / hianime — configured and reachable, but their availability is
+        per-episode (a torrent title / a search), so `qualities` is null and
+        the picker renders those resolutions normally instead of disabling.
+
+    The frontend disables a quality only when every reporting provider
+    authoritatively lacks it, so an unknown or null provider never hides an
+    option that might work.
+    """
+    if media_id <= 0 or season <= 0:
+        raise HTTPException(status_code=400, detail="Bad anime id or season")
+    limits.enforce("resolve", request)
+    try:
+        seasons = anilist.franchise(media_id)
+    except ProviderError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    season_index = season - 1
+    if season_index < 0 or season_index >= len(seasons):
+        raise HTTPException(status_code=400, detail="Bad season number")
+    season_media = seasons[season_index]
+
+    # One synthetic source per provider, carrying the season's AniList id so a
+    # provider keyed by it (anivexa) can probe. Probed concurrently — each
+    # probe is bounded by its own 25s budget, so the whole call is too.
+    def probe(provider) -> dict:
+        name = provider.name
+        src = EpisodeSource(
+            provider=name,
+            anime_id=str(season_media.id),
+            anime_title=season_media.best_title,
+            year=season_media.season_year,
+            season=season,
+            episode=1,
+            anilist_id=season_media.id,
+        )
+        capability = getattr(provider, "capabilities", None)
+        if capability is None:
+            # No probe (Nyaa/hianime): configured and reachable, but per-episode.
+            return {
+                "name": name,
+                "status": "ok" if provider.available() else "unavailable",
+                "qualities": None,
+                "note": "availability is per-episode (not probed up front)",
+            }
+        try:
+            cap = capability(src)
+        except Exception:  # noqa: BLE001 — a broken probe is never a verdict
+            cap = None
+        if cap is None:
+            return {"name": name, "status": "unknown", "qualities": None, "note": None}
+        return {
+            "name": name,
+            "status": cap.status,
+            "qualities": cap.qualities,
+            "note": cap.note,
+        }
+
+    with ThreadPoolExecutor(max_workers=len(order_for("1080"))) as pool:
+        results = list(pool.map(probe, ordered_providers("1080")))
+    return {"media_id": season_media.id, "season": season, "providers": results}
 
 
 def seed_best_title(media_id: int, seasons: list[anilist.AniMedia]) -> str:

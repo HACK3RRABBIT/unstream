@@ -103,6 +103,10 @@ class TrackState:
     # finished file, never the requested quality. None for audio tracks.
     provider: str | None = None
     served_quality: str | None = None
+    # Anime only: live provider-chain search progress while `status` is
+    # "searching" — {"checked": int, "total": int, "current": str|None} from
+    # the downloader's real provider execution. None once searching ends.
+    provider_progress: dict | None = None
     # True once the client fetched this track's file (or the job's ZIP).
     # Delivered files live on a shorter retention clock — the user has the
     # bytes, so the server copy can go sooner.
@@ -118,6 +122,7 @@ class TrackState:
             "ext": self.file_path.suffix.lstrip(".") if self.file_path else None,
             "provider": self.provider,
             "served_quality": self.served_quality,
+            "provider_progress": self.provider_progress,
         }
 
 
@@ -237,6 +242,16 @@ def _run_track(job: Job, state: TrackState) -> None:
     def on_source(url: str, attempt: int) -> None:
         chosen.update(url=url, attempt=attempt)
 
+    def on_provider_progress(checked: int, total: int, current: str | None) -> None:
+        with job.lock:
+            if job.stopped.is_set():
+                return
+            state.provider_progress = {
+                "checked": checked,
+                "total": total,
+                "current": current,
+            }
+
     label = f"{', '.join(state.track.artists)} - {state.track.title}"
     started = time.monotonic()
     # The video pipeline reports which provider served the episode and the
@@ -253,6 +268,7 @@ def _run_track(job: Job, state: TrackState) -> None:
             embed_lyrics=job.embed_lyrics,
             should_cancel=job.stopped.is_set,
             meta=meta,
+            on_provider_progress=on_provider_progress,
         )
         if job.stopped.is_set():
             # Finished in the window between the cancel landing and the last
@@ -266,6 +282,7 @@ def _run_track(job: Job, state: TrackState) -> None:
             state.file_path = path
             state.provider = meta.get("provider")
             state.served_quality = meta.get("served_quality")
+            state.provider_progress = None
         analytics.record(
             "track_done",
             visitor=job.visitor or None,
@@ -291,6 +308,7 @@ def _run_track(job: Job, state: TrackState) -> None:
             # `meta` empty and keeps both None.
             state.provider = meta.get("provider")
             state.served_quality = meta.get("served_quality")
+            state.provider_progress = None
         analytics.record(
             "track_error",
             visitor=job.visitor or None,

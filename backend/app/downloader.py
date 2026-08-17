@@ -435,6 +435,7 @@ def download_track(
     embed_lyrics: bool = True,
     should_cancel: Callable[[], bool] | None = None,
     meta: dict | None = None,
+    on_provider_progress: Callable[[int, int, str | None], None] | None = None,
 ) -> Path:
     """Full pipeline for one track. Reports (stage, fraction) via callback.
 
@@ -467,7 +468,8 @@ def download_track(
         from .anime.downloader import download_video_track
 
         return download_video_track(
-            track, out_dir, on_progress, quality, filename, should_cancel, meta
+            track, out_dir, on_progress, quality, filename, should_cancel, meta,
+            on_provider_progress,
         )
     if quality not in QUALITIES:
         raise DownloadError(f"Unsupported quality: {quality}")

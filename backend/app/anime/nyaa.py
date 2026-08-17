@@ -171,7 +171,9 @@ class NyaaProvider:
     def available(self) -> bool:
         return True  # keyless and free; no credentials
 
-    def resolve(self, title: str, year: int | None) -> EpisodeSource:
+    def resolve(
+        self, title: str, year: int | None, anilist_id: int | None = None
+    ) -> EpisodeSource:
         """Find the anime on Nyaa; the search term is the whole plan."""
         # Nyaa keys everything by search text, so the "id" is the title the
         # per-episode search will use. Season/year are carried through so the

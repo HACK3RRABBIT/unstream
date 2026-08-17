@@ -159,7 +159,9 @@ class HianimeProvider:
     def available(self) -> bool:
         return True  # no credentials needed — the site itself is the gate
 
-    def resolve(self, title: str, year: int | None) -> EpisodeSource:
+    def resolve(
+        self, title: str, year: int | None, anilist_id: int | None = None
+    ) -> EpisodeSource:
         """Find the season on hianime by name; return its category slug.
 
         `season` and `episode` stay 0 here — hianime keys a whole show as one

@@ -45,11 +45,22 @@ DEFAULT_VIDEO_QUALITY = "original"
 
 
 def parse_source_url(url: str) -> EpisodeSource:
-    """Rehydrate an EpisodeSource from `anime://<provider>/<animeId>/<season>/<episode>`."""
+    """Rehydrate an EpisodeSource from `anime://<provider>/<animeId>/<season>/<episode>`.
+
+    A trailing `#anilist=<id>` fragment carries the season's AniList Media id
+    (see routes.py) so a provider keyed by AniList ids (anivexa) can serve an
+    episode even when another provider resolved the plan.
+    """
     if not url.startswith("anime://"):
         raise DownloadError(f"Not an anime plan: {url}")
-    rest = url[len("anime://") :]  # <provider>/<animeId>/<season>/<episode>
-    provider, anime_id, season, episode = rest.split("/", 3)
+    rest = url[len("anime://") :]  # <provider>/<animeId>/<season>/<episode> [#anilist=<id>]
+    path, _, fragment = rest.partition("#")
+    provider, anime_id, season, episode = path.split("/", 3)
+    anilist_id: int | None = None
+    for pair in fragment.split("&"):
+        key, _, value = pair.partition("=")
+        if key == "anilist" and value.isdigit():
+            anilist_id = int(value)
     return EpisodeSource(
         provider=provider,
         anime_id=unquote(anime_id),
@@ -57,6 +68,7 @@ def parse_source_url(url: str) -> EpisodeSource:
         year=None,
         season=int(season),
         episode=int(episode),
+        anilist_id=anilist_id,
     )
 
 
@@ -294,6 +306,7 @@ def download_video_track(
     filename: str | None,
     should_cancel: Callable[[], bool] | None,
     meta: dict | None = None,
+    on_provider_progress: Callable[[int, int, str | None], None] | None = None,
 ) -> Path:
     """Resolve the episode's stream and download it as an mp4 with soft subs.
 
@@ -311,6 +324,12 @@ def download_video_track(
     height doesn't match the request (a mislabeled release), the download is
     treated as quality-unavailable and the chain tries the next provider at
     the same resolution rather than shipping the wrong file.
+
+    `on_provider_progress(checked, total, current)` reports real provider
+    execution during the search phase — which provider is being tried, out of
+    how many — so the UI can show actual source progress instead of a timer.
+    It is called once per provider attempt (and for an up-front capability
+    skip); `current` is None between attempts.
     """
     if shutil.which("ffmpeg") is None:
         raise DownloadError("ffmpeg is not installed or not on PATH")
@@ -340,9 +359,23 @@ def download_video_track(
             on_progress("retrying", 0.0)
             audio._stop_if_cancelled(should_cancel)
 
-        for provider in _chain_excluding(source.provider, failed):
+        chain = _chain_excluding(source.provider, failed, resolution)
+        if on_provider_progress and attempt == 0:
+            on_provider_progress(0, len(chain), None)
+        for index, provider in enumerate(chain):
             try:
                 on_progress("searching", 0.0)
+                # Up-front capability skip: a provider authoritatively known to
+                # lack this anime (verified UNAVAILABLE, or NOT_SUITABLE — a
+                # slideshow-only source) is skipped without a probe. UNKNOWN is
+                # never a skip, so a flaky probe can't silence a provider.
+                capability = _provider_capability(provider, source)
+                if capability in ("unavailable", "not_suitable"):
+                    if on_provider_progress:
+                        on_provider_progress(index + 1, len(chain), None)
+                    continue
+                if on_provider_progress:
+                    on_provider_progress(index + 1, len(chain), provider.name)
                 stream = provider.episode_stream(source, resolution)
                 if not stream.url and stream.telegram_media is None:
                     continue
@@ -364,6 +397,17 @@ def download_video_track(
                     )
                 on_progress("tagging", 1.0)
                 sub = _fetch_subs(stream, dest)
+                if sub is None and track.subs and provider.streams_hls:
+                    # An HLS source shipped no English track and the user asked
+                    # for subs — OpenSubtitles (key-gated; inert without a key)
+                    # is the last-resort rescue. Validated before it is muxed.
+                    from . import opensubtitles
+
+                    if opensubtitles.available() and source.season > 0:
+                        sub = opensubtitles.fetch_english(
+                            None, ", ".join(track.artists),
+                            source.season, source.episode, dest,
+                        )
                 final = _finalize_subtitles(video, sub, track.subs, dest)
                 # The file now exists and is probed; enforce the requested
                 # resolution BEFORE the track can be marked done. A release
@@ -398,11 +442,37 @@ def download_video_track(
     ) from last_error
 
 
-def _chain_excluding(primary: str, excluded: set[str]):
-    """The provider chain in priority order, minus ones that already failed."""
-    from .providers import providers
+def _provider_capability(provider, source: EpisodeSource) -> str | None:
+    """The provider's cached capability status for this season, or None.
 
-    chain = list(providers())
-    # Put the plan's provider first, then the rest in configured order.
+    A provider without a `capabilities()` probe (Nyaa, hianime) returns None —
+    never skipped. UNKNOWN is returned as "unknown" (never a skip). Any probe
+    failure degrades to "unknown" so a broken cache can't silence a provider.
+    """
+    probe = getattr(provider, "capabilities", None)
+    if probe is None:
+        return None
+    try:
+        capability = probe(source)
+    except Exception:  # noqa: BLE001 — a broken probe is never a verdict
+        return "unknown"
+    if capability is None:
+        return None
+    return capability.status
+
+
+def _chain_excluding(primary: str, excluded: set[str], quality: str):
+    """The provider chain for one resolution, minus ones that already failed.
+
+    The chain follows the quality-aware configured order (see providers.order_for
+    — 480/720 lead with the anivexa sidecar, 1080/original with Nyaa) with the
+    plan's provider first as a tiebreak, matching the plan's own anime_id
+    domain. `excluded` are providers that already failed this episode.
+    """
+    from .providers import ordered_providers
+
+    chain = list(ordered_providers(quality))
+    # Put the plan's provider first (its anime_id is the one the plan encoded),
+    # then the rest in the quality-aware order.
     chain.sort(key=lambda p: (p.name != primary,))
     return [p for p in chain if p.name not in excluded]

@@ -23,9 +23,37 @@ from typing import Callable, Protocol
 
 # Order providers are tried, in priority order. Empty/unset names are skipped;
 # a name whose provider is unavailable (no credentials, no session) is skipped.
-# Nyaa is first: it is the complete, permanent, keyless archive, and the only
-# source that works from any network. hianime follows as a stream fallback.
-PROVIDER_ORDER = os.getenv("ANIME_PROVIDER_ORDER", "nyaa,hianime")
+#
+# The *configured* order has two layers. An explicit ANIME_PROVIDER_ORDER wins
+# verbatim. Otherwise the order is quality-aware (see order_for): 480p/720p —
+# where the streaming sidecar (anivexa) is strongest — lead with anivexa, while
+# 1080p/original — the torrent archive's permanent home turf — lead with Nyaa.
+# Nyaa stays in the list either way: it is the complete, keyless, always-
+# reachable archive, and hianime remains the stream fallback.
+PROVIDER_ORDER = os.getenv("ANIME_PROVIDER_ORDER", "nyaa,anivexa,hianime")
+
+# Order that works when the user never set ANIME_PROVIDER_ORDER. Low
+# resolutions are the streaming sites' home turf (anivexa); the archive's
+# high-quality permanent releases (Nyaa) lead for 1080/original.
+_ORDER_LOW = ("anivexa", "nyaa", "hianime")
+_ORDER_HIGH = ("nyaa", "anivexa", "hianime")
+
+
+def order_for(quality: str) -> list[str]:
+    """The provider order for one requested resolution.
+
+    An explicit ANIME_PROVIDER_ORDER always wins verbatim. Otherwise 480/720
+    try the streaming sidecar first (those resolutions are where it holds
+    library and where torrents are scarce), and 1080/original try the torrent
+    archive first (the complete permanent source). Nyaa and hianime keep their
+    existing behavior in both lists — only their position relative to anivexa
+    changes.
+    """
+    override = os.getenv("ANIME_PROVIDER_ORDER")
+    if override:
+        return [n.strip() for n in override.split(",") if n.strip()]
+    order = _ORDER_LOW if quality in ("480", "720") else _ORDER_HIGH
+    return list(order)
 
 
 class QualityUnavailable(Exception):
@@ -49,6 +77,28 @@ class EpisodeSource:
     year: int | None
     season: int
     episode: int
+    # The AniList Media id of the *season* this episode belongs to. Carried in
+    # the plan URL as a `#anilist=` fragment so a provider keyed by AniList ids
+    # (anivexa) can serve an episode even when another provider resolved the
+    # plan (Nyaa's anime_id is a title, which anivexa cannot read).
+    anilist_id: int | None = None
+
+
+@dataclass
+class ProviderCapability:
+    """What one provider is verified to serve for one anime season.
+
+    Filled by an optional `capabilities()` a provider may expose, probed once
+    and cached (see anivexa.py). `qualities` is a list of resolutions the
+    provider is *verified* to hold ("480"/"720"/...); None means "not probed /
+    can't tell" — a consumer must never read None as an absence.
+    """
+
+    provider: str
+    # "ok" | "unavailable" | "unknown" | "not_suitable"
+    status: str = "unknown"
+    qualities: list[str] | None = None
+    note: str | None = None
 
 
 @dataclass
@@ -78,8 +128,15 @@ class AnimeProvider(Protocol):
         """Credentials/session present? An unavailable provider is skipped."""
         ...
 
-    def resolve(self, title: str, year: int | None) -> EpisodeSource:
-        """Find this anime on the provider. Raises ProviderError if absent."""
+    def resolve(
+        self, title: str, year: int | None, anilist_id: int | None = None
+    ) -> EpisodeSource:
+        """Find this anime on the provider. Raises ProviderError if absent.
+
+        `anilist_id` is the season's AniList Media id — a provider keyed by
+        AniList ids (anivexa) needs it, since its `anime_id` *is* the id;
+        providers keyed by title (Nyaa, hianime) ignore it.
+        """
         ...
 
     def episode_stream(self, src: EpisodeSource, quality: str) -> EpisodeStream:
@@ -91,6 +148,15 @@ class AnimeProvider(Protocol):
 
         Used when AniList's own count is 0 (ongoing series report no final
         count). Only the provider knows what's actually released.
+        """
+        return None
+
+    def capabilities(self, src: EpisodeSource) -> ProviderCapability | None:
+        """Verified per-season capability, or None when the provider has no
+        probe (Nyaa/hianime). Statuses: "ok" (verified present), "unavailable"
+        (authoritative absence — the downloader may skip without probing),
+        "unknown" (couldn't tell — never treated as unavailable), and
+        "not_suitable" (present but garbage, e.g. a slideshow-only source).
         """
         return None
 
@@ -113,20 +179,26 @@ class AnimeProvider(Protocol):
         raise NotImplementedError  # noqa: PLC0415 — HLS providers don't need it
 
 
-def providers() -> list[AnimeProvider]:
+def providers(order: list[str] | None = None) -> list[AnimeProvider]:
     """The configured providers, in priority order, excluding the unavailable.
+
+    `order` overrides the configured order (used by the downloader to walk the
+    chain quality-aware); None uses `order_for`'s high-resolution default.
 
     Imported lazily inside the function so module import never drags in
     Telethon (a heavy dependency) when only the scraper is configured.
     """
+    from . import anivexa
     from . import hianime
     from . import nyaa
 
     registry: dict[str, type[AnimeProvider]] = {
         "nyaa": nyaa.NyaaProvider,
+        "anivexa": anivexa.AnivexaProvider,
         "hianime": hianime.HianimeProvider,
     }
-    order = [name.strip() for name in PROVIDER_ORDER.split(",") if name.strip()]
+    if order is None:
+        order = order_for("1080")
     result: list[AnimeProvider] = []
     for name in order:
         cls = registry.get(name)
@@ -139,3 +211,16 @@ def providers() -> list[AnimeProvider]:
         if instance.available():
             result.append(instance)
     return result
+
+
+def ordered_providers(quality: str) -> list[AnimeProvider]:
+    """`providers()` in the quality-aware order for `quality`.
+
+    Tolerates stubs that don't accept the `order` argument (the hermetic tests
+    monkeypatch `providers` with no-arg lambdas) by falling back to whatever
+    ordering the stub itself uses.
+    """
+    try:
+        return providers(order=order_for(quality))
+    except TypeError:
+        return providers()
