@@ -108,6 +108,11 @@ const en = {
   },
 
   anime: {
+    hero: {
+      title: 'Download anime with subtitles',
+      description:
+        'Search for an anime, pick the episode and the quality you want, and get the file with subtitles.',
+    },
     searchPlaceholder: 'Search anime by name…',
     searchLabel: 'Search anime',
     noResultsBefore: 'No anime found for',

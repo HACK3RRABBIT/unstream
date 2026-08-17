@@ -10,6 +10,9 @@ interface Props {
   /** Abandons the request `loading` is describing. */
   onCancel: () => void
   className?: string
+  /** The anime tab swaps the placeholder out — its search is by anime name,
+   *  not catalog links. */
+  anime?: boolean
   inputRef?: RefObject<HTMLInputElement | null>
   /** Bumped by the parent each time a keyboard shortcut focuses this form —
    *  the value is meaningless, the change is the signal. */
@@ -21,6 +24,7 @@ export function UrlForm({
   onSubmit,
   onCancel,
   className,
+  anime = false,
   inputRef,
   focusPulse = 0,
 }: Props) {
@@ -85,7 +89,7 @@ export function UrlForm({
         value={input}
         onChange={(e) => setInput(e.target.value)}
         dir="auto"
-        placeholder={m.form.placeholder}
+        placeholder={anime ? m.anime.searchPlaceholder : m.form.placeholder}
         spellCheck={false}
         className={clsx(
           'min-w-0 flex-1 bg-transparent text-body text-ink-100 placeholder:text-ink-600 focus:outline-none',

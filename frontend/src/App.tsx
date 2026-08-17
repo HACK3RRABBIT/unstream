@@ -660,15 +660,30 @@ function Shell() {
           >
             {/* grid-rows 1fr→0fr is the one way to transition to height:auto;
                 the inner wrapper does the clipping. */}
+            {/* The music and anime tabs are distinct products; each gets its
+                own landing copy instead of one hero being wrong for the other. */}
             <Collapsible open={landing}>
-              <h1 className="animate-fade-up font-display text-[clamp(2.5rem,7.5vw,4.5rem)] leading-[1.15] font-bold text-balance">
-                {m.hero.titleLine1}
-                <br />
-                <span className="text-lime-flash">{m.hero.titleLine2}</span>
-              </h1>
-              <p className="mt-5 max-w-md animate-fade-up text-body leading-relaxed text-ink-300 [animation-delay:80ms]">
-                {m.hero.blurb}
-              </p>
+              {tab === 'anime' ? (
+                <>
+                  <h1 className="animate-fade-up font-display text-[clamp(2.5rem,7.5vw,4.5rem)] leading-[1.15] font-bold text-balance">
+                    {m.anime.hero.title}
+                  </h1>
+                  <p className="mt-5 max-w-md animate-fade-up text-body leading-relaxed text-ink-300 [animation-delay:80ms]">
+                    {m.anime.hero.description}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <h1 className="animate-fade-up font-display text-[clamp(2.5rem,7.5vw,4.5rem)] leading-[1.15] font-bold text-balance">
+                    {m.hero.titleLine1}
+                    <br />
+                    <span className="text-lime-flash">{m.hero.titleLine2}</span>
+                  </h1>
+                  <p className="mt-5 max-w-md animate-fade-up text-body leading-relaxed text-ink-300 [animation-delay:80ms]">
+                    {m.hero.blurb}
+                  </p>
+                </>
+              )}
             </Collapsible>
 
             <UrlForm
@@ -679,6 +694,7 @@ function Shell() {
               loading={busy}
               onSubmit={handleSubmit}
               onCancel={cancelPending}
+              anime={tab === 'anime'}
               inputRef={inputRef}
               focusPulse={focusPulse}
             />

@@ -392,14 +392,17 @@ def download(body: DownloadRequest, request: Request) -> dict:
         )
 
     visitor = limits.visitor(request)
-    job = jobs.start(
-        collection.name,
-        tracks,
-        body.quality,
-        embed_lyrics=body.lyrics,
-        owner=client,
-        visitor=visitor,
-    )
+    try:
+        job = jobs.start(
+            collection.name,
+            tracks,
+            body.quality,
+            embed_lyrics=body.lyrics,
+            owner=client,
+            visitor=visitor,
+        )
+    except jobs.DiskFullError as exc:
+        raise HTTPException(status_code=507, detail=str(exc))
     analytics.record(
         "download_start",
         visitor=visitor,
@@ -472,6 +475,9 @@ def track_file(job_id: str, track_id: str, request: Request) -> FileResponse:
         detail=job.quality,
         label=f"{', '.join(state.track.artists)} - {state.track.title}",
     )
+    # The server copy has now left the building; it lives on the shorter
+    # delivered retention clock from this point.
+    jobs.mark_delivered(job, track_id)
     table = _VIDEO_MEDIA_TYPES if state.track.media == "video" else _MEDIA_TYPES
     return FileResponse(
         state.file_path,
@@ -552,6 +558,9 @@ def job_zip(job_id: str, request: Request) -> Response:
     if not files:
         raise HTTPException(status_code=404, detail="No completed tracks yet")
 
+    # The whole job was collected in one archive — every delivered file
+    # switches to the shorter clock.
+    jobs._mark_all_delivered(job)
     analytics.record(
         "zip_download",
         visitor=limits.visitor(request),

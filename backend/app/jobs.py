@@ -16,6 +16,7 @@ off — the sweeper exists because a public server's disk is shared with
 strangers, which is not true of a laptop or a NAS.
 """
 
+import logging
 import os
 import shutil
 import threading
@@ -24,6 +25,8 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
+
+log = logging.getLogger("unstream.jobs")
 
 from . import analytics, downloader
 from .models import Track
@@ -35,6 +38,17 @@ DOWNLOADS_DIR = Path(__file__).resolve().parent.parent / "downloads"
 # to their own machine, which is why it is the first thing self-hosters set.
 DOWNLOADS_TTL_HOURS = float(os.getenv("DOWNLOADS_TTL_HOURS", "24"))
 
+# Downloaded media are temporary. Two retention clocks: how long a finished
+# file stays after the user actually fetched it (DELIVERED), and how long a
+# finished file stays if the user never fetched it (DOWNLOAD). Intermediates
+# (part files, torrent control files, subtitle sidecars) are deleted as soon
+# as the job is finished — they are never "delivered". A running job's files
+# are never touched by either clock.
+#
+# Short defaults are intentional: a public server must not accumulate media.
+DOWNLOAD_RETENTION_HOURS = float(os.getenv("DOWNLOAD_RETENTION_HOURS", "1"))
+DELIVERED_RETENTION_HOURS = float(os.getenv("DELIVERED_RETENTION_HOURS", "0.25"))
+
 # The TTL alone is not a disk limit. Three workers can land on the order of
 # 500 tracks an hour, and nothing is deleted for a day — enough to fill a
 # small VPS long before the first job expires. This is the actual ceiling:
@@ -42,6 +56,10 @@ DOWNLOADS_TTL_HOURS = float(os.getenv("DOWNLOADS_TTL_HOURS", "24"))
 # under, so the volume trades history for staying writable. 0 disables it,
 # on the same reasoning as the TTL above.
 DOWNLOADS_MAX_BYTES = int(float(os.getenv("MAX_DOWNLOADS_GB", "20")) * 1024**3)
+
+# Refuse to start a job when fewer than this many MiB are free on the
+# download volume, rather than letting a 700 MB episode fill the disk.
+MIN_FREE_DISK_MB = int(float(os.getenv("MIN_FREE_DISK_MB", "2048")))
 
 # Ten minutes, not an hour: a budget checked hourly can be exceeded for an
 # hour. The sweep is a stat() per file, so running it often is cheap.
@@ -67,6 +85,10 @@ _anime_executor = ThreadPoolExecutor(max_workers=ANIME_DOWNLOAD_WORKERS)
 SETTLED = ("done", "error", "cancelled")
 
 
+class DiskFullError(Exception):
+    """Not enough free disk to start a download (MIN_FREE_DISK_MB)."""
+
+
 @dataclass
 class TrackState:
     track: Track
@@ -81,6 +103,10 @@ class TrackState:
     # finished file, never the requested quality. None for audio tracks.
     provider: str | None = None
     served_quality: str | None = None
+    # True once the client fetched this track's file (or the job's ZIP).
+    # Delivered files live on a shorter retention clock — the user has the
+    # bytes, so the server copy can go sooner.
+    delivered: bool = False
 
     def as_dict(self) -> dict:
         return {
@@ -276,6 +302,25 @@ def _run_track(job: Job, state: TrackState) -> None:
         )
 
 
+def _check_disk() -> None:
+    """Refuse to start into a nearly-full filesystem.
+
+    Bails out before any provider fetch or worker is spawned: a 700 MB episode
+    must not be the thing that finally tops the disk, and a user failing at
+    download time gets a reason instead of the server silently filling up.
+    When MIN_FREE_DISK_MB <= 0 the check is off.
+    """
+    if MIN_FREE_DISK_MB <= 0 or not DOWNLOADS_DIR.exists():
+        return
+    free_bytes = shutil.disk_usage(DOWNLOADS_DIR).free
+    if free_bytes < MIN_FREE_DISK_MB * 1024**2:
+        raise DiskFullError(
+            f"Not enough free disk to start a download "
+            f"({free_bytes // 1024**2} MiB free, "
+            f"need {MIN_FREE_DISK_MB} MiB)."
+        )
+
+
 def start(
     name: str,
     tracks: list[Track],
@@ -284,6 +329,7 @@ def start(
     owner: str = "",
     visitor: str = "",
 ) -> Job:
+    _check_disk()
     job = Job(
         id=uuid.uuid4().hex[:12],
         name=name,
@@ -354,48 +400,191 @@ def _measure(path: Path) -> tuple[float, int] | None:
     return newest, total
 
 
-def _evict(path: Path) -> None:
-    shutil.rmtree(path, ignore_errors=True)
+# File names that are intermediates — produced for a download and never the
+# finished deliverable. Anything carrying one of these is removed once its job
+# is finished, without waiting for the retention clock. A user's own files
+# (upstream downloads, cover art they placed here) are never matched: the
+# sweep only walks the app's per-job directories.
+_INTERMEDIATE_MARKERS = (
+    ".nyaatmp",   # Nyaa torrent work dir
+    ".aria2",      # libtorrent/aria2 control file
+    "aria2.log",   # torrent client log
+    ".uue",        # misc partial
+)
+_INTERMEDIATE_SUFFIXES = (".part", ".srt", ".vtt")
+
+_MAX_LOG_LINES_PER_SWEEP = 200
+_sweep_logged = 0
+
+
+def _is_intermediate(path: Path) -> bool:
+    """A file or directory produced in the middle of a download, never meant
+    to be handed to the user."""
+    name = path.name.lower()
+    if any(mark in name for mark in _INTERMEDIATE_MARKERS):
+        return True
+    if path.is_file() and path.suffix.lower() in _INTERMEDIATE_SUFFIXES:
+        return True
+    return False
+
+
+def _evict(path: Path, reason: str = "expired") -> None:
+    """Remove one job directory (or orphaned intermediate) and log it.
+
+    Idempotent: re-running after a partial failure removes nothing extra, and
+    a path vanished under us is not an error. Logs the freed bytes and, for a
+    whole job directory, its age so the retention behaviour is auditable.
+    """
+    global _sweep_logged
+    freed = 0
+    if path.is_dir():
+        for child in path.rglob("*"):
+            try:
+                freed += child.stat().st_size
+            except OSError:
+                pass
+    else:
+        try:
+            freed = path.stat().st_size
+        except OSError:
+            freed = 0
+    if path.is_dir():
+        shutil.rmtree(path, ignore_errors=True)
+    else:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+    if _sweep_logged < _MAX_LOG_LINES_PER_SWEEP:
+        _sweep_logged += 1
+        log.info(
+            "cleanup: removed %s reason=%s freed_bytes=%d",
+            str(path), reason, freed,
+        )
     _jobs.pop(path.name, None)
+
+
+def _mark_all_delivered(job: "Job") -> None:
+    """A ZIP served the whole job — every finished track counts as delivered."""
+    with job.lock:
+        for state in job.tracks.values():
+            if state.status == "done" and state.file_path:
+                state.delivered = True
+
+
+def mark_delivered(job: "Job", track_id: str) -> None:
+    """Record that one finished track's file was fetched by the client."""
+    state = job.tracks.get(track_id)
+    if state is not None and state.status == "done":
+        state.delivered = True
 
 
 def _sweep(
     ttl_hours: float = DOWNLOADS_TTL_HOURS, max_bytes: int = DOWNLOADS_MAX_BYTES
 ) -> int:
-    """Delete expired job directories, then any excess over the disk budget.
+    """Delete finished job directories by the retention clocks, then any
+    excess over the disk budget.
 
-    Either pass is disabled by passing 0 or less for its limit; with both off
-    this does nothing at all, and returns before walking the directory rather
-    than stat()ing a library that nothing is allowed to delete.
+    `ttl_hours` is kept for backward compatibility and treated as a hard
+    upper bound: a finished job older than it is always removed. The newer,
+    finer-grained clocks are the primary behaviour:
 
-    Returns how many were removed. A running job is never touched, so a
-    volume held over budget entirely by jobs in flight stays over — the
-    concurrency and per-client caps are what bound that case.
+      * delivered files (fetch + user fetched them) -> DELIVERED_RETENTION_HOURS
+      * finished-but-undelivered                   -> DOWNLOAD_RETENTION_HOURS
+      * intermediates (part files, torrent controls) -> removed once the job
+        is finished, no waiting
+
+    A running job is never touched — its directory is skipped entirely, so a
+    volume held over budget by jobs in flight stays over (the concurrency and
+    per-client caps are what bound that case). The sweep only ever walks the
+    app's per-job directories; a stray non-directory or a folder that is not a
+    job id is left alone, so user files placed in the download root survive.
+
+    With every limit off (0/0/0) the directory is not even walked.
+
+    Returns how many job directories were removed.
     """
-    if ttl_hours <= 0 and max_bytes <= 0:
+    if ttl_hours <= 0 and max_bytes <= 0 and (
+        DOWNLOAD_RETENTION_HOURS <= 0 and DELIVERED_RETENTION_HOURS <= 0
+    ):
         return 0
     if not DOWNLOADS_DIR.exists():
         return 0
-    cutoff = time.time() - ttl_hours * 3600 if ttl_hours > 0 else None
+
+    # Fresh cap each pass — a sweep truncated by the log limit must not
+    # silence the next one's audit trail forever.
+    global _sweep_logged
+    _sweep_logged = 0
+
+    now = time.time()
     removed = 0
-    # (newest mtime, bytes, path) for everything that survived the TTL pass.
+    # (newest mtime, bytes, path) for everything that survived retention.
     survivors: list[tuple[float, int, Path]] = []
 
     for path in DOWNLOADS_DIR.iterdir():
-        if not path.is_dir():
+        if not path.is_dir() or not path.name.isalnum():
+            # A stray non-directory (a user's file dropped in the root, a
+            # half-swept left-over) is out of scope: never delete something
+            # the app did not generate inside a named job folder.
             continue
         job = _jobs.get(path.name)
         if job and not job.finished:
             continue  # never pull files out from under a running job
+
+        finished = job is None or job.finished
+        # A finished job's intermediates are always disposable. Delivered vs
+        # undelivered final files get their own clocks.
         measured = _measure(path)
         if measured is None:
             continue
         newest, size = measured
-        if cutoff is not None and newest < cutoff:
-            _evict(path)
-            removed += 1
-        else:
+
+        if not finished:
+            # A job that is still finishing (status not settled) is untouched.
             survivors.append((newest, size, path))
+            continue
+
+        # A finished job's working files (the Nyaa torrent control dir, .part
+        # files, subtitle sidecars) are deleted right away, before the retention
+        # decision — a subbed or half-failed download must not keep them next
+        # to the delivered media for the whole clock. Only the final file, if
+        # any, is subject to retention.
+        try:
+            children = list(path.iterdir())
+        except OSError:
+            children = []
+        for child in children:
+            if _is_intermediate(child):
+                _evict(child, "intermediate")
+
+        # A finished job is cleaned by its own clock. The hard ttl cap wins
+        # first; then the undelivered retention; then the (shorter) delivered
+        # retention; and a job reduced to intermediates is gone immediately.
+        base_expire = (
+            now - DOWNLOAD_RETENTION_HOURS * 3600
+            if DOWNLOAD_RETENTION_HOURS > 0 else None
+        )
+        delivered_cutoff = (
+            now - DELIVERED_RETENTION_HOURS * 3600
+            if DELIVERED_RETENTION_HOURS > 0 else None
+        )
+
+        if ttl_hours > 0 and newest < now - ttl_hours * 3600:
+            _evict(path, "ttl")
+            removed += 1
+            continue
+        if _intermediates_only(path) or (
+            base_expire is not None and newest < base_expire
+        ):
+            _evict(path, "retention")
+            removed += 1
+            continue
+        if delivered_cutoff is not None and _delivered_job(job) and newest < delivered_cutoff:
+            _evict(path, "delivered")
+            removed += 1
+            continue
+
+        survivors.append((newest, size, path))
 
     if max_bytes <= 0:
         return removed
@@ -406,10 +595,34 @@ def _sweep(
     for _, size, path in survivors:
         if total <= max_bytes:
             break
-        _evict(path)
+        _evict(path, "over-budget")
         total -= size
         removed += 1
     return removed
+
+
+def _intermediates_only(path: Path) -> bool:
+    """True when a finished job directory holds nothing but intermediates.
+
+    A half-failed download leaves only the torrent work dir or subtitle
+    sidecars, which are never handed to anyone — delete them as soon as the
+    job settled.
+    """
+    try:
+        children = list(path.iterdir())
+    except OSError:
+        return False
+    if not children:
+        return True  # empty shell of a download
+    return all(_is_intermediate(child) for child in children)
+
+
+def _delivered_job(job: "Job | None") -> bool:
+    """Did the user collect at least one finished file from this job?"""
+    if job is None:
+        return False  # an orphan's fate is decided by the undelivered clock
+    with job.lock:
+        return any(s.delivered for s in job.tracks.values() if s.status == "done")
 
 
 def start_sweeper() -> None:

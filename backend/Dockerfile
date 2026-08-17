@@ -6,7 +6,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 # ffmpeg for audio conversion, dumb-init for clean signal handling, gosu to
 # drop from root to PUID/PGID once the mounts have been handed over.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg dumb-init gosu ca-certificates curl unzip \
+    && apt-get install -y --no-install-recommends ffmpeg dumb-init gosu ca-certificates curl unzip aria2 \
     && rm -rf /var/lib/apt/lists/*
 
 # A JavaScript runtime, because YouTube's player now hands out challenges that

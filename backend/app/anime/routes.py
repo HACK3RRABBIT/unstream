@@ -331,14 +331,17 @@ def anime_download(body: AnimeDownloadRequest, request: Request) -> dict:
         )
 
     visitor = limits.visitor(request)
-    job = jobs.start(
-        f"{anime_title} — Season {body.season}",
-        tracks,
-        body.quality,
-        embed_lyrics=False,
-        owner=client,
-        visitor=visitor,
-    )
+    try:
+        job = jobs.start(
+            f"{anime_title} — Season {body.season}",
+            tracks,
+            body.quality,
+            embed_lyrics=False,
+            owner=client,
+            visitor=visitor,
+        )
+    except jobs.DiskFullError as exc:
+        raise HTTPException(status_code=507, detail=str(exc))
     analytics.record(
         "anime_download_start",
         visitor=visitor,

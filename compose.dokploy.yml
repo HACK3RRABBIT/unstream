@@ -46,6 +46,13 @@ services:
       - DOWNLOADS_TTL_HOURS=${DOWNLOADS_TTL_HOURS:-24}
       # Keep under what the host actually has free.
       - MAX_DOWNLOADS_GB=${MAX_DOWNLOADS_GB:-20}
+      # Retention clocks: finished files are swept after DOWNLOAD_RETENTION_HOURS,
+      # sooner (DELIVERED_RETENTION_HOURS) once the user fetched them, and
+      # intermediates going the moment the job settles; MIN_FREE_DISK_MB refuses
+      # new downloads on a nearly-full volume. 0 disables the respective one.
+      - DOWNLOAD_RETENTION_HOURS=${DOWNLOAD_RETENTION_HOURS:-1}
+      - DELIVERED_RETENTION_HOURS=${DELIVERED_RETENTION_HOURS:-0.25}
+      - MIN_FREE_DISK_MB=${MIN_FREE_DISK_MB:-2048}
       # Not interpolated on purpose: this is the one host where the limits are
       # load-bearing, and a leftover variable in Dokploy must not disable them.
       - RATE_LIMITS_ENABLED=true

@@ -47,9 +47,16 @@ services:
     environment:
       # 0 = keep downloads forever, no disk ceiling. The code defaults to 24h
       # and 20 GB, which is right for a public server and wrong for a folder
-      # you browse.
+      # you browse. Retention clocks are the opposite: they are *enabled* by
+      # default here so finished media and their intermediates still get swept
+      # on a self-hosted box — finished files after DOWNLOAD_RETENTION_HOURS
+      # (or DELIVERED_RETENTION_HOURS once fetched), part/torrent/subtitle
+      # sidecars as soon as the job settles. Set any to 0 to keep files.
       - DOWNLOADS_TTL_HOURS=${DOWNLOADS_TTL_HOURS:-0}
       - MAX_DOWNLOADS_GB=${MAX_DOWNLOADS_GB:-0}
+      - DOWNLOAD_RETENTION_HOURS=${DOWNLOAD_RETENTION_HOURS:-1}
+      - DELIVERED_RETENTION_HOURS=${DELIVERED_RETENTION_HOURS:-0.25}
+      - MIN_FREE_DISK_MB=${MIN_FREE_DISK_MB:-2048}
 
       # The per-caller limits price one stranger's share of a server. There
       # are no strangers here. Turn this back on for anything reachable by
