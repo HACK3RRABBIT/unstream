@@ -1522,18 +1522,19 @@ def test_finalize_subtitles_eng_only_keeps_single_mux(monkeypatch, tmp_path):
 def test_find_sub_stream_returns_per_type_index(monkeypatch, tmp_path):
     """ffprobe reports global stream indexes; ffmpeg's `-map 0:s:N` wants the
     per-type (subtitle) index, so _find_sub_stream counts subtitle lines. A
-    real fansub carries the title too ("2,eng,English"), which must still match
-    the language; a code-less track whose title names the language does too."""
+    real fansub carries the title too ("2,subrip,eng,English"), which must
+    still match the language; a code-less track whose title names the language
+    does too."""
     from app.anime import nyaa
 
     video = tmp_path / "ep.mkv"
     video.write_bytes(b"x")
     probe = (
-        "2,eng,English\n"  # global 2 = first subtitle  -> per-type 0
-        "3,spa,Spanish\n"  # second subtitle           -> per-type 1
-        "4,fas,Persian\n"  # third subtitle            -> per-type 2
-        "5,,Français\n"    # no code, French title      -> not eng/fas
-        "6,,English\n"     # no code, English title     -> eng (per-type 4)
+        "2,subrip,eng,English\n"  # global 2 = first subtitle  -> per-type 0
+        "3,subrip,spa,Spanish\n"  # second subtitle           -> per-type 1
+        "4,subrip,fas,Persian\n"  # third subtitle            -> per-type 2
+        "5,subrip,,Français\n"    # no code, French title      -> not eng/fas
+        "6,subrip,,English\n"     # no code, English title     -> eng (per-type 4)
     )
 
     class _Run:
@@ -1546,6 +1547,38 @@ def test_find_sub_stream_returns_per_type_index(monkeypatch, tmp_path):
     assert nyaa.NyaaProvider._find_sub_stream(video, "und") is None
     # Code-less track with an English title falls back to the title.
     assert nyaa.NyaaProvider._find_sub_stream(video, "engx") is None
+
+
+def test_find_sub_stream_skips_bitmap_subtitles(monkeypatch, tmp_path):
+    """A bitmap subtitle (dvd_subtitle, hdmv_pgs_subtitle) cannot be muxed
+    into mov_text — it must be treated as absent so the download ships a bare
+    video instead of failing the whole episode over a subtitle that can't be
+    carried."""
+    from app.anime import nyaa
+
+    video = tmp_path / "ep.mkv"
+    video.write_bytes(b"x")
+    probe = (
+        # A real fansub dvdsub track, English-tagged — but a bitmap, so unusable.
+        "3,dvd_subtitle,eng,English\n"
+        # A text ass track in another language should still be skipped for eng.
+        "4,ass,fra,Français\n"
+        # The text English track is the one that matches.
+        "5,subrip,eng,English\n"
+    )
+
+    class _Run:
+        returncode = 0
+        stdout = probe
+
+    monkeypatch.setattr(nyaa.subprocess, "run", lambda *a, **k: _Run())
+    assert nyaa.NyaaProvider._find_sub_stream(video, "eng") == "2"  # per-type 2, not 0
+    assert nyaa.NyaaProvider._find_sub_stream(video, "fra") is None  # fra isn't eng/fas
+    # And the dvd_subtitle alone (no text track) yields nothing.
+    probe_only_bitmap = "3,dvd_subtitle,eng,English\n"
+    monkeypatch.setattr(nyaa.subprocess, "run", lambda *a, **k: type(
+        "R", (), {"returncode": 0, "stdout": probe_only_bitmap})())
+    assert nyaa.NyaaProvider._find_sub_stream(video, "eng") is None
     # (covered above) title-only English is caught only when code is absent
 
 

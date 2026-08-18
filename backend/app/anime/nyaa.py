@@ -62,6 +62,16 @@ def _magnet(btih: str, name: str) -> str:
     return f"magnet:?xt=urn:btih:{btih}&dn={quote(name)}"
 
 
+# Subtitle codecs that carry text and can be muxed into mov_text (what the
+# mp4 muxer writes). Everything else — dvd_subtitle, hdmv_pgs_subtitle, dvb_subtitle,
+# xsub, ... — is a bitmap (picture) subtitle that ffmpeg refuses to re-encode to
+# text, so a fansub with only such a track must ship a bare video rather than
+# fail the download over a subtitle that cannot be carried.
+_TEXT_SUB_CODECS = {
+    "subrip", "srt", "ass", "ssa", "webvtt", "mov_text", "text",
+    "microdvd", "realtext", "subviewer", "subviewer1", "sami", "stl",
+}
+
 # A resolution marker in a release title. `p` after 3-4 digits (480p, 1080p)
 # is the unambiguous form; dimensions (1280x720, 854×480) are the other. The
 # leading `(?<![0-9])` stops "1480p"/"48000" from matching inside a longer
@@ -497,25 +507,34 @@ class NyaaProvider:
         wants the per-type (subtitle) index — the line's position among the
         subtitle-only probe output. Using the global index would select the
         wrong subtitle (or none) whenever English isn't the first track.
+
+        Bitmap subtitle streams (dvd_subtitle, hdmv_pgs_subtitle, ...) cannot
+        be muxed into mov_text — ffmpeg refuses "subtitle encoding currently
+        only possible from text to text or bitmap to bitmap". A track that
+        can't be carried is returned as None so the caller falls back to a
+        bare video instead of failing the whole download.
         """
         probe = subprocess.run(
             [
                 "ffprobe", "-v", "error",
                 "-select_streams", "s",
-                "-show_entries", "stream=index:stream_tags=language,title",
+                "-show_entries", "stream=index,codec_name:stream_tags=language,title",
                 "-of", "csv=p=0", str(video),
             ],
             capture_output=True, text=True, timeout=30,
         )
         for sub_idx, line in enumerate(probe.stdout.strip().splitlines()):
             parts = [p.strip() for p in line.split(",")]
-            if len(parts) < 2:
+            if len(parts) < 3:
                 continue
-            # parts[1] is the language code; parts[2:] is the title, which a
-            # real fansub carries ("2,eng,English") — join so a code-free track
+            # parts[0] is the global index, parts[1] the codec, parts[2] the
+            # language code; parts[3:] is the title, which a real fansub
+            # carries ("2,subrip,eng,English") — join so a code-free track
             # whose title names the language still matches.
-            lang = parts[1].lower()
-            title = " ".join(parts[2:]).lower()
+            if parts[1].lower() not in _TEXT_SUB_CODECS:
+                continue  # bitmap subtitle: cannot become mov_text
+            lang = parts[2].lower()
+            title = " ".join(parts[3:]).lower()
             if language == "eng" and (
                 lang in ("eng", "en") or (not lang and re.search(r"\benglish?\b", title))
             ):
