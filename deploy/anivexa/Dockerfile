@@ -26,6 +26,11 @@ FROM node:20-alpine
 
 WORKDIR /app
 ENV NODE_ENV=production
+# curl is required at runtime: anidbapp and animedunya (the sidecar's only 480p
+# source) shell out to `curl` to scrape — a container without it makes those
+# sources fail every scrape with "curl: not found". ca-certificates is needed
+# for those TLS fetches against real certificates.
+RUN apk add --no-cache curl ca-certificates
 COPY --from=build /src /app
 RUN npm install --omit=dev --no-audit --no-fund
 
