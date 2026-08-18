@@ -47,24 +47,29 @@ DEFAULT_VIDEO_QUALITY = "original"
 def parse_source_url(url: str) -> EpisodeSource:
     """Rehydrate an EpisodeSource from `anime://<provider>/<animeId>/<season>/<episode>`.
 
-    A trailing `#anilist=<id>` fragment carries the season's AniList Media id
-    (see routes.py) so a provider keyed by AniList ids (anivexa) can serve an
-    episode even when another provider resolved the plan.
+    A trailing `#anilist=<id>&title=<name>` fragment carries the season's
+    AniList Media id and its best title (see routes.py). A provider keyed by
+    AniList ids (anivexa) uses the id; a title-keyed fallback (Nyaa/hianime)
+    uses the title to re-resolve the show even though another provider built
+    the plan.
     """
     if not url.startswith("anime://"):
         raise DownloadError(f"Not an anime plan: {url}")
-    rest = url[len("anime://") :]  # <provider>/<animeId>/<season>/<episode> [#anilist=<id>]
+    rest = url[len("anime://") :]  # <provider>/<animeId>/<season>/<episode> [#anilist=<id>&title=<name>]
     path, _, fragment = rest.partition("#")
     provider, anime_id, season, episode = path.split("/", 3)
     anilist_id: int | None = None
+    title = ""
     for pair in fragment.split("&"):
         key, _, value = pair.partition("=")
         if key == "anilist" and value.isdigit():
             anilist_id = int(value)
+        elif key == "title":
+            title = unquote(value)
     return EpisodeSource(
         provider=provider,
         anime_id=unquote(anime_id),
-        anime_title="",
+        anime_title=title,
         year=None,
         season=int(season),
         episode=int(episode),
@@ -376,7 +381,11 @@ def download_video_track(
                     continue
                 if on_provider_progress:
                     on_provider_progress(index + 1, len(chain), provider.name)
-                stream = provider.episode_stream(source, resolution)
+                # Re-anchor the plan's source into this provider's domain (a
+                # fallback provider gets the season title, not anivexa's id),
+                # then resolve the episode's stream.
+                src = _reanchor(provider, source)
+                stream = provider.episode_stream(src, resolution)
                 if not stream.url and stream.telegram_media is None:
                     continue
                 _clean_partials(dest)
@@ -466,6 +475,31 @@ def _provider_capability(provider, source: EpisodeSource) -> str | None:
     if capability is None:
         return None
     return capability.status
+
+
+def _reanchor(provider, source: EpisodeSource) -> EpisodeSource:
+    """A source whose `anime_id` is in *this* provider's domain.
+
+    The plan's `anime_id` belongs to the plan's provider: Nyaa stores a title,
+    anivexa stores the numeric AniList id. A fallback provider must re-resolve
+    by the season title (carried in the plan URL) so Nyaa searches "ONE PIECE"
+    instead of "21". The plan's own provider keeps its source untouched. A
+    resolve failure keeps the plan source — episode_stream then surfaces the
+    real error and the chain hops.
+    """
+    if provider.name == source.provider:
+        return source
+    if not source.anime_title:
+        return source
+    resolve = getattr(provider, "resolve", None)
+    if resolve is None:
+        return source
+    try:
+        return resolve(
+            source.anime_title, source.year, anilist_id=source.anilist_id
+        )
+    except (ProviderError, TypeError):
+        return source  # let episode_stream raise the real failure
 
 
 def _chain_excluding(primary: str, excluded: set[str], quality: str):

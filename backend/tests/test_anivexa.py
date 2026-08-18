@@ -574,6 +574,75 @@ def test_nyaa_failure_falls_back_to_hianime(monkeypatch, tmp_path):
     assert meta["provider"] == "hianime"
 
 
+def test_fallback_provider_is_reanchored_with_season_title(monkeypatch, tmp_path):
+    """The plan URL carries the season title (#anilist=...&title=...) so a
+    fallback provider is re-anchored to a source in its own domain.
+
+    Real defect this pins: anivexa leads the 480/720 chain and its anime_id is
+    the numeric AniList id. Nyaa was asked with anime_id='21' and searched the
+    number instead of 'Prison School'. The re-anchor hands the fallback the
+    season title so it can find the show."""
+    from app.anime.providers import QualityUnavailable
+
+    seen = {}
+
+    class AnivexaFail:
+        name = "anivexa"
+        streams_hls = True
+
+        def available(self):
+            return True
+
+        def episode_stream(self, src, quality):
+            raise QualityUnavailable("anivexa cannot serve this here")
+
+        def resolve(self, title, year, anilist_id=None):
+            return EpisodeSource(
+                provider="anivexa", anime_id=str(anilist_id), anime_title=title,
+                year=year, season=0, episode=0, anilist_id=anilist_id,
+            )
+
+    class NyaaCatches:
+        name = "nyaa"
+        streams_hls = False
+
+        def available(self):
+            return True
+
+        def resolve(self, title, year, anilist_id=None):
+            return EpisodeSource(
+                provider="nyaa", anime_id=title, anime_title=title,
+                year=year, season=0, episode=0, anilist_id=anilist_id,
+            )
+
+        def episode_stream(self, src, quality):
+            seen["anime_id"] = src.anime_id
+            seen["anilist_id"] = src.anilist_id
+            return EpisodeStream(provider="nyaa", url="magnet:?xt=urn:btih:abc")
+
+        def download(self, stream, dest, quality, on_progress, should_cancel, subs="eng"):
+            out = dest.with_name(dest.name + ".mp4")
+            out.write_bytes(b"video")
+            return out
+
+    _stub_registry(monkeypatch, AnivexaFail(), NyaaCatches())
+    _stub_pipeline(monkeypatch, lambda p: 720)
+
+    track = _anivexa_track()
+    # The real route appends the season title; encode it the same way.
+    track.source_url = f"anime://anivexa/20807/1/1#anilist=20807&title=Prison School"
+    meta: dict = {}
+    out = anime_downloader.download_video_track(
+        track, tmp_path, lambda s, f: None, "720", None, None, meta=meta
+    )
+    assert out.exists()
+    assert meta["provider"] == "nyaa"
+    # Nyaa was handed the title, not the numeric AniList id — and it still
+    # kept the AniList id for id-keyed providers to use.
+    assert seen["anime_id"] == "Prison School"
+    assert seen["anilist_id"] == 20807
+
+
 def test_capability_unavailable_skips_without_probe(monkeypatch, tmp_path):
     """A verified UNAVAILABLE provider is hopped without calling episode_stream."""
     from app.anime.providers import ProviderCapability

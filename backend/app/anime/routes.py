@@ -8,6 +8,7 @@ music downloads use.
 
 import re
 from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator
@@ -328,7 +329,8 @@ def anime_download(body: AnimeDownloadRequest, request: Request) -> dict:
                 subs=body.subs,
                 source_url=(
                     f"anime://{plan.provider}/{plan.anime_id}/"
-                    f"{season_component}/{episode}#anilist={season.id}"
+                    f"{season_component}/{episode}"
+                    f"#anilist={season.id}&title={quote(season.best_title)}"
                 ),
             )
         )
