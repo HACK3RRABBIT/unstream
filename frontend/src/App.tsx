@@ -395,26 +395,15 @@ function Shell() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Keep the address bar shareable: it always mirrors the top view.
+  // Keep the address bar shareable: it always mirrors the top view. The tab
+  // switch (music ↔ anime) is UI state, not navigation, so it is never
+  // written to the URL — switching catalogs must not change the address.
   useEffect(() => {
     const view = stack.at(-1)
     const params = new URLSearchParams()
     if (view?.type === 'collection') params.set('url', view.url)
     else if (view?.type === 'artist') params.set('artist', view.artist.id)
     else if (view?.type === 'search') params.set('q', view.query)
-    else if (view?.type === 'anime-search') {
-      params.set('tab', 'anime')
-      params.set('aq', view.query)
-    } else if (view?.type === 'anime') {
-      params.set('tab', 'anime')
-      params.set('aid', String(view.anime.id))
-    } else if (view?.type === 'anime-season') {
-      params.set('tab', 'anime')
-      params.set('aid', String(view.anime.id))
-      params.set('s', String(view.season.season))
-    } else if (tab === 'anime') {
-      params.set('tab', 'anime')
-    }
     const qs = params.toString()
     window.history.replaceState(null, '', qs ? `?${qs}` : window.location.pathname)
   }, [stack, tab])
@@ -666,7 +655,9 @@ function Shell() {
               {tab === 'anime' ? (
                 <>
                   <h1 className="animate-fade-up font-display text-[clamp(2.5rem,7.5vw,4.5rem)] leading-[1.15] font-bold text-balance">
-                    {m.anime.hero.title}
+                    {m.anime.hero.titleLine1}
+                    <br />
+                    <span className="text-lime-flash">{m.anime.hero.titleLine2}</span>
                   </h1>
                   <p className="mt-5 max-w-md animate-fade-up text-body leading-relaxed text-ink-300 [animation-delay:80ms]">
                     {m.anime.hero.description}

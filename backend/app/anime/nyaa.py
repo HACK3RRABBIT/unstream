@@ -573,18 +573,34 @@ class NyaaProvider:
         eng_idx = NyaaProvider._find_sub_stream(video, "eng")
         fas_idx = NyaaProvider._find_sub_stream(video, "fas")
 
+        # Preserve: extract the embedded eng/fas tracks to SRT so a track that
+        # didn't match the language heuristic isn't lost. The bare-video mux
+        # below only ever runs when the requested languages are genuinely
+        # absent, and even then the video itself is still produced.
+        from .subtitle_source import extract_embedded
+
+        embedded_srts = extract_embedded(video, out)
+
         if not want_fas:
-            # The single-language path is unchanged: mux one matching embedded
-            # track (or none), exactly as before.
-            idx = eng_idx if want_eng else fas_idx
-            if idx is None:
-                _run_ffmpeg(["-i", str(video), "-c", "copy"], out, "torrent mux")
-            else:
+            # The single-language path: mux one matching embedded track, or the
+            # extracted SRT recovered from the mkv when the heuristic missed
+            # it, or a bare video when the language is genuinely absent.
+            if want_eng and eng_idx is not None:
                 _run_ffmpeg(
                     ["-i", str(video), "-map", "0:v", "-map", "0:a?",
-                     "-map", f"0:s:{idx}", "-c", "copy", "-c:s", "mov_text"],
+                     "-map", f"0:s:{eng_idx}", "-c", "copy", "-c:s", "mov_text"],
                     out, "subtitle mux",
                 )
+            elif want_eng and "eng" in embedded_srts:
+                _run_ffmpeg(
+                    ["-i", str(video), "-i", str(embedded_srts["eng"]),
+                     "-map", "0:v", "-map", "0:a?", "-map", "1:0",
+                     "-c", "copy", "-c:s", "mov_text",
+                     "-metadata:s:s:0", "language=eng"],
+                    out, "subtitle mux",
+                )
+            else:
+                _run_ffmpeg(["-i", str(video), "-c", "copy"], out, "torrent mux")
             video.unlink(missing_ok=True)
             return
 
@@ -613,11 +629,25 @@ class NyaaProvider:
                 eng_srt.unlink(missing_ok=True)
                 if fas_srt is not None:
                     fas_track = ("srt", fas_srt)
+        # No embedded English matched the heuristic; recover it from the mkv's
+        # extracted tracks so fas can still be generated from real bytes.
+        if fas_track is None and eng_idx is None and "eng" in embedded_srts:
+            eng_srt = embedded_srts["eng"]
+            from .subtitle_translate import translate_srt_file
+
+            fas_srt = translate_srt_file(
+                eng_srt, "fa", video.with_name(video.stem + ".fas.srt")
+            )
+            if fas_srt is not None:
+                fas_track = ("srt", fas_srt)
+            embedded_srts.pop("eng", None)
 
         embedded: list[tuple[str, str]] = []
         srt_files: list[tuple[str, Path]] = []
         if want_eng and eng_idx is not None:
             embedded.append((eng_idx, "eng"))
+        elif want_eng and "eng" in embedded_srts:
+            srt_files.append(("eng", embedded_srts["eng"]))
         if fas_track is not None:
             if fas_track[0] == "embedded":
                 embedded.append((str(fas_track[1]), "fas"))
@@ -625,11 +655,10 @@ class NyaaProvider:
                 srt_files.append(("fas", fas_track[1]))  # type: ignore[arg-type]
 
         if not embedded and not srt_files:
-            # No Persian could be produced (no embedded track, translation
-            # failed). Fall back to the available English track — a failed
-            # translation must never strip the user of subtitles entirely —
-            # or a bare video when there's no English either.
-            if eng_idx is not None and not want_eng:
+            # No subtitles could be produced at all. Fall back to the available
+            # English track — a failed translation must never strip the user of
+            # subtitles entirely — or a bare video when there's no English.
+            if not want_eng and eng_idx is not None:
                 embedded.append((eng_idx, "eng"))
             if not embedded:
                 _run_ffmpeg(["-i", str(video), "-c", "copy"], out, "torrent mux")

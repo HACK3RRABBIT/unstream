@@ -399,15 +399,22 @@ def download_video_track(
                 sub = _fetch_subs(stream, dest)
                 if sub is None and track.subs and provider.streams_hls:
                     # An HLS source shipped no English track and the user asked
-                    # for subs — OpenSubtitles (key-gated; inert without a key)
-                    # is the last-resort rescue. Validated before it is muxed.
-                    from . import opensubtitles
+                    # for subs — preserve the video's own embedded subtitle
+                    # tracks first (keyless), then OpenSubtitles (key-gated;
+                    # inert without a key) as the last-resort rescue.
+                    from .subtitle_source import extract_embedded
 
-                    if opensubtitles.available() and source.season > 0:
-                        sub = opensubtitles.fetch_english(
-                            None, ", ".join(track.artists),
-                            source.season, source.episode, dest,
-                        )
+                    embedded_srts = extract_embedded(video, dest)
+                    if "eng" in embedded_srts:
+                        sub = embedded_srts["eng"]
+                    else:
+                        from . import opensubtitles
+
+                        if opensubtitles.available() and source.season > 0:
+                            sub = opensubtitles.fetch_english(
+                                None, ", ".join(track.artists),
+                                source.season, source.episode, dest,
+                            )
                 final = _finalize_subtitles(video, sub, track.subs, dest)
                 # The file now exists and is probed; enforce the requested
                 # resolution BEFORE the track can be marked done. A release

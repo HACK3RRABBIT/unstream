@@ -8,15 +8,22 @@ import { useMessages } from '../lib/i18n'
  *
  *  The backend's /sources probe reports, per source, the resolutions it is
  *  *verified* to hold — or null when it wasn't probed (Nyaa/hianime). A null
- *  or unknown source can never rule a quality out, so a quality is hidden only
- *  when every source with an authoritative list lacks it and at least one
- *  authoritative list was reported. "original" is always shown: every source
- *  serves its own best stream. */
+ *  or unknown source is no proof a quality is absent, but it is also no proof
+ *  it *exists* — the chain can still deliver whatever the verified sources
+ *  carry, so a quality is hidden only when every source that reported an
+ *  authoritative list lacks it and at least one such source was reported.
+ *
+ *  Crucially: a per-episode (null/unknown) source must NOT widen the set back
+ *  to "all qualities". Each authoritative list is exact; the union of the
+ *  authoritative lists is the set of qualities any provider in this chain can
+ *  actually serve. Nyaa marking a season 720p-only while anivexa carries
+ *  [360,720,1080] still means 480p is a doomed request, and hiding it is
+ *  exactly the gate's point. "original" is always shown: every source serves
+ *  its own best stream. */
 export function availableQualities(sources: AnimeSource[] | undefined | null): VideoQuality[] {
   if (!sources || sources.length === 0) return [...VIDEO_QUALITIES]
-  const authoritative = sources.flatMap((s) => (Array.isArray(s.qualities) ? [s] : []))
-  const unknown = sources.some((s) => !Array.isArray(s.qualities) || s.status === 'unknown')
-  if (unknown || authoritative.length === 0) return [...VIDEO_QUALITIES]
+  const authoritative = sources.filter((s) => Array.isArray(s.qualities))
+  if (authoritative.length === 0) return [...VIDEO_QUALITIES]
   const verified = new Set(authoritative.flatMap((s) => s.qualities as string[]))
   return VIDEO_QUALITIES.filter((q) => q === 'original' || verified.has(q))
 }

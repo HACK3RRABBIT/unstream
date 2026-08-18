@@ -109,7 +109,8 @@ const en = {
 
   anime: {
     hero: {
-      title: 'Download anime with subtitles',
+      titleLine1: 'Download anime,',
+      titleLine2: 'with subtitles',
       description:
         'Search for an anime, pick the episode and the quality you want, and get the file with subtitles.',
     },

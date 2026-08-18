@@ -15,7 +15,8 @@ import { faNumerals, useMessages, useStartAlign } from '../lib/i18n'
 import { useDownloads } from '../lib/downloads'
 import { useToast } from '../lib/toast'
 import { SubtitlePicker } from './SubtitlePicker'
-import { VideoQualityPicker } from './VideoQualityPicker'
+import { availableQualities } from './VideoQualityPicker'
+import { videoQualityLabel } from '../lib/api'
 
 interface Props {
   anime: AnimeDetail
@@ -72,20 +73,42 @@ export function AnimeSeasonView({ anime, season }: Props) {
     [anime.id, season.season, episodeCount],
   )
 
+  // The capability probe already knows which resolutions this season can
+  // actually serve. Refuse a download that is provably impossible (every
+  // probed source lacks the requested quality) instead of letting the job
+  // fail in the backend — a null-unknown source (Nyaa/hianime) never hides
+  // a possibility, so this only blocks requests no source can serve.
+  const sources = sourcesQuery.data?.providers ?? null
+  const availability = useMemo(() => availableQualities(sources), [sources])
+  const guardQuality = () => {
+    if (!sources) return
+    const chosen = downloads.videoQuality
+    if (!availability.includes(chosen)) {
+      throw new Error(m.anime.quality.unavailable(videoQualityLabel(chosen, m)))
+    }
+  }
+
   const start = useMutation({
-    mutationFn: () =>
-      downloads.startAnime({ id: anime.id, title: anime.title, coverUrl: anime.cover_url }, season),
+    mutationFn: () => {
+      guardQuality()
+      return downloads.startAnime(
+        { id: anime.id, title: anime.title, coverUrl: anime.cover_url },
+        season,
+      )
+    },
     onSuccess: () => push(m.anime.queuedSeason(season.title)),
     onError: (err) => push(apiError(err, m), 'error'),
   })
 
   const startSelected = useMutation({
-    mutationFn: (ids: string[]) =>
-      downloads.startAnime(
+    mutationFn: (ids: string[]) => {
+      guardQuality()
+      return downloads.startAnime(
         { id: anime.id, title: anime.title, coverUrl: anime.cover_url },
         season,
         ids,
-      ),
+      )
+    },
     onSuccess: (_data, ids) => {
       clearSelection()
       push(m.anime.queuedSelected(ids.length))
@@ -94,12 +117,14 @@ export function AnimeSeasonView({ anime, season }: Props) {
   })
 
   const startEpisode = useMutation({
-    mutationFn: (id: string) =>
-      downloads.startAnime(
+    mutationFn: (id: string) => {
+      guardQuality()
+      return downloads.startAnime(
         { id: anime.id, title: anime.title, coverUrl: anime.cover_url },
         season,
         [id],
-      ),
+      )
+    },
     onSuccess: () => push(m.anime.queuedOne()),
     onError: (err) => push(apiError(err, m), 'error'),
   })
@@ -164,14 +189,6 @@ export function AnimeSeasonView({ anime, season }: Props) {
         </div>
 
         <SubtitlePicker className="w-full sm:w-auto" />
-
-        {/* Capability-aware quality picker: renders only qualities the
-            backend's /sources probe verified for this season, and says so
-            when the global selection isn't among them. */}
-        <VideoQualityPicker
-          className="w-full sm:w-auto"
-          sources={sourcesQuery.data?.providers ?? null}
-        />
 
         <div className="flex items-center gap-2">
           {zipEntry && (zipEntry.job?.total ?? zipEntry.tracks.length) > 1 && (
