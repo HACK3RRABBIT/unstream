@@ -1,58 +1,96 @@
 import { useMemo } from 'react'
 import clsx from 'clsx'
-import { VIDEO_QUALITIES, videoQualityLabel, type AnimeSource, type VideoQuality } from '../lib/api'
+import { LoaderCircle } from 'lucide-react'
+import { videoQualityLabel, type AnimeSource, type VideoQuality } from '../lib/api'
+import type { DiscoveryState } from '../lib/animeDiscovery'
 import { useDownloads } from '../lib/downloads'
 import { useMessages } from '../lib/i18n'
 
-/** Compute the qualities actually verified available for a season.
+/** Compute the qualities actually verified available for a set of sources.
  *
- *  The backend's /sources probe reports, per source, the resolutions it is
- *  *verified* to hold — or null when it wasn't probed (Nyaa/hianime). A null
- *  or unknown source is no proof a quality is absent, but it is also no proof
- *  it *exists* — the chain can still deliver whatever the verified sources
- *  carry, so a quality is hidden only when every source that reported an
- *  authoritative list lacks it and at least one such source was reported.
- *
- *  Crucially: a per-episode (null/unknown) source must NOT widen the set back
- *  to "all qualities". Each authoritative list is exact; the union of the
- *  authoritative lists is the set of qualities any provider in this chain can
- *  actually serve. Nyaa marking a season 720p-only while anivexa carries
- *  [360,720,1080] still means 480p is a doomed request, and hiding it is
- *  exactly the gate's point. "original" is always shown: every source serves
- *  its own best stream. */
+ *  The backend's probes report, per source, the resolutions it is *verified*
+ *  to hold — or null when it wasn't probed (Nyaa/hianime). A null or unknown
+ *  source is no proof a quality is absent, and also no proof it *exists* — it
+ *  never widens the set. The union of the authoritative lists is exactly what
+ *  this chain can serve, plus `original` (every source serves its own best
+ *  stream). There is no hard-coded resolution list: a provider may report
+ *  240/360/540/720/1080/1440/2160 or anything else, and it renders as
+ *  discovered. */
 export function availableQualities(sources: AnimeSource[] | undefined | null): VideoQuality[] {
-  if (!sources || sources.length === 0) return [...VIDEO_QUALITIES]
+  if (!sources || sources.length === 0) return ['original']
   const authoritative = sources.filter((s) => Array.isArray(s.qualities))
-  if (authoritative.length === 0) return [...VIDEO_QUALITIES]
+  if (authoritative.length === 0) return ['original']
   const verified = new Set(authoritative.flatMap((s) => s.qualities as string[]))
-  return VIDEO_QUALITIES.filter((q) => q === 'original' || verified.has(q))
+  const sorted = [...verified].sort(dimSortReversed)
+  if (sorted.length === 0) return ['original']
+  return [...sorted, 'original']
+}
+
+/** Did any source give an authoritative (non-null) qualities verdict? Null
+ *  providers never count — one must exist before a quality can be hidden. */
+export function hasAuthoritativeSources(sources: AnimeSource[] | null | undefined): boolean {
+  return !!sources && sources.some((s) => Array.isArray(s.qualities))
+}
+
+/** Sort discovered resolutions high→low (1080, 720, 480…) then "original"
+ *  last. Lexicographic sorting would misorder 1080 before 720. */
+export function dimSortReversed(a: string, b: string): number {
+  const na = Number(a)
+  const nb = Number(b)
+  if (Number.isNaN(na) || Number.isNaN(nb)) return String(a).localeCompare(String(b))
+  return nb - na
 }
 
 /** Segmented picker for the resolution Unstream asks a video provider for.
  *
- *  A different axis from the audio QualityPicker in the header — 720p is not
- *  the same choice as 192 kbps — but it works the same way: one global
- *  preference, persisted, applied to every anime job started after it
- *  changes. Mirrors the audio picker's visual language exactly.
+ *  A different axis from the audio QualityPicker — 720p is not the same choice
+ *  as 192 kbps — but it works the same way: one global preference, persisted,
+ *  applied to every anime job started after it changes.
  *
- *  With `sources` (the season's /sources capability) it renders only verified
- *  available qualities and, if the current global selection isn't among them,
- *  says so instead of silently falling back. Without `sources` (the header /
- *  settings pickers, which have no season context) it renders every quality
- *  unchanged.
+ *  Discovery is the source of truth. `discovery` is the state of an
+ *  authoritative probe:
+ *    - undefined (no season context — header/settings on the anime landing):
+ *      the only honest choice is `original`; no hard-coded list is shown.
+ *    - loading: shows "Checking…" and is disabled — the user cannot choose
+ *      before discovery finishes.
+ *    - unknown/failed: shows "couldn't determine" + retry rather than guessing.
+ *    - ready: renders ONLY the verified available resolutions (plus original),
+ *      never a hard-coded list.
  */
 export function VideoQualityPicker({
   className,
-  sources,
+  discovery,
+  mUndetermined,
+  mRetry,
+  onRetry,
 }: {
   className?: string
-  sources?: AnimeSource[] | null
+  discovery?: DiscoveryState
+  mUndetermined?: string
+  mRetry?: string
+  onRetry?: () => void
 }) {
   const { videoQuality, setVideoQuality } = useDownloads()
   const m = useMessages()
+  const undetermined = mUndetermined ?? m.anime.quality.undetermined
+  const retry = mRetry ?? m.anime.quality.retry
+  const hasDiscovery = discovery != null
 
-  const available = useMemo(() => availableQualities(sources), [sources])
-  const selectionUnavailable = sources != null && !available.includes(videoQuality)
+  const available = useMemo(() => {
+    if (!hasDiscovery) return ['original']
+    if (discovery!.kind !== 'ready') return []
+    return availableQualities(discovery!.sources)
+  }, [discovery, hasDiscovery])
+
+  const loading = hasDiscovery && discovery!.kind === 'loading'
+  const undeterminedState =
+    hasDiscovery && (discovery!.kind === 'unknown' || discovery!.kind === 'error')
+  const selectionUnavailable =
+    hasDiscovery &&
+    discovery!.kind === 'ready' &&
+    discovery!.sources != null &&
+    hasAuthoritativeSources(discovery!.sources) &&
+    !available.includes(videoQuality)
 
   return (
     <div className={clsx('flex flex-col items-start gap-1', className)}>
@@ -63,27 +101,48 @@ export function VideoQualityPicker({
           aria-label={m.anime.quality.label}
           className="flex items-center gap-0.5 rounded-ctl border border-ink-800 bg-ink-900 p-0.5"
         >
-          {available.map((option) => {
-            const active = option === videoQuality
-            return (
-              <button
-                key={option}
-                role="radio"
-                aria-checked={active}
-                title={m.anime.quality.hint}
-                onClick={() => setVideoQuality(option)}
-                className={clsx(
-                  'rounded-ctl px-2 py-1 text-micro font-medium tabular-nums transition duration-200 active:scale-95 pointer-coarse:px-2.5 pointer-coarse:py-2',
-                  active ? 'bg-ink-700 text-ink-100' : 'text-ink-400 hover:text-ink-100',
-                )}
-              >
-                {videoQualityLabel(option, m)}
-              </button>
-            )
-          })}
+          {loading ? (
+            <span className="flex items-center gap-1.5 px-2 py-1 text-micro font-medium text-ink-400">
+              <LoaderCircle className="size-3.5 animate-spin" aria-hidden />
+              {m.anime.quality.checking}
+            </span>
+          ) : undeterminedState ? (
+            <button
+              type="button"
+              onClick={onRetry}
+              className="rounded-ctl px-2 py-1 text-micro font-medium text-ink-400 transition hover:text-lime-flash"
+            >
+              {undetermined}
+              {onRetry && (
+                <>
+                  {' '}
+                  <span className="font-medium underline underline-offset-2">{retry}</span>
+                </>
+              )}
+            </button>
+          ) : (
+            available.map((option) => {
+              const active = option === videoQuality
+              return (
+                <button
+                  key={option}
+                  role="radio"
+                  aria-checked={active}
+                  title={m.anime.quality.hint}
+                  onClick={() => setVideoQuality(option)}
+                  className={clsx(
+                    'rounded-ctl px-2 py-1 text-micro font-medium tabular-nums transition duration-200 active:scale-95 pointer-coarse:px-2.5 pointer-coarse:py-2',
+                    active ? 'bg-ink-700 text-ink-100' : 'text-ink-400 hover:text-ink-100',
+                  )}
+                >
+                  {videoQualityLabel(option, m)}
+                </button>
+              )
+            })
+          )}
         </div>
       </div>
-      {selectionUnavailable && (
+      {!loading && selectionUnavailable && (
         <p role="alert" className="text-micro text-danger">
           {m.anime.quality.unavailable(videoQualityLabel(videoQuality, m))}
         </p>

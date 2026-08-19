@@ -55,6 +55,14 @@ def _nyaa_page(*rows: str) -> str:
     )
 
 
+def _nyaa_empty_page() -> str:
+    """A genuine Nyaa "No results found" response — the ONLY authoritative
+    empty signal. Real Nyaa answers an empty search with this `<h3>` marker and
+    no torrent-list table at all (verified live). A header-only torrent table is
+    NOT this; `_response_kind` treats that as a block page."""
+    return "<h3>No results found</h3>"
+
+
 def _nyaa_row(torrent_id: int, title: str, magnet: str, seeders: int) -> str:
     return (
         '<tr><td><a title="Anime - English-translated"></a></td>'
@@ -130,8 +138,11 @@ def test_nyaa_episode_unions_singles_and_batches(monkeypatch):
     assert sorted(got, key=int) == ["480", "720", "1080"]
 
 
-def test_nyaa_episode_excludes_zero_seeders(monkeypatch):
-    """0-seeder rows are unobtainable releases and never count."""
+def test_nyaa_episode_zero_seeders_still_count_as_releases(monkeypatch):
+    """A 0-seeder row is not unobtainable — it proves the resolution was
+    released (a swarm can reseed tomorrow), so it counts toward discovery.
+    Regression for the intermittent empty quality list: filtering 0-seeder rows
+    out made a seeded batch search return [] and blank the picker."""
     _stub_nyaa(monkeypatch, [
         [
             _nyaa_row(1, "[ToonsHub] One Piece - 1100 (720p)", "a", 0),
@@ -139,7 +150,7 @@ def test_nyaa_episode_excludes_zero_seeders(monkeypatch):
         ],
     ])
     got = nyaa.NyaaProvider().episode_resolutions(_episode_src(), 1100)
-    assert got == []  # nothing obtainable yet
+    assert got == ["720", "1080"]  # 0-seeder rows still prove the resolutions
 
 
 def test_nyaa_episode_resolution_parsing_is_explicit(monkeypatch):
@@ -167,7 +178,7 @@ def test_nyaa_episode_season_tag_first_query(monkeypatch):
     def fake_get(url, **kwargs):
         params = kwargs.get("params") or {}
         seen.append(params.get("q"))
-        return _FakeResp(_nyaa_page())  # empty result both times
+        return _FakeResp(_nyaa_empty_page())  # genuine "No results found" both times
 
     monkeypatch.setattr(nyaa._client, "get", fake_get)
     nyaa.NyaaProvider().episode_resolutions(_episode_src(season=3), 10)
@@ -198,8 +209,8 @@ def test_nyaa_episode_cache_does_not_collide_across_episodes(monkeypatch):
 
     def fake_get(url, **kwargs):
         calls["urls"].append(kwargs.get("params") or {})
-        # A blank page: no resolutions discovered either way.
-        return _FakeResp(_nyaa_page())
+        # A genuine empty search for both queries.
+        return _FakeResp(_nyaa_empty_page())
 
     monkeypatch.setattr(nyaa._client, "get", fake_get)
     pr = nyaa.NyaaProvider()
@@ -249,7 +260,7 @@ def test_nyaa_episode_empty_result_is_cached_briefly_then_requeried(monkeypatch)
 
     def fake_get(url, **kwargs):
         calls["n"] += 1
-        return _FakeResp(_nyaa_page())
+        return _FakeResp(_nyaa_empty_page())
 
     monkeypatch.setattr(nyaa._client, "get", fake_get)
     pr = nyaa.NyaaProvider()
@@ -290,6 +301,172 @@ def test_nyaa_episode_probe_error_never_becomes_a_verdict(monkeypatch):
     clock.now += 61  # unknown TTL (60s) expires
     got = pr.episode_resolutions(_episode_src(), 1)
     assert got == ["720"]  # fresh probe recovered
+
+
+# ── empty vs unknown: an empty discovery may ONLY mean "the provider ran a
+#    complete, authoritative search and found no release at all". A timeout,
+#    network error, block page, seed churn, or a one-query miss must NEVER
+#    become `qualities: []` — it is unknown. The three verdicts (verified /
+#    genuinely-empty / unknown) must stay distinguishable, and only the first
+#    and second may ever render an empty picker. ──────────────────────────────
+
+def test_nyaa_episode_probe_reports_verified_qualities(monkeypatch):
+    """A healthy probe returns the resolutions of every release that names the
+    episode — singles and batches alike, seeded or not. A 0-seeder row still
+    proves the resolution exists (a swarm can reseed tomorrow)."""
+    _stub_nyaa(monkeypatch, [
+        [
+            _nyaa_row(1, "[X] Show - 01 [720p]", "a", 50),
+            _nyaa_row(2, "[X] Show - 01 [1080p]", "b", 40),
+            _nyaa_row(3, "[X] Show - 01 [480p]", "c", 0),  # 0 seeders — released
+        ],
+    ])
+    got = nyaa.NyaaProvider().episode_resolutions(_episode_src(), 1)
+    assert sorted(got, key=int) == ["480", "720", "1080"]
+
+
+def test_nyaa_episode_all_0_seeders_is_verified_not_empty(monkeypatch):
+    """Every release for the episode is currently 0-seeder — that is NOT an
+    empty discovery. Seed counts churn; the resolutions exist."""
+    _stub_nyaa(monkeypatch, [
+        [
+            _nyaa_row(1, "[X] Show - 01 [1080p]", "b", 0),
+            _nyaa_row(2, "[X] Show - 01 [720p]", "a", 0),
+        ],
+    ])
+    got = nyaa.NyaaProvider().episode_resolutions(_episode_src(), 1)
+    assert got == ["1080", "720"]  # never []
+
+
+def test_nyaa_episode_genuinely_empty_search_returns_brackets(monkeypatch):
+    """Every query answering a real Nyaa 'No results found' page IS genuinely
+    empty — [] is the only authoritative-empty answer. (`_stub_nyaa` with zero
+    rows produces a header-only table, which is a block page — so feed the real
+    empty page directly.)"""
+    calls = {"n": 0}
+
+    def counting_get(*a, **k):
+        calls["n"] += 1
+        return _FakeResp(_nyaa_empty_page())
+
+    monkeypatch.setattr(nyaa._client, "get", counting_get)
+    pr = nyaa.NyaaProvider()
+    assert pr.episode_resolutions(_episode_src(), 1) == []  # the ONLY empty case
+    # And it is cached as a verdict — an immediate repeat is served without
+    # re-probing (what "authoritative empty" means; the 60s requery is covered
+    # by test_nyaa_episode_empty_result_is_cached_briefly_then_requeried).
+    assert pr.episode_resolutions(_episode_src(), 1) == []
+    assert calls["n"] == 2  # one probe (both queries); the repeat was cached
+
+
+def test_nyaa_episode_one_query_hit_one_empty_still_returns_hit(monkeypatch):
+    """A genuine-empty answer for ONE query must not erase the resolutions the
+    OTHER query proved — this is the exact mechanism the intermittent blank
+    picker exploited."""
+    pages = {
+        "One Piece S01E01": [_nyaa_row(1, "[X] Show - 01 [1080p]", "b", 60)],
+        "One Piece 1": "empty",
+    }
+
+    def fake_get(url, **kwargs):
+        q = kwargs.get("params", {}).get("q", "")
+        p = pages[q]
+        if p == "empty":
+            return _FakeResp(_nyaa_empty_page())
+        return _FakeResp(_nyaa_page(*p))
+
+    monkeypatch.setattr(nyaa._client, "get", fake_get)
+    got = nyaa.NyaaProvider().episode_resolutions(_episode_src(), 1)
+    assert got == ["1080"]  # never an empty verdict
+
+
+def test_nyaa_episode_probe_timeout_is_unknown_not_empty(monkeypatch):
+    """A network timeout raises ProviderError — the caller sees 'couldn't ask',
+    never 'nothing released'."""
+    from app.models import ProviderError
+
+    def timeout(*a, **k):
+        raise TimeoutError("nyaa timed out")
+
+    monkeypatch.setattr(nyaa._client, "get", timeout)
+    with pytest.raises(ProviderError):
+        nyaa.NyaaProvider().episode_resolutions(_episode_src(), 1)
+
+
+def test_nyaa_episode_probe_http_error_is_unknown_not_empty(monkeypatch):
+    """An HTTP 50x/network failure is a provider failure — unknown, not empty."""
+    from app.models import ProviderError
+
+    class _Err:
+        def raise_for_status(self):
+            raise Exception("500 Internal Server Error")  # noqa: TRY002
+
+    monkeypatch.setattr(nyaa._client, "get", lambda *a, **k: _Err())
+    with pytest.raises(ProviderError):
+        nyaa.NyaaProvider().episode_resolutions(_episode_src(), 1)
+
+
+def test_nyaa_episode_block_page_normalizes_to_unknown(monkeypatch):
+    """An HTTP-200 interstitial that is not a real torrent listing cannot be
+    read as 'no releases' — the probe must degrade to unknown, never []."""
+    from app.models import ProviderError
+
+    html = '<html><head><title>Just a moment...</title></head><body></body></html>'
+    monkeypatch.setattr(nyaa._client, "get", lambda *a, **k: _FakeResp(html))
+    with pytest.raises(ProviderError):
+        nyaa.NyaaProvider().episode_resolutions(_episode_src(), 1)
+
+
+def test_nyaa_episode_miss_is_unknown_not_empty(monkeypatch):
+    """A real listing whose rows name NO episode (a title collision, or the
+    episode's rows below the fold) is a miss — it must not read as empty."""
+    from app.models import ProviderError
+
+    # A listing of unrelated episodes (E02/E03) for a search that wanted E01.
+    _stub_nyaa(monkeypatch, [
+        [
+            _nyaa_row(1, "[X] Show - 02 [1080p]", "b", 90),
+            _nyaa_row(2, "[X] Show - 03 [720p]", "a", 80),
+        ],
+    ])
+    with pytest.raises(ProviderError):
+        nyaa.NyaaProvider().episode_resolutions(_episode_src(), 1)
+
+
+# ── /qualities endpoint: the three verdicts stay distinguishable ─────────────
+
+def test_qualities_endpoint_nyaa_probe_error_is_unknown_not_ok(monkeypatch):
+    """When the Nyaa probe fails, the endpoint reports status unknown + null
+    qualities — never ok + [] — so the frontend shows 'couldn't determine'."""
+    from app.models import ProviderError
+
+    class Nyaa1:
+        name = "nyaa"
+        streams_hls = False
+
+        def available(self):
+            return True
+
+    class OS:
+        name = "hianime"
+        streams_hls = True
+
+        def available(self):
+            return True
+
+    monkeypatch.setattr(providers_module, "providers", lambda: [Nyaa1(), OS()])
+    monkeypatch.setattr(
+        nyaa.NyaaProvider,
+        "episode_resolutions",
+        lambda self, src, ep: (_ for _ in ()).throw(
+            ProviderError("nyaa unreachable")
+        ),
+    )
+    resp = _get_qualities(_call_qualities(monkeypatch))
+    assert resp.status_code == 200
+    nyaa_provider = next(p for p in resp.json()["providers"] if p["name"] == "nyaa")
+    assert nyaa_provider["status"] == "unknown"
+    assert nyaa_provider["qualities"] is None  # never hides, never []
 
 
 # ── anivexa: episode-aware capability ───────────────────────────────────────

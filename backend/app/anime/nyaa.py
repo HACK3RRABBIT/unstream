@@ -315,11 +315,12 @@ class NyaaProvider:
         (One Piece "1100"). The year is left out (parentheses break Nyaa's
         search).
 
-        For an explicit quality (480/720/1080) only torrents whose title
-        clearly claims that resolution are eligible; if none exist this raises
-        QualityUnavailable rather than silently picking another resolution.
-        `original` (or an empty/unknown quality) keeps the best-seeded
-        behavior: torrents carry whatever resolution the fansub released.
+        For an explicit quality (any height a release claims — 480/720/1080
+        and beyond) only torrents whose title clearly claims that resolution
+        are eligible; if none exist this raises QualityUnavailable rather than
+        silently picking another resolution. `original` (or an empty/unknown
+        quality) keeps the best-seeded behavior: torrents carry whatever
+        resolution the fansub released.
         """
         title = src.anime_id
         queries = []
@@ -327,7 +328,7 @@ class NyaaProvider:
             queries.append(f"{title} S{src.season:02d}E{episode:02d}")
         queries.append(f"{title} {episode}")
 
-        wanted = quality if quality in ("480", "720", "1080") else ""
+        wanted = quality if (quality != "original" and quality.isdigit()) else ""
 
         singles: dict[str, dict] = {}
         batches: dict[str, dict] = {}
@@ -385,16 +386,28 @@ class NyaaProvider:
 
         Runs the same SxxExx + bare-number search as `_search_episode`, then
         unions the explicit resolution marker (`_title_resolution`) across every
-        row that names the episode — singles and batches alike — keeping only
-        rows with live seeders (a 0-seeder release can't be obtained and would
-        only mislead the UI). Returns the discovered resolutions in release
-        order; [] means no seeded release names this episode yet. Only ever
-        feeds the per-episode availability UI — the download path is unchanged.
+        row that names the episode — singles and batches alike, **seeded or
+        not**. A 0-seeder release proves the resolution exists (a row can reseed
+        tomorrow); it only proves it isn't *obtainable right now*, which is the
+        download path's concern, not discovery's. Returns the discovered
+        resolutions in release order; [] means **no release at all** names this
+        episode yet — the only authoritative-empty verdict.
 
-        Cached per (title, season, episode): a non-empty set of release
-        resolutions lives 15 minutes, an empty one 60 seconds (seeders churn),
-        and a failed search is cached as unknown briefly but still re-raised so
-        the caller can tell "couldn't ask" from "nothing released".
+        Transient states never collapse to []:
+          * a timeout, network error or HTTP-200 block page raises ProviderError
+            and is cached as *unknown* (qualities=N/A) — never an empty verdict.
+          * a query that returns rows but none naming the episode (Nyaa's
+            staggered release or a re-order) is a *miss*, not proof the episode
+            lacks resolutions — when no query names the episode it raises
+            unknown instead of returning [].
+        [] is returned only when EVERY query answers a genuine empty search
+        page ("No results found") — the provider completed its search and
+        found no release by this title at all.
+
+        Cache: a non-empty set lives 15 minutes; a genuinely-empty one is
+        re-checked after a minute (releases can appear later); a failed search
+        is cached as unknown briefly but still re-raised so the caller can tell
+        "couldn't ask" from "nothing released".
         """
         title = src.anime_id
         season = src.season
@@ -406,6 +419,8 @@ class NyaaProvider:
             queries.append(f"{title} {episode}")
 
             found: list[str] = []
+            emptied: int = 0  # queries that answered a genuine empty search
+            inconclusive: int = 0  # queries that were a block page or a miss
             for query in queries:
                 try:
                     resp = _client.get(
@@ -422,16 +437,73 @@ class NyaaProvider:
                 except Exception as exc:  # noqa: BLE001
                     raise ProviderError(f"Could not reach Nyaa: {exc}") from exc
 
+                kind = self._response_kind(resp.text)
+                if kind == "empty":
+                    # THE only authoritative-empty signal: Nyaa itself answered
+                    # "No results found". This query proves nothing was released
+                    # under this form, but says nothing about the other query.
+                    emptied += 1
+                    continue
+                if kind == "block":
+                    # An HTTP-200 interstitial/captcha is neither a listing we
+                    # can read nor an empty search — inconclusive.
+                    inconclusive += 1
+                    continue
+
                 singles, batches = self._parse_rows(resp.text, episode)
                 for torrent in [*singles, *batches]:
-                    if torrent["seeders"] <= 0:
-                        continue
+                    # Seeded or not: a 0-seeder row still proves the resolution
+                    # was released for this episode. Only the *download* path
+                    # needs live seeders; discovery asks what exists.
                     resolution = _title_resolution(torrent["title"])
                     if resolution and resolution not in found:
                         found.append(resolution)
-            return found
+                if len(singles) + len(batches) == 0:
+                    # A real listing whose rows name nothing (Nyaa's release
+                    # list is ordered by the `seeders` param, so an episode's
+                    # rows may fall below the fold and the search returns only
+                    # unrelated releases). A miss is evidence of a partial
+                    # search, never that the episode lacks resolutions.
+                    inconclusive += 1
+            if found:
+                return found
+            if emptied == len(queries):
+                return []  # every query: a real "No results found" search
+            if inconclusive:
+                # A mix that found nothing but includes a block/miss: the
+                # episode's rows may just be reordered. An empty verdict would
+                # hide a discoverable episode, so it stays unknown.
+                return _ep_resolutions_raise_unknown()
+            return _ep_resolutions_raise_unknown()
 
         return _cached_ep_resolutions(title, season, episode, probe)
+
+    @staticmethod
+    def _response_kind(html: str) -> str:
+        """Classify a Nyaa search response page: "empty", "list", or "block".
+
+        "empty"   — Nyaa answered "No results found" with no result rows. This
+                    is the ONLY authoritative "nothing was released" signal.
+        "list"    — a real torrent listing (a torrent-list table with result
+                    rows that carry a /view/ link). Rows are parsed further;
+                    nothing here implies the episode is absent.
+        "block"   — an HTTP-200 response that is neither: an interstitial,
+                    captcha or error page. Its rows — if any — are not Nyaa
+                    results, so the caller must NOT read it as an empty search.
+        """
+        if "No results found" in html:
+            return "empty"
+        # A real listing table; its rows carry /view/ or magnet links. (The
+        # class attribute carries extra classes, so match "torrent-list" as a
+        # class token, and attachments also register rows.)
+        table = re.search(r'<table[^>]*class="[^"]*\btorrent-list\b', html)
+        if table and (
+            'href="/view/' in html or
+            'magnet:' in html or
+            'class="attachments"' in html
+        ):
+            return "list"
+        return "block"
 
     @staticmethod
     def _parse_rows(html: str, episode: int) -> tuple[list[dict], list[dict]]:

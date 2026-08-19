@@ -482,7 +482,9 @@ def _stream_from(
     """
     headers = _watch_headers(watch)
     for stream in _filter_direct(watch):
-        if quality in ("480", "720", "1080") and stream["type"] == "hls":
+        if quality == "original" or not quality.isdigit():
+            pass
+        elif stream["type"] == "hls":
             heights = _master_heights(stream["url"], headers)
             if heights is None:
                 pass  # UNKNOWN: master unreadable — proceed, ffprobe enforces

@@ -288,22 +288,29 @@ export const jobZipUrl = (jobId: string) => `/api/jobs/${jobId}/zip`
 // seasons grouped into a franchise. Video resolution is a *different* quality
 // axis from audio bitrate, so it gets its own constant, type and storage key.
 
-/** Resolutions the anime section asks a video provider for, plus "original" —
- *  the provider's own untouched stream, like the audio section's `original`.
- *  360p is not offered — anime torrents are released at 480p and up, so a 360
- *  option would only ever fail to match. Independent of the audio `QUALITIES`
- *  above; a 720p episode is not the same choice as a 192 kbps mp3. */
-export const VIDEO_QUALITIES = ['480', '720', '1080', 'original'] as const
-
-export type VideoQuality = (typeof VIDEO_QUALITIES)[number]
+/** Any resolution the anime section may ask a video provider for, plus
+ *  "original" — the provider's own untouched stream, like the audio section's
+ *  `original`. Deliberately not a closed list: which resolutions exist is the
+ *  backend's discovery (per-provider /sources probes), not a frontend constant.
+ *  A future provider that reports 1440p or 2160p renders with no code change.
+ *  Independent of the audio `QUALITIES`; a 720p episode is not the same choice
+ *  as a 192 kbps mp3. */
+export type VideoQuality = 'original' | (string & {})
 
 export const DEFAULT_VIDEO_QUALITY: VideoQuality = 'original'
 
 export const videoQualityLabel = (quality: VideoQuality, m: Messages): string =>
   quality === 'original' ? m.anime.quality.original : m.app.num(quality)
 
+/** Is `value` a video quality the backend will honor: "original", or any
+ *  well-formed resolution ("480"/"720"/"1080"/"2160"…) the download validator
+ *  accepts (`is_video_resolution`). A persisted choice from a previous session
+ *  — even one no current provider reports — must survive a reload, so this
+ *  accepts arbitrary 3-4 digit strings. */
+const _HQ_RES = /^\d{3,4}$/
+
 export const isVideoQuality = (value: unknown): value is VideoQuality =>
-  VIDEO_QUALITIES.includes(value as VideoQuality)
+  value === 'original' || (typeof value === 'string' && _HQ_RES.test(value))
 
 /** One anime in a search result — the card the Anime tab renders.
  *  `season_count` is how many seasons the franchise has (series only), and

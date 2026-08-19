@@ -1596,3 +1596,233 @@ def test_nyaa_finalize_persian_failure_falls_back_to_english(monkeypatch, tmp_pa
     nyaa.NyaaProvider._finalize(video, out, ["fas"])
     assert captured["embedded"] == [("1", "eng")]  # English shipped as the fallback
     assert captured["srt_files"] == []
+
+
+# ── Arbitrary resolutions: quality is not a closed 480/720/1080 list. A
+#    provider may legitimately report any height (240/360/540/1440/2160…), and
+#    every gate — the format selector, the served-height check, the provider
+#    order, the download route's validator, the Nyaa search — must accept it
+#    without being widened by hand. ─────────────────────────────────────────────
+
+
+def test_is_video_resolution_accepts_arbitrary_heights():
+    """Any 3-4 digit height is a well-formed explicit resolution — not just the
+    historic 480/720/1080 defaults. This is the single gate every other
+    resolution check keys off."""
+    from app.anime.downloader import is_video_resolution
+
+    for height in ("240", "360", "480", "540", "720", "1080", "1440", "2160"):
+        assert is_video_resolution(height), height
+    # Rejects: empty, a suffix, a caption, a range, non-digits, too short,
+    # and >4 digits (a height is 3-4 digits; that's all the gates need).
+    for bad in ("", "480p", "720P", "1080i", "original", "480 p", "48", "1080i", "48k", "1440p"):
+        assert not is_video_resolution(bad), bad
+    # A 4-digit run is treated as well-formed by the parser even if no real
+    # release claims that height — the provider decides what actually exists.
+    assert is_video_resolution("4800")
+
+
+def test_format_selector_accepts_arbitrary_resolutions():
+    """The strict selector (exact height, no `/best` fallback) is emitted for
+    any explicit resolution, whatever its value."""
+    from app.anime.downloader import _format_selector
+
+    assert _format_selector("240") == "bestvideo[height=240]+bestaudio/best[height=240]"
+    assert _format_selector("540") == "bestvideo[height=540]+bestaudio/best[height=540]"
+    assert _format_selector("1440") == "bestvideo[height=1440]+bestaudio/best[height=1440]"
+    assert _format_selector("2160") == "bestvideo[height=2160]+bestaudio/best[height=2160]"
+    for quality in ("240", "540", "1440", "2160"):
+        assert not _format_selector(quality).endswith("/best")
+
+
+def test_check_served_quality_enforces_arbitrary_heights():
+    """A requested resolution outside the old 480/720/1080 list is still
+    verified against what was actually served — 2160 in, 1080 out fails."""
+    from app.anime import downloader as anime_downloader
+    from app.anime.providers import QualityUnavailable
+
+    anime_downloader._check_served_quality("2160", 2160)  # match: fine
+    anime_downloader._check_served_quality("540", 540)
+    anime_downloader._check_served_quality("original", 2160)  # original: never checked
+    with pytest.raises(QualityUnavailable):
+        anime_downloader._check_served_quality("2160", 1080)  # mismatched
+    with pytest.raises(QualityUnavailable):
+        anime_downloader._check_served_quality("1440", None)  # unverifiable
+
+
+def test_pick_resolution_accepts_arbitrary_heights():
+    """`_pick_resolution` passes through any well-formed height; garbage still
+    defaults to original."""
+    from app.anime import downloader as anime_downloader
+
+    assert anime_downloader._pick_resolution("2160") == "2160"
+    assert anime_downloader._pick_resolution("360") == "360"
+    assert anime_downloader._pick_resolution("garbage") == anime_downloader.DEFAULT_VIDEO_QUALITY
+
+
+def test_order_for_knows_every_resolution_tier(monkeypatch):
+    """The low-resolution order (streaming first) applies to any height ≤720 —
+    including the unusual 540 — and the archive-first order to anything above,
+    including 1440/2160. No hard-coded resolution list governs the tier."""
+    from app.anime import providers
+
+    # The default order (no ANIME_PROVIDER_ORDER): low vs high tiers.
+    monkeypatch.delenv("ANIME_PROVIDER_ORDER", raising=False)
+    assert providers.order_for("540") == list(providers._ORDER_LOW)
+    assert providers.order_for("480") == list(providers._ORDER_LOW)
+    assert providers.order_for("720") == list(providers._ORDER_LOW)
+    assert providers.order_for("1080") == list(providers._ORDER_HIGH)
+    assert providers.order_for("1440") == list(providers._ORDER_HIGH)
+    assert providers.order_for("2160") == list(providers._ORDER_HIGH)
+    assert providers.order_for("original") == list(providers._ORDER_HIGH)
+
+
+def test_nyaa_requests_2160_picks_2160p(monkeypatch):
+    """A resolution outside the old list is honored by the Nyaa search: only
+    releases that claim 2160p are eligible."""
+    html = _nyaa_page(
+        _nyaa_row(1, "[X] Show - 01 [1080p]", "ep1080", 80),
+        _nyaa_row(2, "[X] Show - 01 [2160p]", "ep2160", 60),
+    )
+    torrent = _search_page(monkeypatch, html, episode=1, quality="2160")
+    assert torrent["torrent_id"] == "2"
+    assert _nyaa_torrent_magnet(torrent) == "ep2160"
+
+
+def test_nyaa_requests_540_with_only_1080_raises_quality_unavailable(monkeypatch):
+    """Requesting a non-standard resolution with no matching release fails
+    cleanly — never silently downgrading to the 1080p that does exist."""
+    html = _nyaa_page(_nyaa_row(1, "[X] Show - 01 [1080p]", "ep1080", 80))
+    with pytest.raises(Exception, match="No 540p release"):
+        _search_page(monkeypatch, html, episode=1, quality="540")
+
+
+def test_nyaa_episode_resolutions_reports_arbitrary_heights(monkeypatch):
+    """The per-episode availability probe surfaces any resolution the releases
+    name — a 1440p-only release reports ["1440"], not nothing."""
+    from app.anime import nyaa
+
+    html = _nyaa_page(
+        _nyaa_row(1, "[X] Show - 01 [1440p]", "ep1440", 50),
+        _nyaa_row(2, "[X] Show - 01 [720p]", "ep720", 40),
+    )
+    monkeypatch.setattr(nyaa._client, "get", lambda *a, **k: _NyaaResp(html))
+    resolutions = nyaa.NyaaProvider().episode_resolutions(_nyaa_source(), 1)
+    assert resolutions == ["1440", "720"]
+
+
+def _nyaa_torrent_magnet(torrent: dict) -> str:
+    return torrent["magnet"].rsplit(":", 1)[-1]
+
+
+def test_anime_download_route_accepts_arbitrary_resolution(monkeypatch):
+    """The download route accepts any well-formed resolution — 2160 — and
+    rejects garbage with a clean 400, preserving strict explicit enforcement."""
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.anime import anilist
+    from app.anime import providers as providers_module
+    from app.anime.providers import EpisodeSource, EpisodeStream
+
+    class FakeProvider:
+        name = "anivexa"
+        streams_hls = True
+
+        def available(self):
+            return True
+
+        def resolve(self, title, year, anilist_id=None):
+            return EpisodeSource(provider="anivexa", anime_id="x", anime_title=title,
+                                 year=year, season=0, episode=0, anilist_id=anilist_id)
+
+        def episode_count(self, src):
+            return 12
+
+        def episode_stream(self, src, quality):
+            return EpisodeStream(provider="anivexa", url="https://cdn.example/p.m3u8")
+
+    monkeypatch.setattr(providers_module, "providers", lambda: [FakeProvider()])
+    monkeypatch.setattr(
+        anilist, "franchise",
+        lambda media_id: [anilist.AniMedia(
+            id=media_id, title_romaji="SHOW", title_english="Show",
+            format="TV", episodes=12, season_year=2020, status="FINISHED",
+            cover_url="https://example.com/c.jpg",
+        )],
+    )
+    from app import jobs as jobs_module
+    from types import SimpleNamespace
+
+    captured = {}
+    monkeypatch.setattr(
+        jobs_module, "start",
+        lambda name, tracks, quality, embed_lyrics, owner, visitor: (
+            captured.__setitem__("quality", quality)
+            or SimpleNamespace(id="job2160")
+        ),
+    )
+
+    client = TestClient(app)
+    resp = client.post(
+        "/api/anime/download",
+        json={"media_id": 1234, "season": 1, "quality": "2160",
+              "episode_ids": ["1234:s1e1"]},
+    )
+    assert resp.status_code == 200
+    assert captured["quality"] == "2160"
+
+    # Garbage is refused, not passed through to the pipeline.
+    resp_bad = client.post(
+        "/api/anime/download",
+        json={"media_id": 1234, "season": 1, "quality": "4k ultra",
+              "episode_ids": ["1234:s1e1"]},
+    )
+    assert resp_bad.status_code == 400
+    assert "Quality" in resp_bad.json()["detail"]
+
+
+def test_anime_sources_reports_verified_heights_outside_standard_list(monkeypatch):
+    """/sources surfaces a genuinely unlisted resolution (2160) from a probing
+    provider, and null (never "absent") from a non-probing one — the shape the
+    frontend's dynamic picker renders from."""
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.anime import anilist
+    from app.anime import providers as providers_module
+    from types import SimpleNamespace
+
+    class AnivexaProbe:
+        name = "anivexa"
+        streams_hls = True
+
+        def available(self):
+            return True
+
+        def capabilities(self, src):
+            return SimpleNamespace(status="ok", qualities=["2160", "1080"], note=None)
+
+    class NyaaNoProbe:
+        name = "nyaa"
+        streams_hls = False
+
+        def available(self):
+            return True
+
+    monkeypatch.setattr(providers_module, "providers", lambda order=None: [AnivexaProbe(), NyaaNoProbe()])
+    monkeypatch.setattr(
+        anilist, "franchise",
+        lambda media_id: [anilist.AniMedia(
+            id=media_id, title_romaji="SHOW", title_english="Show",
+            format="TV", episodes=12, season_year=2020, status="FINISHED",
+            cover_url="https://example.com/c.jpg",
+        )],
+    )
+
+    client = TestClient(app)
+    resp = client.get("/api/anime/1234/season/1/sources")
+    assert resp.status_code == 200
+    providers_json = resp.json()["providers"]
+    by_name = {p["name"]: p for p in providers_json}
+    assert by_name["anivexa"]["qualities"] == ["2160", "1080"]  # verified, arbitrary
+    assert by_name["nyaa"]["qualities"] is None  # per-episode, never "absent"
+    assert by_name["nyaa"]["status"] == "ok"

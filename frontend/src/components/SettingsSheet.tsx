@@ -7,6 +7,7 @@ import { SubtitlePicker } from './SubtitlePicker'
 import { LanguagePicker } from './LanguagePicker'
 import { Sheet } from './Sheet'
 import type { AppTab } from './TabSwitch'
+import type { DiscoveryState } from '../lib/animeDiscovery'
 
 /** The header's preferences, on the layouts too narrow to hold them.
  *
@@ -15,7 +16,19 @@ import type { AppTab } from './TabSwitch'
  *  shows follows the active tab: music gets lyrics + audio quality, anime
  *  gets video quality + subtitles. `w-full justify-between` is all they need
  *  to become rows. */
-export function SettingsSheet({ tab, onClose }: { tab: AppTab; onClose: () => void }) {
+export function SettingsSheet({
+  tab,
+  onClose,
+  videoDiscovery,
+  onRetryDiscovery,
+}: {
+  tab: AppTab
+  onClose: () => void
+  /** Same discovery the header picker shows — the sheet is its mobile mirror,
+   *  so an in-flight or failed probe renders identically in both. */
+  videoDiscovery?: DiscoveryState
+  onRetryDiscovery?: () => void
+}) {
   const m = useMessages()
 
   return (
@@ -48,7 +61,11 @@ export function SettingsSheet({ tab, onClose }: { tab: AppTab; onClose: () => vo
           ) : (
             <>
               <div className="py-4">
-                <VideoQualityPicker className="w-full flex-wrap justify-between gap-y-3" />
+                <VideoQualityPicker
+                  className="w-full flex-wrap justify-between gap-y-3"
+                  discovery={videoDiscovery}
+                  onRetry={onRetryDiscovery}
+                />
               </div>
               <div className="py-4">
                 <SubtitlePicker className="w-full flex-wrap justify-between gap-y-3" />

@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field, field_validator
 from .. import analytics, jobs, limits
 from ..models import ProviderError, Track
 from . import anilist, translate
-from .downloader import DEFAULT_VIDEO_QUALITY, VIDEO_QUALITIES
+from .downloader import DEFAULT_VIDEO_QUALITY, is_video_resolution
 from .providers import EpisodeSource, order_for, ordered_providers
 
 router = APIRouter(prefix="/api/anime", tags=["anime"])
@@ -232,10 +232,10 @@ def anime_detail(media_id: int, request: Request) -> dict:
 
 @router.post("/download")
 def anime_download(body: AnimeDownloadRequest, request: Request) -> dict:
-    if body.quality not in VIDEO_QUALITIES:
+    if body.quality != "original" and not is_video_resolution(body.quality):
         raise HTTPException(
             status_code=400,
-            detail=f"Quality must be one of: {', '.join(VIDEO_QUALITIES)}",
+            detail="Quality must be 'original' or a resolution like '480', '1080'.",
         )
     client = limits.enforce("download", request)
     if limits.MAX_ACTIVE_JOBS > 0 and jobs.active_count(client) >= limits.MAX_ACTIVE_JOBS:

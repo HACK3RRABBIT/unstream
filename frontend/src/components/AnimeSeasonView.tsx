@@ -18,7 +18,7 @@ import { faNumerals, useMessages, useStartAlign } from '../lib/i18n'
 import { useDownloads } from '../lib/downloads'
 import { useToast } from '../lib/toast'
 import { SubtitlePicker } from './SubtitlePicker'
-import { availableQualities } from './VideoQualityPicker'
+import { availableQualities, hasAuthoritativeSources } from './VideoQualityPicker'
 import { videoQualityLabel } from '../lib/api'
 
 interface Props {
@@ -148,10 +148,15 @@ export function AnimeSeasonView({ anime, season }: Props) {
 
   /** Per-episode verified concrete qualities (no "original", which every
    *  episode's own best stream always covers) for the query at index `i`, or
-   *  null when that episode isn't authoritatively determined. */
+   *  null when that episode isn't authoritatively determined.
+   *
+   *  A successful query whose providers are all `null`/unknown reports nothing
+   *  (e.g. a hianime-only season) — that is "don't know", not "verified none",
+   *  so it returns null (never a verdict, never blocks). */
   const determinedAt = (i: number): VideoQuality[] | null => {
     const q = episodeQualities[i]
     if (!q.data) return null // disabled, loading, or failed — never a verdict
+    if (!hasAuthoritativeSources(q.data.providers)) return null // all unknown
     return availableQualities(q.data.providers).filter((q) => q !== 'original')
   }
 
@@ -167,7 +172,7 @@ export function AnimeSeasonView({ anime, season }: Props) {
   function guardQualityFor(targetIds: string[]) {
     if (targetIds.length === 0) return
     const chosen = downloads.videoQuality
-    if (sources && !availability.includes(chosen)) {
+    if (sources && hasAuthoritativeSources(sources) && !availability.includes(chosen)) {
       throw new Error(m.anime.quality.unavailable(videoQualityLabel(chosen, m)))
     }
     if (chosen === 'original') return

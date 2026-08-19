@@ -37,11 +37,23 @@ from ..ytdlp import base_opts
 from .providers import EpisodeSource, EpisodeStream, QualityUnavailable
 
 # "original" keeps the provider's own stream untouched (like the audio
-# section's original) instead of asking for a specific resolution. 360p is
-# not offered — anime torrents are released at 480p and up, so a 360 option
-# would only ever fail to match.
-VIDEO_QUALITIES = ("480", "720", "1080", "original")
+# section's original) instead of asking for a specific resolution.
+# Resolution discovery is dynamic: a provider may legitimately report any
+# height (240/360/480/540/720/1080/1440/2160...), so these three names are
+# historic defaults rather than a closed gate. `original` is the only
+# non-numeric choice.
 DEFAULT_VIDEO_QUALITY = "original"
+
+# A resolution string is exactly "<digits>" — anything else (empty, garbage,
+# "480p") is not a request the downloader can honor. Single source of truth so
+# every gate (route validation, provider stream selection, post-download
+# verification) agrees on what an explicit resolution is.
+_RES_HEIGHT_RE = re.compile(r"^\d{3,4}$")
+
+
+def is_video_resolution(value: str) -> bool:
+    """Is `value` a well-formed explicit resolution ("480"/"540"/"1080"...)?"""
+    return bool(_RES_HEIGHT_RE.match(value))
 
 
 def parse_source_url(url: str) -> EpisodeSource:
@@ -79,7 +91,7 @@ def parse_source_url(url: str) -> EpisodeSource:
 
 def _pick_resolution(requested: str) -> str:
     """Validate a requested resolution, defaulting unknown values to original."""
-    if requested in VIDEO_QUALITIES:
+    if requested == "original" or is_video_resolution(requested):
         return requested
     return DEFAULT_VIDEO_QUALITY
 
@@ -98,9 +110,9 @@ def _format_selector(quality: str) -> str:
     """The yt-dlp format string for a requested resolution.
 
     `original` takes the upload's best available stream. An explicit
-    resolution (480/720/1080) is strict: it asks for exactly that height and
-    has NO trailing unrestricted `/best` fallback, so a missing variant fails
-    the download instead of silently upgrading to 720p/1080p.
+    resolution (any integer height a provider reports) is strict: it asks for
+    exactly that height and has NO trailing unrestricted `/best` fallback, so
+    a missing variant fails the download instead of silently upgrading.
     """
     if quality == "original":
         return "bestvideo+bestaudio/best"
@@ -286,12 +298,13 @@ def _check_served_quality(requested: str, served: int | None) -> None:
     A torrent's title can lie: one labeled [480p] may hold a 720p file. The
     bytes on disk are the truth, so once the file exists we verify the probed
     height against the request. `original` accepts whatever the source
-    released and is never checked. For an explicit request (480/720/1080) a
-    served height that differs — or that couldn't be probed at all — raises
-    QualityUnavailable, so the provider chain moves on to the next source at
-    the SAME requested resolution instead of shipping the wrong file.
+    released and is never checked. For an explicit request (any height a
+    provider reports — 480/720/1080 and beyond) a served height that differs —
+    or that couldn't be probed at all — raises QualityUnavailable, so the
+    provider chain moves on to the next source at the SAME requested resolution
+    instead of shipping the wrong file.
     """
-    if requested not in ("480", "720", "1080"):
+    if requested == "original" or not is_video_resolution(requested):
         return
     if served is None:
         raise QualityUnavailable(

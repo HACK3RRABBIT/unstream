@@ -42,9 +42,9 @@ _ORDER_HIGH = ("nyaa", "anivexa", "hianime")
 def order_for(quality: str) -> list[str]:
     """The provider order for one requested resolution.
 
-    An explicit ANIME_PROVIDER_ORDER always wins verbatim. Otherwise 480/720
-    try the streaming sidecar first (those resolutions are where it holds
-    library and where torrents are scarce), and 1080/original try the torrent
+    An explicit ANIME_PROVIDER_ORDER always wins verbatim. Otherwise low
+    resolutions (≤720, where the streaming sidecar holds library and torrents
+    are scarce) try the sidecar first, and 1080-up/original try the torrent
     archive first (the complete permanent source). Nyaa and hianime keep their
     existing behavior in both lists — only their position relative to anivexa
     changes.
@@ -52,7 +52,8 @@ def order_for(quality: str) -> list[str]:
     override = os.getenv("ANIME_PROVIDER_ORDER")
     if override:
         return [n.strip() for n in override.split(",") if n.strip()]
-    order = _ORDER_LOW if quality in ("480", "720") else _ORDER_HIGH
+    low = quality not in ("original",) and quality.isdigit() and int(quality) <= 720
+    order = _ORDER_LOW if low else _ORDER_HIGH
     return list(order)
 
 
