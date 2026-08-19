@@ -147,6 +147,9 @@ const en = {
       original: 'Original',
       hint: 'The resolution every anime download starts at.',
       unavailable: (quality: string) => `${quality} isn't available for this anime.`,
+      checking: 'Checking available qualities…',
+      undetermined: "This episode's available qualities couldn't be determined.",
+      retry: 'Retry',
     },
     /** Real provider-chain search progress while a download resolves sources.
      *  Driven by the backend's provider execution, never a timer. */

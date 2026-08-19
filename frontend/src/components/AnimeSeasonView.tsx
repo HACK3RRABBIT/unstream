@@ -1,15 +1,18 @@
 import { useMemo, useState } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQueries, useQuery } from '@tanstack/react-query'
 import { Archive, Check, Clapperboard, Download, LoaderCircle, X } from 'lucide-react'
 import clsx from 'clsx'
 import {
   apiError,
+  getAnimeEpisodeQualities,
   getAnimeSources,
   jobZipUrl,
   trackFileUrl,
   type AnimeDetail,
   type AnimeSeason,
+  type AnimeSource,
   type JobTrack,
+  type VideoQuality,
 } from '../lib/api'
 import { faNumerals, useMessages, useStartAlign } from '../lib/i18n'
 import { useDownloads } from '../lib/downloads'
@@ -49,6 +52,20 @@ export function AnimeSeasonView({ anime, season }: Props) {
     staleTime: 5 * 60 * 1000,
   })
 
+  // The aired count, not the planned total — an airing season lists only what
+  // exists (12 planned, 6 aired → six rows, not twelve).
+  const episodeCount = season.available_episodes > 0 ? season.available_episodes : season.episodes
+  // The episode list is derived before the queries; a season arranges episodes
+  // by number (SxxE01, SxxE02, ...).
+  const episodeIds = useMemo(
+    () =>
+      Array.from({ length: episodeCount }, (_, i) => ({
+        id: `${anime.id}:s${season.season}e${i + 1}`,
+        number: i + 1,
+      })),
+    [anime.id, season.season, episodeCount],
+  )
+
   const [selected, setSelected] = useState<Set<string>>(new Set())
 
   const toggleSelect = (id: string) =>
@@ -61,36 +78,9 @@ export function AnimeSeasonView({ anime, season }: Props) {
   const selectAll = () => setSelected(new Set(episodeIds.map((e) => e.id)))
   const clearSelection = () => setSelected(new Set())
 
-  // The aired count, not the planned total — an airing season lists only what
-  // exists (12 planned, 6 aired → six rows, not twelve).
-  const episodeCount = season.available_episodes > 0 ? season.available_episodes : season.episodes
-  const episodeIds = useMemo(
-    () =>
-      Array.from({ length: episodeCount }, (_, i) => ({
-        id: `${anime.id}:s${season.season}e${i + 1}`,
-        number: i + 1,
-      })),
-    [anime.id, season.season, episodeCount],
-  )
-
-  // The capability probe already knows which resolutions this season can
-  // actually serve. Refuse a download that is provably impossible (every
-  // probed source lacks the requested quality) instead of letting the job
-  // fail in the backend — a null-unknown source (Nyaa/hianime) never hides
-  // a possibility, so this only blocks requests no source can serve.
-  const sources = sourcesQuery.data?.providers ?? null
-  const availability = useMemo(() => availableQualities(sources), [sources])
-  const guardQuality = () => {
-    if (!sources) return
-    const chosen = downloads.videoQuality
-    if (!availability.includes(chosen)) {
-      throw new Error(m.anime.quality.unavailable(videoQualityLabel(chosen, m)))
-    }
-  }
-
   const start = useMutation({
     mutationFn: () => {
-      guardQuality()
+      guardQualityFor(episodeIds.map((e) => e.id))
       return downloads.startAnime(
         { id: anime.id, title: anime.title, coverUrl: anime.cover_url },
         season,
@@ -102,7 +92,7 @@ export function AnimeSeasonView({ anime, season }: Props) {
 
   const startSelected = useMutation({
     mutationFn: (ids: string[]) => {
-      guardQuality()
+      guardQualityFor(ids)
       return downloads.startAnime(
         { id: anime.id, title: anime.title, coverUrl: anime.cover_url },
         season,
@@ -118,7 +108,7 @@ export function AnimeSeasonView({ anime, season }: Props) {
 
   const startEpisode = useMutation({
     mutationFn: (id: string) => {
-      guardQuality()
+      guardQualityFor([id])
       return downloads.startAnime(
         { id: anime.id, title: anime.title, coverUrl: anime.cover_url },
         season,
@@ -128,6 +118,68 @@ export function AnimeSeasonView({ anime, season }: Props) {
     onSuccess: () => push(m.anime.queuedOne()),
     onError: (err) => push(apiError(err, m), 'error'),
   })
+
+  // The episode currently queuing a solo download — its row also probes quality
+  // so the guard can block an impossible solo request using that episode's data.
+  const activeSolo = startEpisode.isPending ? startEpisode.variables : null
+
+  // Per-episode verified qualities, fetched lazily — ONLY for what the user
+  // focuses: everything selected (the multi-select gate) plus the episode
+  // currently queuing a solo download. Never a whole-season fan-out. Each
+  // episode's providers reuse the exact /sources shape, so the existing
+  // `availableQualities` union (null never widens, all when no authority)
+  // computes its real options.
+  const episodeQualities = useQueries({
+    queries: episodeIds.map((ep) => ({
+      queryKey: ['anime-episode-qualities', anime.id, season.season, ep.number],
+      queryFn: () => getAnimeEpisodeQualities(anime.id, season.season, ep.number),
+      staleTime: 2 * 60 * 1000,
+      enabled: selected.has(ep.id) || activeSolo === ep.id,
+    })),
+  })
+
+  // The capability probe already knows which resolutions this season can
+  // actually serve. Refuse a download that is provably impossible (every
+  // probed source lacks the requested quality) instead of letting the job
+  // fail in the backend — a null-unknown source (Nyaa/hianime) never hides
+  // a possibility.
+  const sources = sourcesQuery.data?.providers ?? null
+  const availability = useMemo(() => availableQualities(sources), [sources])
+
+  /** Per-episode verified concrete qualities (no "original", which every
+   *  episode's own best stream always covers) for the query at index `i`, or
+   *  null when that episode isn't authoritatively determined. */
+  const determinedAt = (i: number): VideoQuality[] | null => {
+    const q = episodeQualities[i]
+    if (!q.data) return null // disabled, loading, or failed — never a verdict
+    return availableQualities(q.data.providers).filter((q) => q !== 'original')
+  }
+
+  /** Guard one download targeting `targetIds`: the season-level /sources gate
+   *  always applies (it never blocks on unknown), and when EVERY target episode
+   *  is authoritatively determined the requested quality must be in their
+   *  INTERSECTION. Any undetermined/loading/failed episode — or "original" —
+   *  is never blocked.
+
+   *  A hoisted function declaration so the mutations above can call it without
+   *  a use-before-definition warning; its body only reads the consts it closes
+   *  over, which are initialized by the time a mutation actually runs. */
+  function guardQualityFor(targetIds: string[]) {
+    if (targetIds.length === 0) return
+    const chosen = downloads.videoQuality
+    if (sources && !availability.includes(chosen)) {
+      throw new Error(m.anime.quality.unavailable(videoQualityLabel(chosen, m)))
+    }
+    if (chosen === 'original') return
+    const sets = targetIds.map((id) => determinedAt(episodeIds.findIndex((e) => e.id === id)))
+    if (sets.every((s) => s !== null)) {
+      const first = sets[0]!
+      const intersection = first.filter((q) => sets.every((s) => s!.includes(q)))
+      if (!intersection.includes(chosen)) {
+        throw new Error(m.anime.quality.unavailable(videoQualityLabel(chosen, m)))
+      }
+    }
+  }
 
   // Latest job state per episode id, for per-row progress / save links.
   const jobTracks = useMemo(() => {
@@ -292,6 +344,9 @@ export function AnimeSeasonView({ anime, season }: Props) {
             status === 'tagging' ||
             status === 'retrying'
           const queuing = startEpisode.isPending && startEpisode.variables === ep.id
+          // This episode's per-episode quality probe is active (selected, or
+          // queuing a solo download) — show its availability line.
+          const probing = selected.has(ep.id) || activeSolo === ep.id
           return (
             <li
               key={ep.id}
@@ -330,6 +385,15 @@ export function AnimeSeasonView({ anime, season }: Props) {
                   >
                     {m.anime.episodeLabel(ep.number)}
                   </p>
+                  {probing && (
+                    <EpisodeAvailability
+                      query={episodeQualities[index]}
+                      mChecking={m.anime.quality.checking}
+                      mUndetermined={m.anime.quality.undetermined}
+                      mRetry={m.anime.quality.retry}
+                      qLabel={(q) => videoQualityLabel(q, m)}
+                    />
+                  )}
                 </div>
 
                 <div className="flex shrink-0 items-center gap-3">
@@ -426,5 +490,64 @@ export function AnimeSeasonView({ anime, season }: Props) {
         </p>
       )}
     </section>
+  )
+}
+
+/** One episode's per-probing availability state: "Checking…" while the query
+ *  runs, then the verified concrete qualities as chips, or "Couldn't
+ *  determine" + a retry. Never a fake list — a null/unknown query shows only
+ *  the undetermined line. `original` is always possible (every source serves
+ *  its own best) so it's never listed here. */
+function EpisodeAvailability({
+  query,
+  mChecking,
+  mUndetermined,
+  mRetry,
+  qLabel,
+}: {
+  query: {
+    data?: { providers: AnimeSource[] } | undefined
+    isError: boolean
+    isPending: boolean
+    refetch: () => void
+  }
+  mChecking: string
+  mUndetermined: string
+  mRetry: string
+  qLabel: (quality: VideoQuality) => string
+}) {
+  if (query.isPending) {
+    return (
+      <span className="mt-0.5 flex animate-breathe items-center gap-1.5 text-micro text-ink-400">
+        <LoaderCircle className="size-3 animate-spin" />
+        {mChecking}
+      </span>
+    )
+  }
+  if (query.isError || !query.data?.providers) {
+    return (
+      <button
+        type="button"
+        onClick={() => query.refetch()}
+        className="mt-0.5 flex items-center gap-1.5 text-micro text-ink-400 transition hover:text-lime-flash"
+      >
+        <span>{mUndetermined}</span>
+        <span className="font-medium underline-offset-2 underline">{mRetry}</span>
+      </button>
+    )
+  }
+  const chips = availableQualities(query.data.providers).filter((q) => q !== 'original')
+  if (chips.length === 0) return null // authoritatively none served — no chips
+  return (
+    <span className="mt-0.5 flex flex-wrap items-center gap-1 text-micro text-ink-400">
+      {chips.map((q) => (
+        <span
+          key={q}
+          className="rounded-ctl border border-ink-700 bg-ink-800 px-1.5 py-0.5 font-medium tabular-nums text-ink-300"
+        >
+          {qLabel(q)}
+        </span>
+      ))}
+    </span>
   )
 }

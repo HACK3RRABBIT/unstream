@@ -19,7 +19,9 @@ flow — the trade for completeness and permanence.
 import re
 import shutil
 import subprocess
+import threading
 import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Callable
 from urllib.parse import quote
@@ -56,6 +58,113 @@ _PUBLIC_TRACKERS = [
     "udp://open.stealth.si:80/announce",
     "udp://exodus.desync.com:6969/announce",
 ]
+
+# ── Per-episode availability cache ────────────────────────────────────────────
+#
+# key = (anime key, season, episode). The resolution set for a released episode
+# is stable within a day (Nyaa releases settle within hours), so a non-empty
+# verified set lives 15 minutes; an empty set ("nothing seeded right now") is
+# re-checked after a minute because seed counts churn and a 0-seeder row can
+# turn into 50 seeders before the TTL expires. A probe error is cached as
+# "unknown" briefly so a flapping search doesn't hammer itself, but is NEVER
+# cached as a verdict. Mirrors the anivexa per-episode cache's shape (LRU,
+# single-flight Lock per key, TTL by status, monotonic clock).
+_EP_RESOLUTIONS_TTL = 15 * 60
+_EP_RESOLUTIONS_EMPTY_TTL = 60
+_EP_RESOLUTIONS_UNKNOWN_TTL = 60
+_EP_RESOLUTIONS_CACHE_MAX = 500
+
+
+class _EpResolutionsEntry:
+    __slots__ = ("resolutions", "stored_at")
+
+    def __init__(self, resolutions: list[str] | None, stored_at: float):
+        # None = unknown (a probe error) — never treated as a verdict.
+        self.resolutions = resolutions
+        self.stored_at = stored_at
+
+
+_ep_resolutions_cache: OrderedDict[tuple[str, int, int], _EpResolutionsEntry] = OrderedDict()
+_ep_resolutions_locks: dict[tuple[str, int, int], threading.Lock] = {}
+_ep_resolutions_guard = threading.Lock()
+
+
+def _ep_resolutions_ttl_for(resolutions: list[str] | None) -> float:
+    if resolutions is None:
+        return _EP_RESOLUTIONS_UNKNOWN_TTL  # a probe error — kept briefly
+    return _EP_RESOLUTIONS_TTL if resolutions else _EP_RESOLUTIONS_EMPTY_TTL
+
+
+class _NyaaResolutionsError(ProviderError):
+    """A cached probe failure, re-raised so "couldn't ask" never looks like
+    "nothing released". The route maps it to an unknown provider status."""
+
+
+def _ep_resolutions_raise_unknown() -> list[str]:
+    raise _NyaaResolutionsError(
+        "Could not determine Nyaa resolutions for this episode"
+    )
+
+
+def _cached_ep_resolutions(
+    title: str, season: int, episode: int, probe
+) -> list[str]:
+    """Cached, single-flight wrapper for the Nyaa per-episode resolution probe.
+
+    A probe that fails is cached as *unknown* briefly (60s) so a flapping
+    search doesn't hammer itself, but a cached unknown is re-raised — never
+    returned as an empty verdict — so the caller (and the route) keeps seeing
+    "couldn't tell", never "nothing released". The season is part of the key so
+    S01E01 and S03E01 never collide for the same title.
+    """
+    key = (title, season, episode)
+
+    def _read() -> _EpResolutionsEntry | None:
+        with _ep_resolutions_guard:
+            return _ep_resolutions_cache.get(key)
+
+    entry = _read()
+    if entry and time.monotonic() - entry.stored_at < _ep_resolutions_ttl_for(
+        entry.resolutions
+    ):
+        if entry.resolutions is None:
+            return _ep_resolutions_raise_unknown()
+        return entry.resolutions
+    with _ep_resolutions_guard:
+        lock = _ep_resolutions_locks.setdefault(key, threading.Lock())
+        owner = lock.acquire(blocking=False)
+    if not owner:
+        # Another thread is probing this episode; wait for it, then read the
+        # cached result rather than issuing a duplicate Nyaa search.
+        lock.acquire()
+        entry = _read()
+        lock.release()
+        if entry:
+            if entry.resolutions is None:
+                return _ep_resolutions_raise_unknown()
+            return entry.resolutions
+        return _ep_resolutions_raise_unknown()  # probe is still failing
+    try:
+        resolutions = probe()
+    except Exception:
+        # A broken search is never a verdict: cache it as unknown (never as an
+        # authoritative empty list) and re-raise for the caller.
+        with _ep_resolutions_guard:
+            _ep_resolutions_cache[key] = _EpResolutionsEntry(None, time.monotonic())
+            _ep_resolutions_cache.move_to_end(key)
+            while len(_ep_resolutions_cache) > _EP_RESOLUTIONS_CACHE_MAX:
+                _ep_resolutions_cache.popitem(last=False)
+            lock.release()
+            _ep_resolutions_locks.pop(key, None)
+        raise
+    with _ep_resolutions_guard:
+        _ep_resolutions_cache[key] = _EpResolutionsEntry(resolutions, time.monotonic())
+        _ep_resolutions_cache.move_to_end(key)
+        while len(_ep_resolutions_cache) > _EP_RESOLUTIONS_CACHE_MAX:
+            _ep_resolutions_cache.popitem(last=False)
+        lock.release()
+        _ep_resolutions_locks.pop(key, None)
+    return resolutions
 
 
 def _magnet(btih: str, name: str) -> str:
@@ -270,6 +379,59 @@ class NyaaProvider:
                 f"No seeded torrent containing '{title}' episode {episode} found on Nyaa."
             )
         return best
+
+    def episode_resolutions(self, src: EpisodeSource, episode: int) -> list[str]:
+        """The resolutions actually released for one episode on Nyaa.
+
+        Runs the same SxxExx + bare-number search as `_search_episode`, then
+        unions the explicit resolution marker (`_title_resolution`) across every
+        row that names the episode — singles and batches alike — keeping only
+        rows with live seeders (a 0-seeder release can't be obtained and would
+        only mislead the UI). Returns the discovered resolutions in release
+        order; [] means no seeded release names this episode yet. Only ever
+        feeds the per-episode availability UI — the download path is unchanged.
+
+        Cached per (title, season, episode): a non-empty set of release
+        resolutions lives 15 minutes, an empty one 60 seconds (seeders churn),
+        and a failed search is cached as unknown briefly but still re-raised so
+        the caller can tell "couldn't ask" from "nothing released".
+        """
+        title = src.anime_id
+        season = src.season
+
+        def probe() -> list[str]:
+            queries = []
+            if season > 0:
+                queries.append(f"{title} S{season:02d}E{episode:02d}")
+            queries.append(f"{title} {episode}")
+
+            found: list[str] = []
+            for query in queries:
+                try:
+                    resp = _client.get(
+                        f"{BASE_URL}/",
+                        params={
+                            "f": 0,
+                            "c": _CATEGORY_ENGLISH,
+                            "q": query,
+                            "s": "seeders",
+                            "o": "desc",
+                        },
+                    )
+                    resp.raise_for_status()
+                except Exception as exc:  # noqa: BLE001
+                    raise ProviderError(f"Could not reach Nyaa: {exc}") from exc
+
+                singles, batches = self._parse_rows(resp.text, episode)
+                for torrent in [*singles, *batches]:
+                    if torrent["seeders"] <= 0:
+                        continue
+                    resolution = _title_resolution(torrent["title"])
+                    if resolution and resolution not in found:
+                        found.append(resolution)
+            return found
+
+        return _cached_ep_resolutions(title, season, episode, probe)
 
     @staticmethod
     def _parse_rows(html: str, episode: int) -> tuple[list[dict], list[dict]]:

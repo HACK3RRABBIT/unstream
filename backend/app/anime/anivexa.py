@@ -106,6 +106,13 @@ class _CapEntry:
 _cap_cache: OrderedDict[tuple[int, int], _CapEntry] = OrderedDict()
 _cap_locks: dict[tuple[int, int], threading.Lock] = {}
 _cap_guard = threading.Lock()
+# Episode-aware sibling of `_cap_cache`: keyed (anilist_id, season, episode)
+# so per-episode availability is cached and single-flighted the same way the
+# season-level probe is — same TTLs by status, same LRU bound, no collisions
+# between seasons or episodes. Fast-path: a season authoritatively UNAVAILABLE
+# short-circuits without ever probing an episode.
+_ep_cache: OrderedDict[tuple[int, int, int], _CapEntry] = OrderedDict()
+_ep_locks: dict[tuple[int, int, int], threading.Lock] = {}
 _sidecar_rest_until = 0.0
 
 
@@ -178,18 +185,20 @@ def _master_heights(url: str, headers: dict) -> list[int] | None:
         return None
 
 
-def _probe_heights(internal: str, anilist_id: int, deadline: float) -> list[int] | None:
+def _probe_heights(
+    internal: str, anilist_id: int, deadline: float, episode: int = 1
+) -> list[int] | None:
     """Verified heights the sidecar can serve for this anime via one internal.
 
-    Fetches episode 1's watch and reads the first direct HLS master's ladder.
-    A direct mp4 (animegg) has no ladder to read — None means "can't verify",
-    so it contributes nothing to the verified set (the picker treats that
-    resolution as unknown, not absent).
+    Fetches `episode`'s watch (default 1, the season-level probe) and reads the
+    first direct HLS master's ladder. A direct mp4 (animegg) has no ladder to
+    read — None means "can't verify", so it contributes nothing to the verified
+    set (the picker treats that resolution as unknown, not absent).
     """
     remaining = max(1.0, deadline - time.monotonic())
     try:
         resp = _get(
-            f"/watch/{internal}/{anilist_id}/sub/{internal}-1",
+            f"/watch/{internal}/{anilist_id}/sub/{internal}-{episode}",
             timeout=min(_HTTP_TIMEOUT, remaining),
         )
         watch = resp.json()
@@ -293,6 +302,95 @@ def provider_capability(anilist_id: int, season: int) -> ProviderCapability:
         lock.release()
         with _cap_guard:
             _cap_locks.pop(key, None)
+    return capability
+
+
+def _probe_episode(anilist_id: int, season: int, episode: int) -> ProviderCapability:
+    """Episode-aware capability: which heights the sidecar serves for ONE episode.
+
+    Reuses the season probe's two stages against episode `N` instead of 1: the
+    internal-source check (`_internal_status`) is season-level (does the sidecar
+    carry the anime at all), and `_probe_heights` reads that episode's masters
+    (`{internal}-{episode}`). A season that is authoritatively UNAVAILABLE is
+    short-circuited — no per-episode watch calls burn the budget.
+    """
+    deadline = time.monotonic() + PROBE_BUDGET
+    season_cap = provider_capability(anilist_id, season)
+    if season_cap.status == "unavailable":
+        return ProviderCapability(
+            "anivexa", status="unavailable", note="season authoritatively absent"
+        )
+    present: list[str] = []
+    seen_unknown = False
+    for internal in _ALL_INTERNALS:
+        if time.monotonic() > deadline:
+            seen_unknown = True
+            break
+        status = _internal_status(internal, anilist_id, deadline)
+        if status == "ok":
+            present.append(internal)
+        elif status == "unknown":
+            seen_unknown = True
+    if not present:
+        status = "unavailable" if not seen_unknown else "unknown"
+        note = None if status == "unavailable" else "probe could not be completed"
+        return ProviderCapability("anivexa", status=status, note=note)
+
+    heights: list[int] = []
+    for internal in present:
+        if time.monotonic() > deadline:
+            break
+        got = _probe_heights(internal, anilist_id, deadline, episode=episode)
+        if got:
+            heights = sorted(set(heights) | set(got))
+    return ProviderCapability(
+        "anivexa",
+        status="ok",
+        qualities=[str(h) for h in heights] or None,
+        note=f"carried by: {', '.join(sorted(present))}",
+    )
+
+
+def _ep_store(anilist_id: int, season: int, episode: int, capability: ProviderCapability) -> None:
+    with _cap_guard:
+        key = (anilist_id, season, episode)
+        _ep_cache[key] = _CapEntry(capability, time.monotonic())
+        _ep_cache.move_to_end(key)
+        while len(_ep_cache) > CACHE_MAX:
+            _ep_cache.popitem(last=False)
+
+
+def episode_capability(anilist_id: int, season: int, episode: int) -> ProviderCapability:
+    """Cached, single-flight capability for ONE episode. Never raises.
+
+    Same contract as `provider_capability` — UNKNOWN is never cached as
+    UNAVAILABLE, a broken probe degrades to UNKNOWN — but for a single episode,
+    keyed separately from the season-level cache so the two never collide.
+    """
+    key = (anilist_id, season, episode)
+    with _cap_guard:
+        entry = _ep_cache.get(key)
+        if entry and time.monotonic() - entry.stored_at < _ttl_for(entry.capability.status):
+            return entry.capability
+        lock = _ep_locks.setdefault(key, threading.Lock())
+        owner = lock.acquire(blocking=False)
+    if not owner:
+        lock.acquire()
+        with _cap_guard:
+            entry = _ep_cache.get(key)
+        lock.release()
+        if entry:
+            return entry.capability
+        return ProviderCapability("anivexa", status="unknown", note="probe in flight")
+    try:
+        capability = _probe_episode(anilist_id, season, episode)
+    except Exception:  # noqa: BLE001 — a broken probe is never a verdict
+        capability = ProviderCapability("anivexa", status="unknown", note="probe raised")
+    finally:
+        _ep_store(anilist_id, season, episode, capability)
+        lock.release()
+        with _cap_guard:
+            _ep_locks.pop(key, None)
     return capability
 
 

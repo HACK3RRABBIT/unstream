@@ -25,6 +25,7 @@ from app import downloader as app_downloader
 from app import jobs
 from app.anime import subtitle_source
 from app.anime import downloader as anime_downloader
+from app.anime import providers as providers_module
 
 REAL = os.getenv("RUN_FFMPEG_SUBTEST") == "1"
 
@@ -165,17 +166,28 @@ def test_hls_preserves_embedded_when_no_external_sub(
         # The hermetic path: no embedded subs are found, so the recovery layer
         # returns nothing and the pipeline keeps going (no subs, no failure).
         monkeypatch.setattr(subtitle_source, "extract_embedded", lambda v, d: {})
-        # download_video_track hard-guards on ffmpeg being on PATH; stub the
+# download_video_track hard-guards on ffmpeg being on PATH; stub the
         # probe like the rest of the hermetic video-pipeline tests so this box
         # does not need ffmpeg installed (test_anime.py's _stub_video_pipeline).
         monkeypatch.setattr(anime_downloader.shutil, "which",
                             lambda name: "/usr/bin/ffmpeg")
+        # The "recover embedded subs" block also probes `opensubtitles.available()`,
+        # which reads the key env var — clear it so rescue can never hit the network.
+        monkeypatch.setenv("OPENSUBTITLES_API_KEY", "", prepend=False)
         # Keep the provider chain to this one fake source — _chain_excluding
         # walks the registry, and an unstubbed registry means real Nyaa/anivexa/
         # hianime network calls. test_anime.py stubs the same way.
         from app.anime import providers as providers_module
 
-        monkeypatch.setattr(providers_module, "providers", lambda: [F()])
+        monkeypatch.setattr(providers_module, "providers", lambda: [F()], raising=False)
+
+    # The real pipeline reads the file from disk (ffmpeg mux, ffprobe), so the
+    # hermetic stub must produce a real, probing file — otherwise the final
+    # `_probe_height` returns None and the explicit-height check fails.
+    if not REAL:
+        out = tmp_path / "out.mp4"
+        out.write_bytes(b"\0mp4\0")
+        monkeypatch.setattr(anime_downloader, "_download_with_ytdlp", lambda *a, **k: out)
 
     track = Track(
         id="1:s1e1", title="Episode 1", artists=["Anime"], album="A — Season 1",

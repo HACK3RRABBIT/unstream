@@ -399,7 +399,7 @@ def anime_sources(media_id: int, season: int, request: Request) -> dict:
         name = provider.name
         src = EpisodeSource(
             provider=name,
-            anime_id=str(season_media.id),
+            anime_id=season_media.best_title,
             anime_title=season_media.best_title,
             year=season_media.season_year,
             season=season,
@@ -431,6 +431,102 @@ def anime_sources(media_id: int, season: int, request: Request) -> dict:
     with ThreadPoolExecutor(max_workers=len(order_for("1080"))) as pool:
         results = list(pool.map(probe, ordered_providers("1080")))
     return {"media_id": season_media.id, "season": season, "providers": results}
+
+
+@router.get("/{media_id}/season/{season}/episode/{episode}/qualities")
+def anime_episode_qualities(
+    media_id: int, season: int, episode: int, request: Request
+) -> dict:
+    """Per-provider VERIFIED qualities for ONE episode — the per-episode twin of
+    `/sources`.
+
+    Where `/sources` answers "what does this season carry" from the cached
+    season-level probe, this answers "what can actually be served for THIS
+    episode" lazily, on request:
+
+      * anivexa — an episode-aware capability probe (season-level short-circuit
+        when the sidecar authoritatively lacks the anime; heights read from this
+        episode's own masters), cached per (id, season, episode).
+      * nyaa — the resolutions of seeded releases naming this episode, from the
+        real Nyaa release-title parsing, cached briefly.
+      * hianime — no probe exists: `qualities` is null (per-episode HLS scrape).
+
+    Same semantics as `/sources`: `qualities` is a verified list, null = "not
+    probed / can't tell" (never read as absent), a provider that errors or
+    times out degrades to `unknown` with null qualities and never narrows the
+    frontend's union. `original` is not in any list — every source serves its
+    own best stream.
+    """
+    if media_id <= 0 or season <= 0 or episode <= 0:
+        raise HTTPException(status_code=400, detail="Bad anime id, season or episode")
+    limits.enforce("resolve", request)
+    try:
+        seasons = anilist.franchise(media_id)
+    except ProviderError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    season_index = season - 1
+    if season_index < 0 or season_index >= len(seasons):
+        raise HTTPException(status_code=400, detail="Bad season number")
+    season_media = seasons[season_index]
+    season_media_id = season_media.id
+
+    # hianime deliberately has no probe — it reports qualities: null and is
+    # never treated as authoritative for either direction.
+    def probe(provider) -> dict:
+        name = provider.name
+        src = EpisodeSource(
+            provider=name,
+            anime_id=season_media.best_title,
+            anime_title=season_media.best_title,
+            year=season_media.season_year,
+            season=season,
+            episode=episode,
+            anilist_id=season_media_id,
+        )
+        if name == "nyaa":
+            from . import nyaa
+
+            try:
+                resolutions = nyaa.NyaaProvider().episode_resolutions(src, episode)
+            except Exception:  # noqa: BLE001 — a broken probe is never a verdict
+                return {"name": name, "status": "unknown", "qualities": None, "note": None}
+            if not resolutions:
+                # Nyaa answered but nothing seeded names this episode — the
+                # "quality" is genuinely unserved right now.
+                return {"name": name, "status": "ok", "qualities": [], "note": None}
+            return {"name": name, "status": "ok", "qualities": resolutions, "note": None}
+        if name == "anivexa":
+            from . import anivexa
+
+            cap = None
+            try:
+                cap = anivexa.episode_capability(season_media_id, season, episode)
+            except Exception:  # noqa: BLE001 — a broken probe is never a verdict
+                cap = None
+            if cap is None:
+                return {"name": name, "status": "unknown", "qualities": None, "note": None}
+            return {
+                "name": name,
+                "status": cap.status,
+                "qualities": cap.qualities,
+                "note": cap.note,
+            }
+        # hianime (and any future per-episode-unprobed provider).
+        return {
+            "name": name,
+            "status": "ok" if provider.available() else "unavailable",
+            "qualities": None,
+            "note": "availability is per-episode (not probed up front)",
+        }
+
+    with ThreadPoolExecutor(max_workers=len(order_for("1080"))) as pool:
+        results = list(pool.map(probe, ordered_providers("1080")))
+    return {
+        "media_id": season_media_id,
+        "season": season,
+        "episode": episode,
+        "providers": results,
+    }
 
 
 def seed_best_title(media_id: int, seasons: list[anilist.AniMedia]) -> str:

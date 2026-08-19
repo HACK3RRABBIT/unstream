@@ -134,6 +134,9 @@ const fa: Messages = {
       original: 'اورجینال',
       hint: 'کیفیتی که هر دانلود انیمه با آن شروع می‌شود.',
       unavailable: (quality: string) => `کیفیت ${quality} برای این انیمه در دسترس نیست.`,
+      checking: 'در حال بررسی کیفیت‌های در دسترس...',
+      undetermined: 'کیفیت‌های در دسترس این قسمت مشخص نشد.',
+      retry: 'تلاش دوباره',
     },
     searchingProviders: 'در حال جستجو در منابع انیمه...',
     checkingSource: (index: number, total: number, name: string) =>

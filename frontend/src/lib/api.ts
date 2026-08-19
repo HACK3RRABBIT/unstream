@@ -413,6 +413,34 @@ export async function getAnimeSources(
   return data
 }
 
+/** Per-provider capabilities for ONE episode — the per-episode twin of `/sources`.
+ *  `providers` reuses the exact `AnimeSource` shape and semantics: `qualities`
+ *  is a list of resolutions *verified* for this episode, or null when the
+ *  source wasn't probed (hianime) or couldn't tell — never read as "absent".
+ *  The frontend's existing `availableQualities()` union consumes it directly. */
+export interface AnimeEpisodeQualities {
+  media_id: number
+  season: number
+  episode: number
+  providers: AnimeSource[]
+}
+
+/** Fetch per-provider verified qualities for one episode, lazily. The backend
+ *  cache (per season+episode, single-flight) is the real protection; this is
+ *  only called when an episode is focused/selected. */
+export async function getAnimeEpisodeQualities(
+  animeId: number,
+  season: number,
+  episode: number,
+  signal?: AbortSignal,
+): Promise<AnimeEpisodeQualities> {
+  const { data } = await client.get<AnimeEpisodeQualities>(
+    `/anime/${animeId}/season/${season}/episode/${episode}/qualities`,
+    { signal },
+  )
+  return data
+}
+
 /** Subtitle languages an anime episode can mux in. The user's selection is a
  *  list — ["eng"], ["fas"], ["eng","fas"], or [] (none). "none" is kept as a
  *  legacy single value; the picker's None preset sends []. */
