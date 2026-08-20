@@ -88,9 +88,12 @@ services:
       # Anime episodes are big — video jobs keep their own, smaller pool so a
       # season download doesn't hammer the scraper or the Telegram bot.
       - ANIME_DOWNLOAD_WORKERS=${ANIME_DOWNLOAD_WORKERS:-2}
-      # Anime sources, in order tried (first wins): Nyaa torrents by default,
-      # then the hianime scraper fallback. See .env.example.
-      - ANIME_PROVIDER_ORDER=${ANIME_PROVIDER_ORDER:-nyaa,hianime}
+      # Anime sources, in order tried (first wins). Default matches the code's
+      # own keyless trio (and .env.example): Nyaa torrents, the anivexa
+      # streaming sidecar (below), then the hianime scraper fallback. An
+      # explicit ANIME_PROVIDER_ORDER always wins verbatim — set your own in a
+      # gitignored .env to reorder or drop a source.
+      - ANIME_PROVIDER_ORDER=${ANIME_PROVIDER_ORDER:-nyaa,anivexa,hianime}
       # The Anivexa sidecar, reachable only over this network. Empty disables
       # the provider entirely (the default chain then omits it).
       - ANIVEXA_URL=${ANIVEXA_URL:-http://anivexa:4000}
