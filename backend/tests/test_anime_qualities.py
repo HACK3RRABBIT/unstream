@@ -23,6 +23,7 @@ def _fresh_caches():
     anivexa._cap_locks.clear()
     anivexa._ep_cache.clear()
     anivexa._ep_locks.clear()
+    anivexa._carry_cache.clear()
     nyaa._ep_resolutions_cache.clear()
     nyaa._ep_resolutions_locks.clear()
     yield
@@ -660,6 +661,88 @@ def _get_qualities(client, media_id=16498, season=1, episode=1):
     return client.get(
         f"/api/anime/{media_id}/season/{season}/episode/{episode}/qualities"
     )
+
+
+def _get_batch_qualities(client, episodes, media_id=16498, season=1):
+    return client.get(
+        f"/api/anime/{media_id}/season/{season}/qualities",
+        params={"episodes": ",".join(str(e) for e in episodes)},
+    )
+
+
+def test_batched_qualities_answers_every_episode_in_one_request(monkeypatch):
+    """A selected season used to open one connection per episode — six at a
+    time, each a full provider round trip, and 24 charges against a 30/minute
+    rate limit."""
+    probed: list[int] = []
+
+    class Nyaa:
+        name = "nyaa"
+        streams_hls = False
+
+        def available(self):
+            return True
+
+    monkeypatch.setattr(providers_module, "providers", lambda: [Nyaa()])
+    monkeypatch.setattr(
+        nyaa.NyaaProvider,
+        "episode_resolutions",
+        lambda self, src, ep: (probed.append(ep), ["720", "1080"])[1],
+    )
+
+    client = _call_qualities(monkeypatch)
+    resp = _get_batch_qualities(client, range(1, 13))
+    assert resp.status_code == 200
+    body = resp.json()
+    assert sorted(int(k) for k in body["episodes"]) == list(range(1, 13))
+    assert body["episodes"]["7"]["providers"][0]["qualities"] == ["720", "1080"]
+    assert sorted(probed) == list(range(1, 13))
+
+
+def test_batched_qualities_matches_the_single_episode_shape(monkeypatch):
+    """Both endpoints answer with the same provider rows, so the frontend's
+    availability union reads either without a special case."""
+    class Nyaa:
+        name = "nyaa"
+        streams_hls = False
+
+        def available(self):
+            return True
+
+    monkeypatch.setattr(providers_module, "providers", lambda: [Nyaa()])
+    monkeypatch.setattr(
+        nyaa.NyaaProvider, "episode_resolutions", lambda self, src, ep: ["480"]
+    )
+    client = _call_qualities(monkeypatch)
+    one = _get_qualities(client, episode=3).json()["providers"]
+    many = _get_batch_qualities(client, [3]).json()["episodes"]["3"]["providers"]
+    assert one == many
+
+
+def test_batched_qualities_caps_the_episode_list(monkeypatch):
+    """A 1100-episode show must not fan one request into a thousand probes."""
+    from app.anime import routes
+
+    class Nyaa:
+        name = "nyaa"
+        streams_hls = False
+
+        def available(self):
+            return True
+
+    monkeypatch.setattr(providers_module, "providers", lambda: [Nyaa()])
+    monkeypatch.setattr(
+        nyaa.NyaaProvider, "episode_resolutions", lambda self, src, ep: ["1080"]
+    )
+    client = _call_qualities(monkeypatch)
+    resp = _get_batch_qualities(client, range(1, 200))
+    assert len(resp.json()["episodes"]) == routes.MAX_QUALITY_EPISODES
+
+
+def test_batched_qualities_rejects_an_empty_list(monkeypatch):
+    client = _call_qualities(monkeypatch)
+    assert _get_batch_qualities(client, []).status_code == 400
+    assert _get_batch_qualities(client, ["x"]).status_code == 400
 
 
 def test_qualities_endpoint_returns_all_providers(monkeypatch):

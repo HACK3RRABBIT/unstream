@@ -76,6 +76,74 @@ def test_translate_dialogue_only_preserves_timestamps():
     assert translator.calls == [("Hello world", "fa")]  # only dialogue, not timestamps
 
 
+def _episode_srt(lines: list[str]) -> str:
+    return "\n\n".join(
+        f"{i}\n00:00:{i:02d},000 --> 00:00:{i + 1:02d},000\n{line}"
+        for i, line in enumerate(lines, start=1)
+    )
+
+
+class _BatchTranslator:
+    """Answers a batch as one newline-separated block, like the real endpoint."""
+
+    def __init__(self, mangle=None):
+        self.calls: list[str] = []
+        self._mangle = mangle
+
+    def translate_text(self, text: str, target: str) -> str:
+        self.calls.append(text)
+        out = "\n".join(f"ت:{line}" for line in text.split("\n"))
+        return self._mangle(out) if self._mangle else out
+
+
+def test_dialogue_travels_in_batches_not_one_call_per_cue():
+    """A few hundred cues, one request each, sequentially, took longer than
+    the episode did to download."""
+    translator = _BatchTranslator()
+    lines = [f"line {i}" for i in range(40)]
+    out = subtitle_translate.translate_dialogue(_episode_srt(lines), "fa", translator)
+
+    assert len(translator.calls) < 5  # batched, not 40 calls
+    for i in range(40):
+        assert f"ت:line {i}" in out
+    # Every timestamp survives untouched.
+    assert "00:00:01,000 --> 00:00:02,000" in out
+    assert "00:00:40,000 --> 00:00:41,000" in out
+
+
+def test_repeated_lines_are_translated_once():
+    translator = _BatchTranslator()
+    srt = _episode_srt(["Huh?", "Huh?", "Onii-chan!", "Huh?"])
+    out = subtitle_translate.translate_dialogue(srt, "fa", translator)
+
+    sent = "\n".join(translator.calls)
+    assert sent.count("Huh?") == 1
+    assert out.count("ت:Huh?") == 3  # every cue still gets its text
+
+
+def test_misaligned_batch_falls_back_to_one_call_per_cue():
+    """A batch whose answer has the wrong number of lines cannot be mapped
+    onto cues — the timeline must never be allowed to slip."""
+    translator = _BatchTranslator(mangle=lambda out: out.replace("\n", " ", 1))
+    srt = _episode_srt(["first", "second", "third"])
+    out = subtitle_translate.translate_dialogue(srt, "fa", translator)
+
+    # The mangled batch, then one call per cue in it.
+    assert len(translator.calls) == 4
+    assert translator.calls[1:] == ["first", "second", "third"]
+    for line in ("first", "second", "third"):
+        assert f"ت:{line}" in out
+
+
+def test_multi_line_cue_keeps_its_own_timing():
+    translator = _BatchTranslator()
+    srt = "1\n00:00:01,000 --> 00:00:04,000\nfirst half\nsecond half\n"
+    out = subtitle_translate.translate_dialogue(srt, "fa", translator)
+    assert "00:00:01,000 --> 00:00:04,000" in out
+    assert "ت:first half second half" in out
+    assert len(out.strip().split("\n\n")) == 1  # still exactly one cue
+
+
 def _fresh_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(subtitle_translate, "_DB_PATH", tmp_path / "subs.db")
     monkeypatch.setattr(subtitle_translate, "_conn", None)

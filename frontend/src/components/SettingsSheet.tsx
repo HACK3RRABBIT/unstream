@@ -2,33 +2,21 @@ import { X } from 'lucide-react'
 import { useMessages } from '../lib/i18n'
 import { LyricsToggle } from './LyricsToggle'
 import { QualityPicker } from './QualityPicker'
-import { VideoQualityPicker } from './VideoQualityPicker'
 import { SubtitlePicker } from './SubtitlePicker'
 import { LanguagePicker } from './LanguagePicker'
 import { Sheet } from './Sheet'
 import type { AppTab } from './TabSwitch'
-import type { DiscoveryState } from '../lib/animeDiscovery'
 
 /** The header's preferences, on the layouts too narrow to hold them.
  *
  *  The same components the wide header uses, not phone-only copies of them —
  *  otherwise the next quality option would have to be added twice. Which set
  *  shows follows the active tab: music gets lyrics + audio quality, anime
- *  gets video quality + subtitles. `w-full justify-between` is all they need
- *  to become rows. */
-export function SettingsSheet({
-  tab,
-  onClose,
-  videoDiscovery,
-  onRetryDiscovery,
-}: {
-  tab: AppTab
-  onClose: () => void
-  /** Same discovery the header picker shows — the sheet is its mobile mirror,
-   *  so an in-flight or failed probe renders identically in both. */
-  videoDiscovery?: DiscoveryState
-  onRetryDiscovery?: () => void
-}) {
+ *  gets subtitles (video quality is chosen inside a season instead — see
+ *  AnimeSeasonView — since different episodes genuinely support different
+ *  resolutions and one global setting can no longer speak for all of them).
+ *  `w-full justify-between` is all they need to become rows. */
+export function SettingsSheet({ tab, onClose }: { tab: AppTab; onClose: () => void }) {
   const m = useMessages()
 
   return (
@@ -59,18 +47,9 @@ export function SettingsSheet({
               </div>
             </>
           ) : (
-            <>
-              <div className="py-4">
-                <VideoQualityPicker
-                  className="w-full flex-wrap justify-between gap-y-3"
-                  discovery={videoDiscovery}
-                  onRetry={onRetryDiscovery}
-                />
-              </div>
-              <div className="py-4">
-                <SubtitlePicker className="w-full flex-wrap justify-between gap-y-3" />
-              </div>
-            </>
+            <div className="py-4">
+              <SubtitlePicker className="w-full flex-wrap justify-between gap-y-3" />
+            </div>
           )}
           <div className="py-4">
             <LanguagePicker className="w-full flex-wrap justify-between gap-y-3" />

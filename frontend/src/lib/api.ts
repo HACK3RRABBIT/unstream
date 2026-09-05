@@ -420,30 +420,38 @@ export async function getAnimeSources(
   return data
 }
 
-/** Per-provider capabilities for ONE episode — the per-episode twin of `/sources`.
- *  `providers` reuses the exact `AnimeSource` shape and semantics: `qualities`
- *  is a list of resolutions *verified* for this episode, or null when the
- *  source wasn't probed (hianime) or couldn't tell — never read as "absent".
- *  The frontend's existing `availableQualities()` union consumes it directly. */
-export interface AnimeEpisodeQualities {
+/** Per-provider capabilities for episodes of a season — the per-episode twin
+ *  of `/sources`, keyed by episode number as a string. `providers` reuses the
+ *  exact `AnimeSource` shape and semantics: `qualities` is a list of
+ *  resolutions *verified* for that episode, or null when the source wasn't
+ *  probed (hianime) or couldn't tell — never read as "absent", and consumed
+ *  directly by `availableQualities()`. An episode the backend didn't answer
+ *  for (past its cap) is simply absent: undetermined, which never blocks. */
+export interface AnimeSeasonEpisodeQualities {
   media_id: number
   season: number
-  episode: number
-  providers: AnimeSource[]
+  episodes: Record<string, { providers: AnimeSource[] }>
 }
 
-/** Fetch per-provider verified qualities for one episode, lazily. The backend
- *  cache (per season+episode, single-flight) is the real protection; this is
- *  only called when an episode is focused/selected. */
-export async function getAnimeEpisodeQualities(
+/** The number of episodes one batched request may carry. Mirrors the
+ *  backend's own cap; a longer selection has its tail left undetermined. */
+export const MAX_QUALITY_EPISODES = 50
+
+/** Fetch verified qualities for a set of episodes in ONE request.
+ *
+ *  Asking per episode opened a connection each — throttled to six at a time by
+ *  the browser, every one of them a full provider round trip, and every one
+ *  charged against the resolve rate limit, so selecting a long season left its
+ *  tail reading "couldn't check". */
+export async function getAnimeSeasonEpisodeQualities(
   animeId: number,
   season: number,
-  episode: number,
+  episodes: number[],
   signal?: AbortSignal,
-): Promise<AnimeEpisodeQualities> {
-  const { data } = await client.get<AnimeEpisodeQualities>(
-    `/anime/${animeId}/season/${season}/episode/${episode}/qualities`,
-    { signal },
+): Promise<AnimeSeasonEpisodeQualities> {
+  const { data } = await client.get<AnimeSeasonEpisodeQualities>(
+    `/anime/${animeId}/season/${season}/qualities`,
+    { params: { episodes: episodes.slice(0, MAX_QUALITY_EPISODES).join(',') }, signal },
   )
   return data
 }
@@ -467,14 +475,18 @@ export const isSubtitleLanguages = (value: unknown): value is SubtitleLanguage[]
   Array.isArray(value) && value.every(isSubtitleLanguage)
 
 /** Queue a season's episodes as a download job. `episodeIds` selects a
- *  subset; omitted = the whole season. Quality is the header's global video
- *  quality; `subs` is the list of subtitle languages to mux in. */
+ *  subset; omitted = the whole season. `quality` is the season-wide default
+ *  every episode uses unless `episodeQualities` overrides it for that one
+ *  id — different episodes of a season genuinely have different verified
+ *  resolutions, so the request need not force one choice onto all of them.
+ *  `subs` is the list of subtitle languages to mux in. */
 export async function startAnimeDownload(
   animeId: number,
   season: number,
   quality: VideoQuality = DEFAULT_VIDEO_QUALITY,
   subs: SubtitleLanguage[] = DEFAULT_SUBTITLE_LANGUAGES,
   episodeIds?: string[],
+  episodeQualities?: Record<string, VideoQuality>,
 ): Promise<string> {
   const { data } = await client.post<{ job_id: string }>('/anime/download', {
     media_id: animeId,
@@ -482,6 +494,9 @@ export async function startAnimeDownload(
     quality,
     subs,
     ...(episodeIds && episodeIds.length > 0 ? { episode_ids: episodeIds } : {}),
+    ...(episodeQualities && Object.keys(episodeQualities).length > 0
+      ? { episode_qualities: episodeQualities }
+      : {}),
   })
   return data.job_id
 }

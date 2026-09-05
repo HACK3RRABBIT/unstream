@@ -88,6 +88,11 @@ services:
       # Anime episodes are big, so keep the dedicated pool small.
       - ANIME_PROVIDER_ORDER=${ANIME_PROVIDER_ORDER:-nyaa,hianime}
       - ANIME_DOWNLOAD_WORKERS=${ANIME_DOWNLOAD_WORKERS:-2}
+      # HLS fragments fetched at once. A streamed episode is hundreds of small
+      # fragments, and one at a time spends the download on round trips.
+      - ANIME_HLS_CONCURRENCY=${ANIME_HLS_CONCURRENCY:-8}
+      # Batches of subtitle lines translated at once when Persian is asked for.
+      - SUBTITLE_TRANSLATE_WORKERS=${SUBTITLE_TRANSLATE_WORKERS:-6}
       # The Anivexa sidecar on the internal network. Empty disables it.
       - ANIVEXA_URL=${ANIVEXA_URL:-http://anivexa:4000}
       # Optional last-resort English subtitles for HLS sources that ship none.

@@ -87,11 +87,14 @@ interface DownloadsContextValue {
   /** One-click download of a single search result: resolve, then queue. */
   startFromResult: (result: SearchResult) => Promise<void>
   /** Queue a season's episodes (each becomes a track in one job). `episodeIds`
-   *  selects a subset — omitted means the whole season. */
+   *  selects a subset — omitted means the whole season. `episodeQualities`
+   *  overrides the season-wide `videoQuality` for specific episode ids, so a
+   *  batch can mix resolutions instead of forcing one onto every episode. */
   startAnime: (
     anime: { id: number; title: string; coverUrl: string | null },
     season: AnimeSeason,
     episodeIds?: string[],
+    episodeQualities?: Record<string, VideoQuality>,
   ) => Promise<void>
   /** Stop a running job. Rejects if the server wouldn't; callers report it. */
   cancel: (jobId: string) => Promise<void>
@@ -289,11 +292,19 @@ export function DownloadsProvider({ children }: { children: ReactNode }) {
       anime: { id: number; title: string; coverUrl: string | null },
       season: AnimeSeason,
       episodeIds?: string[],
+      episodeQualities?: Record<string, VideoQuality>,
     ) => {
       const chosen = videoQualityRef.current
       const subs = subtitleLanguagesRef.current
       const url = `anime://${anime.id}/${season.season}`
-      const jobId = await startAnimeDownload(anime.id, season.season, chosen, subs, episodeIds)
+      const jobId = await startAnimeDownload(
+        anime.id,
+        season.season,
+        chosen,
+        subs,
+        episodeIds,
+        episodeQualities,
+      )
       // A subset job lists only its own episodes in the dock.
       const wanted = episodeIds ? new Set(episodeIds) : null
       // Match the backend's episode count: an airing season lists what has

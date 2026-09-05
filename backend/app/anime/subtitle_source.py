@@ -31,12 +31,24 @@ from pathlib import Path
 from .. import downloader as _dl
 
 
+# Subtitle codecs that are actually text. A bitmap track (a DVD/Blu-ray
+# render of the words as pictures) cannot become SRT or mov_text — ffmpeg
+# refuses "subtitle encoding currently only possible from text to text" — so
+# extracting one is a guaranteed failure, and a doomed extraction per bitmap
+# track is time a download spends achieving nothing.
+_TEXT_SUB_CODECS = {
+    "subrip", "srt", "ass", "ssa", "webvtt", "mov_text", "text",
+    "microdvd", "realtext", "subviewer", "subviewer1", "sami", "stl",
+}
+
+
 def _probe_embedded(video: Path) -> list[tuple[int, str]]:
-    """The per-type index + language tag of every embedded subtitle stream.
+    """The per-type index + language tag of every embedded *text* subtitle stream.
 
     ffprobe reports the global stream index, but ffmpeg's ``-map 0:s:N`` wants
     the per-type (subtitle-kind) index — the line's position among the
-    subtitle-only probe output. The returned index is that per-type index.
+    subtitle-only probe output, which is why every subtitle stream is counted
+    even when it is skipped. The returned index is that per-type index.
     """
     import subprocess
 
@@ -45,7 +57,7 @@ def _probe_embedded(video: Path) -> list[tuple[int, str]]:
             [
                 "ffprobe", "-v", "error",
                 "-select_streams", "s",
-                "-show_entries", "stream=index:stream_tags=language,title",
+                "-show_entries", "stream=index,codec_name:stream_tags=language,title",
                 "-of", "csv=p=0", str(video),
             ],
             capture_output=True, text=True, timeout=30,
@@ -55,10 +67,12 @@ def _probe_embedded(video: Path) -> list[tuple[int, str]]:
     out: list[tuple[int, str]] = []
     for sub_idx, line in enumerate(proc.stdout.strip().splitlines()):
         parts = [p.strip() for p in line.split(",")]
-        if len(parts) < 2:
+        if len(parts) < 3:
             continue
-        lang = parts[1].lower()
-        title = " ".join(parts[2:]).lower()
+        if parts[1].lower() not in _TEXT_SUB_CODECS:
+            continue  # bitmap subtitle: nothing to extract, index still counted
+        lang = parts[2].lower()
+        title = " ".join(parts[3:]).lower()
         if lang in ("eng", "en") or (not lang and "english" in title):
             out.append((sub_idx, "eng"))
         elif lang in ("fas", "fa", "per") or (not lang and ("persian" in title or "farsi" in title)):

@@ -1,8 +1,47 @@
-import type { CSSProperties } from 'react'
+import { useEffect, useState, type CSSProperties } from 'react'
 import { Clapperboard, ListVideo } from 'lucide-react'
 import clsx from 'clsx'
-import type { AnimeDetail, AnimeSeason } from '../lib/api'
-import { faNumerals, useDirectional, useMessages, useStartAlign } from '../lib/i18n'
+import { translateAnime, type AnimeDetail, type AnimeSeason } from '../lib/api'
+import { faNumerals, useDirectional, useLocale, useMessages, useStartAlign } from '../lib/i18n'
+
+/** The franchise's synopsis, translated to the UI's language when that isn't
+ *  English (AniList only stores an English synopsis) — the same behavior the
+ *  search-result cards already have (`AnimeSearchResults.tsx`'s `Summary`),
+ *  which this page skipped, so a Farsi session opened a season to an English
+ *  paragraph regardless of the locale everywhere else on the screen. Fetched
+ *  once per franchise and cached in memory; a failed translation keeps the
+ *  English text rather than showing nothing. */
+function Synopsis({ description }: { description: string }) {
+  const { locale } = useLocale()
+  const stripped = description.replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]+>/g, '')
+  const [text, setText] = useState(locale === 'en' ? stripped : null)
+
+  useEffect(() => {
+    if (locale === 'en') {
+      setText(stripped)
+      return
+    }
+    setText(null) // show nothing rather than a stale translation while it loads
+    let alive = true
+    translateAnime(stripped, locale)
+      .then((t) => {
+        if (alive) setText(t)
+      })
+      .catch(() => {
+        if (alive) setText(stripped) // fall back to English
+      })
+    return () => {
+      alive = false
+    }
+  }, [stripped, locale])
+
+  if (!text) return null
+  return (
+    <p dir="auto" className="line-clamp-3 text-mini leading-relaxed text-ink-300">
+      {text}
+    </p>
+  )
+}
 
 interface Props {
   anime: AnimeDetail
@@ -52,9 +91,7 @@ export function AnimeView({ anime, onOpenSeason }: Props) {
 
       {anime.description && (
         <div className="border-b border-ink-800 px-5 py-4">
-          <p dir="auto" className="line-clamp-3 text-mini leading-relaxed text-ink-300">
-            {anime.description.replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]+>/g, '')}
-          </p>
+          <Synopsis description={anime.description} />
         </div>
       )}
 

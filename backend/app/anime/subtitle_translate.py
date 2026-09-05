@@ -11,9 +11,11 @@ only the existing keyless Google mechanism is implemented today.
 """
 
 import hashlib
+import os
 import sqlite3
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from .subtitles import Cue, build_srt, normalize_srt, parse_srt
@@ -93,17 +95,110 @@ def get_translator() -> Translator:
     return _default_translator
 
 
+# How much cue text to send in one call. The keyless endpoint takes its input
+# in the URL, so a chunk has to stay well inside a URL length limit once
+# percent-encoded — and a chunk that is refused costs a fallback round trip per
+# cue in it, so this stays conservative.
+_CHUNK_CHARS = 900
+
+# Chunks in flight at once. An episode is a few dozen chunks of pure waiting;
+# six at a time is a large speedup without looking like a scraper to a free
+# endpoint that can rate-limit.
+_TRANSLATE_WORKERS = max(1, int(os.getenv("SUBTITLE_TRANSLATE_WORKERS", "6") or 6))
+
+
+def _flatten(text: str) -> str:
+    """One cue's dialogue as a single line, so a chunk's lines map 1:1 to cues.
+
+    A cue's own line breaks are layout, not content; the translated track gets
+    them back from the player's wrapping. Keeping them would make the line
+    count ambiguous and force every cue into its own request.
+    """
+    return " ".join(text.split())
+
+
+def _chunk(texts: list[str]) -> list[list[str]]:
+    """Group cue texts into request-sized batches, order preserved."""
+    chunks: list[list[str]] = []
+    current: list[str] = []
+    size = 0
+    for text in texts:
+        if current and size + len(text) + 1 > _CHUNK_CHARS:
+            chunks.append(current)
+            current, size = [], 0
+        current.append(text)
+        size += len(text) + 1
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _translate_chunk(
+    texts: list[str], target: str, translator: Translator
+) -> list[str] | None:
+    """Translate a batch of cue texts in one call, or None if it can't be aligned.
+
+    The batch goes out as one newline-separated block and must come back with
+    exactly as many lines as it had. Anything else — a merged pair, a dropped
+    blank — is a result we cannot map back onto cues, so the caller falls back
+    to translating that batch one cue at a time rather than risking a subtitle
+    whose lines have slipped against its timings.
+    """
+    if len(texts) == 1:
+        return [translator.translate_text(texts[0], target)]
+    translated = translator.translate_text("\n".join(texts), target)
+    lines = translated.split("\n")
+    if len(lines) != len(texts):
+        return None
+    return lines
+
+
 def translate_dialogue(srt: str, target: str, translator: Translator) -> str:
     """Translate only the dialogue text of SRT content; timestamps and cue
-    structure are preserved verbatim. Raises on any translation failure."""
+    structure are preserved verbatim. Raises on any translation failure.
+
+    An episode is several hundred cues, and asking for them one at a time —
+    sequentially — took longer than downloading the video did. Three things
+    fix that without touching a single timestamp: identical lines (names,
+    "Huh?", sign text) are translated once, the rest travel in batches, and
+    the batches go out concurrently. A batch whose answer doesn't line up is
+    retried cue by cue, so the timeline can never slip.
+    """
     cues = parse_srt(srt)
+    unique: list[str] = []
+    seen: set[str] = set()
+    for cue in cues:
+        text = _flatten(cue.text)
+        if text and text not in seen:
+            seen.add(text)
+            unique.append(text)
+
+    chunks = _chunk(unique)
+    translations: dict[str, str] = {}
+    if chunks:
+        workers = min(len(chunks), _TRANSLATE_WORKERS)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            results = list(
+                pool.map(lambda c: _translate_chunk(c, target, translator), chunks)
+            )
+        for chunk, result in zip(chunks, results):
+            if result is None:
+                # Only this batch pays the per-cue price.
+                result = [translator.translate_text(text, target) for text in chunk]
+            translations.update(zip(chunk, result))
+
     out: list[Cue] = []
     for cue in cues:
-        if not cue.text.strip():
-            out.append(cue)
-            continue
-        translated = translator.translate_text(cue.text, target)
-        out.append(Cue(index=cue.index, start=cue.start, end=cue.end, text=translated))
+        text = _flatten(cue.text)
+        translated = translations.get(text)
+        out.append(
+            Cue(
+                index=cue.index,
+                start=cue.start,
+                end=cue.end,
+                text=translated if translated is not None else cue.text,
+            )
+        )
     return build_srt(out)
 
 

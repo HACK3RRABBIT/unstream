@@ -22,6 +22,7 @@ import subprocess
 import threading
 import time
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable
 from urllib.parse import quote
@@ -49,6 +50,54 @@ _client = httpx.Client(
     timeout=_TIMEOUT,
     follow_redirects=True,
 )
+
+
+# Nyaa searches in flight at once, across the whole process. The per-episode
+# quality probe now asks about a whole selection at a time, and nyaa.si is one
+# small site: past a handful of parallel searches it starts answering with an
+# interstitial, which this code can only read as "couldn't tell". A ceiling
+# keeps the concurrency a speedup rather than a way to get blocked.
+_SEARCH_SLOTS = threading.BoundedSemaphore(4)
+
+
+def _search_pages(queries: list[str]) -> list[str]:
+    """Fetch several Nyaa searches at once, answers in query order.
+
+    Every lookup asks Nyaa the same question two ways (the SxxExx form and the
+    bare episode number), and they don't depend on each other — running them
+    one after another doubled the wait before a download could even start. Any
+    failure is still a ProviderError: a search that didn't happen must never
+    read as a search that found nothing.
+    """
+
+    def fetch(query: str) -> str:
+        with _SEARCH_SLOTS:
+            return _fetch_page(query)
+
+    if len(queries) == 1:
+        return [fetch(queries[0])]
+    with ThreadPoolExecutor(max_workers=len(queries)) as pool:
+        return list(pool.map(fetch, queries))
+
+
+def _fetch_page(query: str) -> str:
+    """One Nyaa search page, or a ProviderError."""
+    try:
+        resp = _client.get(
+            f"{BASE_URL}/",
+            params={
+                "f": 0,
+                "c": _CATEGORY_ENGLISH,
+                "q": query,
+                "s": "seeders",
+                "o": "desc",
+            },
+        )
+        resp.raise_for_status()
+    except Exception as exc:  # noqa: BLE001
+        raise ProviderError(f"Could not reach Nyaa: {exc}") from exc
+    return resp.text
+
 
 # Public UDP trackers as a fallback — some Nyaa swarms only announce here.
 _PUBLIC_TRACKERS = [
@@ -165,6 +214,34 @@ def _cached_ep_resolutions(
         lock.release()
         _ep_resolutions_locks.pop(key, None)
     return resolutions
+
+
+# aria2's periodic summary line, e.g.
+#   [#7c9e0f 412MiB/1.3GiB(30%) CN:34 SD:6 DL:4.1MiB ETA:3m41s]
+# The percentage is the whole download's, which is what the dock wants.
+_ARIA2_PROGRESS_RE = re.compile(r"\((\d{1,3})%\)")
+
+
+def _aria2_progress(log_file: Path) -> float | None:
+    """The latest completion fraction aria2 reported, or None if it hasn't yet.
+
+    aria2 has no progress callback and its output goes to a log rather than a
+    pipe (an unread pipe fills and blocks the transfer), so the summary line is
+    read back from the tail of that log. Only the last one matters, and a log
+    that can't be read yet is simply "no news".
+    """
+    try:
+        with log_file.open("rb") as handle:
+            handle.seek(0, 2)
+            size = handle.tell()
+            handle.seek(max(0, size - 8192))
+            tail = handle.read().decode("utf-8", errors="replace")
+    except OSError:
+        return None
+    matches = _ARIA2_PROGRESS_RE.findall(tail)
+    if not matches:
+        return None
+    return min(100, int(matches[-1])) / 100
 
 
 def _magnet(btih: str, name: str) -> str:
@@ -332,23 +409,8 @@ class NyaaProvider:
 
         singles: dict[str, dict] = {}
         batches: dict[str, dict] = {}
-        for query in queries:
-            try:
-                resp = _client.get(
-                    f"{BASE_URL}/",
-                    params={
-                        "f": 0,
-                        "c": _CATEGORY_ENGLISH,
-                        "q": query,
-                        "s": "seeders",
-                        "o": "desc",
-                    },
-                )
-                resp.raise_for_status()
-            except Exception as exc:  # noqa: BLE001
-                raise ProviderError(f"Could not reach Nyaa: {exc}") from exc
-
-            page_singles, page_batches = self._parse_rows(resp.text, episode)
+        for page in _search_pages(queries):
+            page_singles, page_batches = self._parse_rows(page, episode)
             for t in page_singles:
                 singles.setdefault(t["torrent_id"], t)
             for t in page_batches:
@@ -421,23 +483,8 @@ class NyaaProvider:
             found: list[str] = []
             emptied: int = 0  # queries that answered a genuine empty search
             inconclusive: int = 0  # queries that were a block page or a miss
-            for query in queries:
-                try:
-                    resp = _client.get(
-                        f"{BASE_URL}/",
-                        params={
-                            "f": 0,
-                            "c": _CATEGORY_ENGLISH,
-                            "q": query,
-                            "s": "seeders",
-                            "o": "desc",
-                        },
-                    )
-                    resp.raise_for_status()
-                except Exception as exc:  # noqa: BLE001
-                    raise ProviderError(f"Could not reach Nyaa: {exc}") from exc
-
-                kind = self._response_kind(resp.text)
+            for page in _search_pages(queries):
+                kind = self._response_kind(page)
                 if kind == "empty":
                     # THE only authoritative-empty signal: Nyaa itself answered
                     # "No results found". This query proves nothing was released
@@ -450,7 +497,7 @@ class NyaaProvider:
                     inconclusive += 1
                     continue
 
-                singles, batches = self._parse_rows(resp.text, episode)
+                singles, batches = self._parse_rows(page, episode)
                 for torrent in [*singles, *batches]:
                     # Seeded or not: a 0-seeder row still proves the resolution
                     # was released for this episode. Only the *download* path
@@ -690,10 +737,10 @@ class NyaaProvider:
                 str(torrent_file), workdir, on_progress, should_cancel,
                 select_file=target_idx,
             )
-            # aria2 preallocates every file in the torrent, so unselected files
-            # sit in the workdir as zero-filled look-alikes — _largest_video
-            # would pick the wrong (empty) one. Return the exact file that
-            # --select-file downloaded; never fall back to another episode.
+            # Whatever aria2 leaves beside the episode — an unselected file it
+            # touched, a placeholder — _largest_video could pick instead of the
+            # one we asked for. Return the exact file that --select-file
+            # downloaded; never fall back to another episode.
             video = workdir / target_rel
             if not video.is_file():
                 raise DownloadError(
@@ -731,7 +778,6 @@ class NyaaProvider:
             raise DownloadError("batch file path escapes the working directory")
         return p
 
-    @staticmethod
     @staticmethod
     def _find_sub_stream(video: Path, language: str) -> str | None:
         """The per-type index of the embedded subtitle stream whose language
@@ -944,9 +990,18 @@ class NyaaProvider:
             # aria2's own cap — long enough for a large episode even on a slow
             # swarm (the job's own progress-aware stall check is stricter).
             "--bt-stop-timeout=3600",
-            "--summary-interval=5",
+            "--summary-interval=2",
             "--console-log-level=warn",
             "--bt-tracker=" + ",".join(_PUBLIC_TRACKERS),
+            # aria2 stops asking for more peers once a torrent exceeds this
+            # speed, and the 50 KiB/s default means a well-seeded episode is
+            # throttled to a handful of peers for the whole download.
+            "--bt-request-peer-speed-limit=50M",
+            "--bt-max-peers=200",
+            # Preallocating is pure waiting on a batch torrent, where every
+            # unselected file would be written out full-size just to be
+            # thrown away.
+            "--file-allocation=none",
         ]
         if select_file:
             cmd.append(f"--select-file={select_file}")
@@ -965,13 +1020,20 @@ class NyaaProvider:
         # stall timeout: the download runs until aria2 exits or the user
         # cancels. Completion is signalled by aria2's exit code, NOT by the
         # absence of the ".aria2" control file — aria2 can leave it after a
-        # successful download. The job reports "downloading" meanwhile.
+        # successful download. Its periodic summary is read out of the log as
+        # it goes, so the dock shows a torrent's real progress instead of
+        # sitting at zero until the file appears.
+        last_reported = -1.0
         while True:
             if should_cancel and should_cancel():
                 proc.terminate()
                 raise Cancelled()
             if proc.poll() is not None:
                 break  # aria2 exited on its own
+            fraction = _aria2_progress(log_file)
+            if on_progress and fraction is not None and fraction > last_reported:
+                last_reported = fraction
+                on_progress(fraction)
             time.sleep(2)
         proc.wait(timeout=300)
         if proc.returncode not in (0, -15):

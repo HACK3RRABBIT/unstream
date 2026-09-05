@@ -22,6 +22,9 @@ def _fresh_capability_cache():
     next — same isolation the rest of the suite uses for its in-memory state."""
     anivexa._cap_cache.clear()
     anivexa._cap_locks.clear()
+    anivexa._ep_cache.clear()
+    anivexa._ep_locks.clear()
+    anivexa._carry_cache.clear()
     yield
 from app.anime import anivexa, opensubtitles
 from app.anime import downloader as anime_downloader
@@ -399,6 +402,74 @@ def test_capability_cache_lru_bound(monkeypatch):
         anivexa.CACHE_MAX = original_max
 
 
+# ── 3b. Probe cost ────────────────────────────────────────────────────────────
+
+
+def test_carry_probe_is_paid_for_once_per_anime(monkeypatch):
+    """Which internals carry a show is a per-anime fact. Re-asking it for every
+    episode is what made scanning a season's qualities take minutes."""
+    calls = {"n": 0}
+
+    def counting(name, aid, deadline):
+        calls["n"] += 1
+        return "ok" if name == "anineko" else "unavailable"
+
+    monkeypatch.setattr(anivexa, "_internal_status", counting)
+    monkeypatch.setattr(anivexa, "_probe_heights", lambda p, aid, dl, episode=1: [720])
+
+    assert anivexa.provider_capability(20807, 1).status == "ok"
+    after_season = calls["n"]
+    assert after_season == len(anivexa._ALL_INTERNALS)  # each source asked once
+
+    for episode in (1, 2, 3, 4, 5):
+        assert anivexa.episode_capability(20807, 1, episode).status == "ok"
+    assert calls["n"] == after_season  # every episode reused the same answer
+
+
+def test_cached_inconclusive_carry_probe_never_reads_as_an_absence(monkeypatch):
+    """The load-bearing rule, now that the carry answer is cached: "nobody
+    answered" and "nobody carries it" are both an empty list, and only the
+    second one is a verdict."""
+    calls = {"n": 0}
+
+    def flaky(name, aid, deadline):
+        calls["n"] += 1
+        return "unknown"
+
+    monkeypatch.setattr(anivexa, "_internal_status", flaky)
+    assert anivexa._probe_capability(20807, 1).status == "unknown"
+    assert calls["n"] == len(anivexa._ALL_INTERNALS)
+    # Second probe reads the cache — and must reach the same verdict.
+    assert anivexa._probe_capability(20807, 1).status == "unknown"
+    assert calls["n"] == len(anivexa._ALL_INTERNALS)
+
+
+def test_carry_probe_unknown_is_not_remembered_as_an_answer(monkeypatch):
+    """An inconclusive probe gets the short TTL, so a flaky sidecar is re-asked
+    rather than being cached as a verdict for fifteen minutes."""
+    monkeypatch.setattr(anivexa, "_internal_status", lambda p, aid, dl: "unknown")
+    clock = _clock(monkeypatch)
+    present, seen_unknown = anivexa._carrying_internals(20807, clock.now + 10)
+    assert present == [] and seen_unknown
+    clock.now += anivexa.UNKNOWN_TTL + 1
+    assert anivexa._carrying_cached(20807) is None
+
+
+def test_download_chain_prefers_sources_known_to_carry_the_anime(monkeypatch):
+    """The first /watch call should be one that can answer — an unprobed anime
+    keeps the plain preference order, and nothing is ever dropped."""
+    assert anivexa._download_chain(20807, "1080") == list(
+        anivexa._INTERNAL_CHAIN["1080"]
+    )
+    monkeypatch.setattr(
+        anivexa, "_internal_status", lambda p, aid, dl: "ok" if p == "animegg" else "unavailable"
+    )
+    anivexa._carrying_internals(20807, time.monotonic() + 10)
+    chain = anivexa._download_chain(20807, "1080")
+    assert chain[0] == "animegg"
+    assert sorted(chain) == sorted(anivexa._INTERNAL_CHAIN["1080"])
+
+
 # ── 4. Anivexa response normalization ─────────────────────────────────────────
 
 
@@ -433,6 +504,21 @@ def test_master_heights_parses_resolution_lines(monkeypatch):
         "#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=1280x720\n"
         "index_720.m3u8\n"
         "#EXT-X-STREAM-INF:BANDWIDTH=2000000,RESOLUTION=1920x1080\n"
+        "index_1080.m3u8\n"
+    )
+    monkeypatch.setattr(anivexa.httpx, "get", lambda *a, **k: _FakeHttp(master))
+    assert anivexa._master_heights("https://cdn/x/master.m3u8", {}) == [720, 1080]
+
+
+def test_master_heights_reports_rungs_not_raw_heights(monkeypatch):
+    """A letterboxed 1080p rendition (1920x804) is the 1080 the picker offers —
+    reporting its raw height made a source that serves 1080 look like it
+    doesn't."""
+    master = (
+        "#EXTM3U\n"
+        "#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=1280x536\n"
+        "index_720.m3u8\n"
+        "#EXT-X-STREAM-INF:BANDWIDTH=2000000,RESOLUTION=1920x804\n"
         "index_1080.m3u8\n"
     )
     monkeypatch.setattr(anivexa.httpx, "get", lambda *a, **k: _FakeHttp(master))
@@ -641,6 +727,27 @@ def test_fallback_provider_is_reanchored_with_season_title(monkeypatch, tmp_path
     # kept the AniList id for id-keyed providers to use.
     assert seen["anime_id"] == "Prison School"
     assert seen["anilist_id"] == 20807
+
+
+def test_reanchor_keeps_the_plan_source_when_a_fallback_cannot_resolve(monkeypatch):
+    """A fallback provider that can't find the show hands the plan's own source
+    back, so `episode_stream` raises the real failure and the chain hops. This
+    used to raise NameError instead — the handler named an exception the module
+    never imported, and the provider was recorded as failed for the wrong
+    reason."""
+    from app.models import ProviderError as ModelsProviderError
+
+    class Unresolvable:
+        name = "nyaa"
+
+        def resolve(self, title, year, anilist_id=None):
+            raise ModelsProviderError("nothing on Nyaa by that name")
+
+    source = EpisodeSource(
+        provider="anivexa", anime_id="20807", anime_title="Prison School",
+        year=2015, season=1, episode=3, anilist_id=20807,
+    )
+    assert anime_downloader._reanchor(Unresolvable(), source) is source
 
 
 def test_capability_unavailable_skips_without_probe(monkeypatch, tmp_path):

@@ -27,12 +27,14 @@ import re
 import threading
 import time
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Callable
 
 import httpx
 
 from ..models import ProviderError
+from . import quality as quality_rungs
 from .providers import (
     EpisodeSource,
     EpisodeStream,
@@ -158,7 +160,12 @@ def _internal_status(name: str, anilist_id: int, deadline: float) -> str:
 
 
 def _master_heights(url: str, headers: dict) -> list[int] | None:
-    """The heights a master playlist actually offers, or None if unreadable.
+    """The resolutions a master playlist actually offers, or None if unreadable.
+
+    Each RESOLUTION=WxH variant is reported as the *rung* it belongs to (see
+    quality.py), not as its raw pixel height: a ladder whose 1080p rendition is
+    a letterboxed 1920x804 offers 1080, and reporting 804 made the picker call
+    1080 unavailable on a source that serves it.
 
     Returns [] for a playlist that parses but carries no RESOLUTION= lines (a
     single-rendition master — the height can't be verified up front, so the
@@ -180,7 +187,11 @@ def _master_heights(url: str, headers: dict) -> list[int] | None:
         # A slideshow "video" is a sequence of images, not an episode.
         if re.search(r"\.(?:jpe?g|png|webp)(?:[?#].*)?$", text, re.M):
             return []
-        return sorted({int(h) for h in re.findall(r"RESOLUTION=\d+x(\d+)", text)})
+        rungs = {
+            quality_rungs.rung(int(w), int(h))
+            for w, h in re.findall(r"RESOLUTION=(\d+)x(\d+)", text)
+        }
+        return sorted(r for r in rungs if r)
     except Exception:  # noqa: BLE001 — unreadable master = unknown, not absent
         return None
 
@@ -215,20 +226,104 @@ def _probe_heights(
     return None
 
 
+# ── Which internal sources carry an anime ─────────────────────────────────────
+#
+# The sidecar's /episodes answer is per *anime*, not per season or episode, so
+# every probe of the same show — the season picker, each episode's quality
+# check, and the download itself — is asking the same question. Answering it
+# once and remembering it is what turns a 24-episode season's quality scan from
+# 120 sidecar calls into 5.
+_CARRY_TTL = VERIFIED_TTL
+_CARRY_UNKNOWN_TTL = UNKNOWN_TTL
+_carry_cache: OrderedDict[int, tuple[list[str], bool, float]] = OrderedDict()
+
+
+def _carrying_cached(anilist_id: int) -> tuple[list[str], bool] | None:
+    """The cached (carrying internals, any-probe-inconclusive), or None.
+
+    The inconclusive flag is part of the answer, not a detail of how it was
+    obtained: an empty list with the flag set means "nobody answered", which
+    must never be read as "nobody carries it".
+    """
+    with _cap_guard:
+        entry = _carry_cache.get(anilist_id)
+    if not entry:
+        return None
+    present, seen_unknown, stored_at = entry
+    ttl = _CARRY_UNKNOWN_TTL if seen_unknown else _CARRY_TTL
+    if time.monotonic() - stored_at >= ttl:
+        return None
+    return list(present), seen_unknown
+
+
+def _carrying_internals(anilist_id: int, deadline: float) -> tuple[list[str], bool]:
+    """(internals carrying this anime, whether any probe was inconclusive).
+
+    Probed concurrently: each /episodes call is independent, and asking five
+    sources one after another spent five round trips of latency to learn what
+    one round trip could. The result is cached per anime (never per episode),
+    and an inconclusive probe shortens the TTL instead of being remembered as
+    an absence.
+    """
+    cached = _carrying_cached(anilist_id)
+    if cached is not None:
+        return cached
+
+    statuses: dict[str, str] = {}
+    with ThreadPoolExecutor(max_workers=len(_ALL_INTERNALS)) as pool:
+        futures = {
+            pool.submit(_internal_status, name, anilist_id, deadline): name
+            for name in _ALL_INTERNALS
+        }
+        for future in futures:
+            name = futures[future]
+            try:
+                statuses[name] = future.result()
+            except Exception:  # noqa: BLE001 — a raised probe is never a verdict
+                statuses[name] = "unknown"
+
+    present = [n for n in _ALL_INTERNALS if statuses.get(n) == "ok"]
+    seen_unknown = any(s == "unknown" for s in statuses.values())
+    with _cap_guard:
+        _carry_cache[anilist_id] = (present, seen_unknown, time.monotonic())
+        _carry_cache.move_to_end(anilist_id)
+        while len(_carry_cache) > CACHE_MAX:
+            _carry_cache.popitem(last=False)
+    return present, seen_unknown
+
+
+def _union_heights(
+    present: list[str], anilist_id: int, deadline: float, episode: int | None = None
+) -> list[int]:
+    """The union of resolutions the carrying internals verifiably serve.
+
+    Concurrent for the same reason the carry probe is: each internal's watch
+    call plus master fetch is a second or two of pure waiting, and they don't
+    depend on each other. `episode` None asks the way the season probe always
+    has (episode 1, the default).
+    """
+    if not present:
+        return []
+
+    def one(internal: str) -> list[int] | None:
+        if time.monotonic() > deadline:
+            return None
+        if episode is None:
+            return _probe_heights(internal, anilist_id, deadline)
+        return _probe_heights(internal, anilist_id, deadline, episode=episode)
+
+    heights: set[int] = set()
+    with ThreadPoolExecutor(max_workers=len(present)) as pool:
+        for got in pool.map(one, present):
+            if got:
+                heights |= set(got)
+    return sorted(heights)
+
+
 def _probe_capability(anilist_id: int, season: int) -> ProviderCapability:
     """One full capability probe for a season, within a 25s wall-clock budget."""
     deadline = time.monotonic() + PROBE_BUDGET
-    present: list[str] = []
-    seen_unknown = False
-    for internal in _ALL_INTERNALS:
-        if time.monotonic() > deadline:
-            seen_unknown = True
-            break
-        status = _internal_status(internal, anilist_id, deadline)
-        if status == "ok":
-            present.append(internal)
-        elif status == "unknown":
-            seen_unknown = True
+    present, seen_unknown = _carrying_internals(anilist_id, deadline)
 
     if not present:
         # Nothing carries it: unavailable if the sidecar answered authoritatively
@@ -237,14 +332,8 @@ def _probe_capability(anilist_id: int, season: int) -> ProviderCapability:
         note = None if status == "unavailable" else "probe could not be completed"
         return ProviderCapability("anivexa", status=status, note=note)
 
-    # Verified: collect the union of heights actually read from real masters.
-    heights: list[int] = []
-    for internal in present:
-        if time.monotonic() > deadline:
-            break
-        got = _probe_heights(internal, anilist_id, deadline)
-        if got:
-            heights = sorted(set(heights) | set(got))
+    # Verified: the union of resolutions actually read from real masters.
+    heights = _union_heights(present, anilist_id, deadline)
     return ProviderCapability(
         "anivexa",
         status="ok",
@@ -320,29 +409,17 @@ def _probe_episode(anilist_id: int, season: int, episode: int) -> ProviderCapabi
         return ProviderCapability(
             "anivexa", status="unavailable", note="season authoritatively absent"
         )
-    present: list[str] = []
-    seen_unknown = False
-    for internal in _ALL_INTERNALS:
-        if time.monotonic() > deadline:
-            seen_unknown = True
-            break
-        status = _internal_status(internal, anilist_id, deadline)
-        if status == "ok":
-            present.append(internal)
-        elif status == "unknown":
-            seen_unknown = True
+    # Which internals carry the show is an answer the season probe above has
+    # already paid for (it is per-anime, not per-episode); reusing it leaves
+    # this probe with only the one question that is actually per-episode —
+    # which resolutions THIS episode's masters offer.
+    present, seen_unknown = _carrying_internals(anilist_id, deadline)
     if not present:
         status = "unavailable" if not seen_unknown else "unknown"
         note = None if status == "unavailable" else "probe could not be completed"
         return ProviderCapability("anivexa", status=status, note=note)
 
-    heights: list[int] = []
-    for internal in present:
-        if time.monotonic() > deadline:
-            break
-        got = _probe_heights(internal, anilist_id, deadline, episode=episode)
-        if got:
-            heights = sorted(set(heights) | set(got))
+    heights = _union_heights(present, anilist_id, deadline, episode=episode)
     return ProviderCapability(
         "anivexa",
         status="ok",
@@ -503,6 +580,28 @@ def _stream_from(
     )
 
 
+def _download_chain(anilist_id: int, quality: str) -> list[str]:
+    """The internal sources to ask for an episode, best bet first.
+
+    The order stays the resolution's preference order (`_INTERNAL_CHAIN`), with
+    the sources a capability probe has already verified carry this anime moved
+    ahead of the rest. The first `/watch` call is then almost always the one
+    that answers, instead of the download opening with two dead sources and a
+    few seconds of waiting.
+
+    Nothing is ever dropped, and nothing is reordered on a guess: an anime
+    that has never been probed keeps the plain preference order, and a source
+    that isn't known to carry it is still tried, just later.
+    """
+    chain = list(_INTERNAL_CHAIN.get(quality, _INTERNAL_CHAIN["original"]))
+    cached = _carrying_cached(anilist_id)
+    if cached is None:
+        return chain
+    carried, _seen_unknown = cached
+    # A stable sort, so sources within each group keep their preference order.
+    return sorted(chain, key=lambda name: 0 if name in carried else 1)
+
+
 class AnivexaProvider:
     name = "anivexa"
     streams_hls = True  # episode_stream returns an HLS/direct URL yt-dlp fetches
@@ -575,7 +674,7 @@ class AnivexaProvider:
         if not aid:
             raise ProviderError("Anivexa needs the AniList id to resolve an episode.")
         episode = src.episode
-        for internal in _INTERNAL_CHAIN.get(quality, _INTERNAL_CHAIN["original"]):
+        for internal in _download_chain(aid, quality):
             try:
                 watch = _get(f"/watch/{internal}/{aid}/sub/{internal}-{episode}").json()
             except ProviderError:

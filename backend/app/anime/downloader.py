@@ -21,6 +21,7 @@ no changes.
 """
 
 import json
+import os
 import re
 import shutil
 from pathlib import Path
@@ -32,9 +33,17 @@ from yt_dlp.utils import DownloadCancelled
 
 from .. import downloader as audio
 from ..downloader import Cancelled, DownloadError, _clean_partials, _run_ffmpeg, safe_filename, _with_ext
-from ..models import Track
+from ..models import ProviderError, Track
 from ..ytdlp import base_opts
+from . import quality as quality_rungs
 from .providers import EpisodeSource, EpisodeStream, QualityUnavailable
+
+# How many HLS fragments to fetch at once. Streaming sources serve an episode
+# as hundreds of small fragments, and yt-dlp pulls them one at a time by
+# default — the round-trip to the CDN, not the bandwidth, is what makes an
+# episode take twenty minutes. Eight in flight saturates a normal connection;
+# raise it for a fat pipe, drop it to 1 for a source that rate-limits.
+HLS_CONCURRENCY = max(1, int(os.getenv("ANIME_HLS_CONCURRENCY", "8") or 8))
 
 # "original" keeps the provider's own stream untouched (like the audio
 # section's original) instead of asking for a specific resolution.
@@ -110,13 +119,25 @@ def _format_selector(quality: str) -> str:
     """The yt-dlp format string for a requested resolution.
 
     `original` takes the upload's best available stream. An explicit
-    resolution (any integer height a provider reports) is strict: it asks for
-    exactly that height and has NO trailing unrestricted `/best` fallback, so
-    a missing variant fails the download instead of silently upgrading.
+    resolution is strict about the *rung* and forgiving about the pixels: a
+    ladder variant counts when its height is within the rung's band (1072 is
+    1080p) or when its width is (1920x804 is the 1080p cut of a widescreen
+    film — its height alone would never match). There is still NO trailing
+    unrestricted `/best`, so a source without the rung fails the download
+    rather than silently serving a different one.
     """
     if quality == "original":
         return "bestvideo+bestaudio/best"
-    return f"bestvideo[height={quality}]+bestaudio/best[height={quality}]"
+    low, high = quality_rungs.band(int(quality))
+    wlow, whigh = quality_rungs.width_band(int(quality))
+    by_height = f"[height>={low}][height<={high}]"
+    by_width = f"[width>={wlow}][width<={whigh}]"
+    return (
+        f"bestvideo{by_height}+bestaudio/"
+        f"bestvideo{by_width}+bestaudio/"
+        f"best{by_height}/"
+        f"best{by_width}"
+    )
 
 
 def _download_with_ytdlp(
@@ -154,6 +175,9 @@ def _download_with_ytdlp(
         overwrites=True,
         progress_hooks=[hook],
         http_headers=stream.headers or {},
+        # An episode is hundreds of HLS fragments; fetching them one at a time
+        # spends the download waiting on round trips rather than on bandwidth.
+        concurrent_fragment_downloads=HLS_CONCURRENCY,
         # The stream is already the video we were asked for; never let yt-dlp
         # go looking for a "better" match.
         merge_output_format="mp4",
@@ -252,7 +276,10 @@ def _finalize_subtitles(
     if fas_srt is not None:
         tracks.append(("fas", fas_srt))
     if not tracks:
-        return video
+        # Persian alone was asked for and the translation didn't come back.
+        # Shipping the English the source did give us beats shipping a video
+        # with no subtitles at all — the same fallback the torrent path makes.
+        tracks.append(("eng", eng_sub))
     return mux_n(video, tracks, dest)
 
 
@@ -291,18 +318,49 @@ def _probe_height(video: Path) -> int | None:
         return None
 
 
-def _check_served_quality(requested: str, served: int | None) -> None:
+def _probe_dimensions(video: Path) -> tuple[int | None, int | None]:
+    """(width, height) of a finished file, via one ffprobe call.
+
+    Both are needed to name the resolution: a letterboxed episode's height is
+    far below the rung it was released at, and only the width says which rung
+    that is (see quality.py). A file whose dimensions can't be read this way
+    falls back to the height-only probe, which is all the older path had.
+    """
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height", "-of", "csv=p=0", str(video)],
+            capture_output=True, text=True, timeout=30,
+        )
+        parts = [p.strip() for p in proc.stdout.strip().splitlines()[0].split(",")]
+        width, height = int(parts[0]), int(parts[1])
+        if height > 0:
+            return (width if width > 0 else None, height)
+    except Exception:  # noqa: BLE001 — an unreadable file isn't worth failing on
+        pass
+    return (None, _probe_height(video))
+
+
+def _check_served_quality(
+    requested: str, served: int | None, width: int | None = None
+) -> None:
     """Refuse an explicit-quality download that wasn't actually served at that
     resolution.
 
     A torrent's title can lie: one labeled [480p] may hold a 720p file. The
-    bytes on disk are the truth, so once the file exists we verify the probed
-    height against the request. `original` accepts whatever the source
-    released and is never checked. For an explicit request (any height a
-    provider reports — 480/720/1080 and beyond) a served height that differs —
-    or that couldn't be probed at all — raises QualityUnavailable, so the
-    provider chain moves on to the next source at the SAME requested resolution
-    instead of shipping the wrong file.
+    bytes on disk are the truth, so once the file exists we verify what was
+    probed against the request. `original` accepts whatever the source
+    released and is never checked.
+
+    The comparison is by *rung*, not by pixel equality (see quality.py): a
+    1920x804 widescreen file IS the 1080p release, and refusing it as "804p"
+    used to fail a download that had already succeeded. A served rung that
+    differs from the request — or a file whose dimensions couldn't be probed
+    at all — raises QualityUnavailable, so the provider chain moves on to the
+    next source at the SAME requested resolution instead of shipping the wrong
+    file.
     """
     if requested == "original" or not is_video_resolution(requested):
         return
@@ -310,9 +368,10 @@ def _check_served_quality(requested: str, served: int | None) -> None:
         raise QualityUnavailable(
             f"Requested {requested}p but the served video's height could not be verified."
         )
-    if served != int(requested):
+    if not quality_rungs.matches(requested, width, served):
         raise QualityUnavailable(
-            f"Requested {requested}p but the served video is {served}p."
+            f"Requested {requested}p but the served video is "
+            f"{quality_rungs.rung(width, served)}p ({width or '?'}x{served})."
         )
 
 
@@ -443,11 +502,12 @@ def download_video_track(
                 # whose real height differs from what its title claimed is a
                 # quality mismatch, not a completed download — fall through to
                 # the next provider at the same resolution.
-                height = _probe_height(final)
+                width, height = _probe_dimensions(final)
                 if meta is not None:
+                    served = quality_rungs.rung(width, height)
                     meta["provider"] = provider.name
-                    meta["served_quality"] = f"{height}p" if height else None
-                _check_served_quality(resolution, height)
+                    meta["served_quality"] = f"{served}p" if served else None
+                _check_served_quality(resolution, height, width)
                 return final
             except (Cancelled, KeyboardInterrupt):
                 _clean_partials(dest)

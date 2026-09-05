@@ -47,6 +47,17 @@ _TIMEOUT = 15
 _FRANCHISE_TTL_SECONDS = 600
 _franchise_cache: dict[int, tuple[float, list["AniMedia"]]] = {}
 
+# Individual Media entries, shared by every franchise walk. A search page's
+# franchises overlap heavily (each season names its siblings), so the same
+# handful of ids would otherwise be fetched once per result card.
+_MEDIA_TTL_SECONDS = 600
+_MEDIA_CACHE_MAX = 1000
+_media_cache: dict[int, tuple[float, "AniMedia"]] = {}
+
+# AniList's Page accepts up to 50 entries; one franchise level is never close
+# to that, so a whole level of the walk is a single request.
+_BATCH_SIZE = 50
+
 
 @dataclass
 class AniMedia:
@@ -196,12 +207,64 @@ def search(query: str, limit: int = 12) -> list[AniMedia]:
     return [_media_from_node(node) for node in nodes["media"]]
 
 
+def _cached_media(media_id: int) -> AniMedia | None:
+    entry = _media_cache.get(media_id)
+    if entry and time.monotonic() - entry[0] < _MEDIA_TTL_SECONDS:
+        return entry[1]
+    return None
+
+
+def _remember(media: AniMedia) -> AniMedia:
+    if len(_media_cache) >= _MEDIA_CACHE_MAX:
+        _media_cache.clear()  # a whole-cache reset beats tracking an LRU here
+    _media_cache[media.id] = (time.monotonic(), media)
+    return media
+
+
 def get(media_id: int) -> AniMedia:
     """A single anime by its AniList id."""
+    cached = _cached_media(media_id)
+    if cached is not None:
+        return cached
     nodes = _gql({"id": media_id, "type": "ANIME", "page": 1, "perPage": 1})
     if not nodes["media"]:
         raise ProviderError(f"Anime {media_id} not found on AniList.")
-    return _media_from_node(nodes["media"][0])
+    return _remember(_media_from_node(nodes["media"][0]))
+
+
+def get_many(media_ids: list[int]) -> dict[int, AniMedia]:
+    """Several anime in one request, keyed by id.
+
+    `id_in` is what turns a franchise walk from one round trip per season into
+    one per BFS level — a six-season franchise used to be six sequential
+    requests to AniList, each with the full latency of a TLS handshake.
+
+    Ids that AniList doesn't answer for (a dangling relation) are simply
+    absent from the result; the caller decides what that means.
+    """
+    out: dict[int, AniMedia] = {}
+    missing: list[int] = []
+    for media_id in media_ids:
+        cached = _cached_media(media_id)
+        if cached is not None:
+            out[media_id] = cached
+        else:
+            missing.append(media_id)
+
+    for start in range(0, len(missing), _BATCH_SIZE):
+        chunk = missing[start : start + _BATCH_SIZE]
+        nodes = _gql(
+            {
+                "idIn": chunk,
+                "type": "ANIME",
+                "page": 1,
+                "perPage": len(chunk),
+            }
+        )
+        for node in nodes["media"]:
+            media = _remember(_media_from_node(node))
+            out[media.id] = media
+    return out
 
 
 def _franchise_cached(media_id: int) -> list[AniMedia] | None:
@@ -237,27 +300,30 @@ def franchise(media_id: int) -> list[AniMedia]:
 
     seen: set[int] = {seed.id}  # the seed is already fetched
     by_id: dict[int, AniMedia] = {seed.id: seed}
-    # Start the walk from the seed's relations, so its chain is still followed.
-    frontier = [
+    # Walk the chain one *level* at a time rather than one season at a time:
+    # every id at a given remove from the seed is fetched in a single batched
+    # request, so a six-season franchise costs two round trips instead of six.
+    frontier = {
         related
         for rtype, related, _fmt in seed.relations
         if rtype in ("SEQUEL", "PREQUEL")
-    ]
+    } - seen
     while frontier:
-        current = frontier.pop()
-        if current in seen:
-            continue
-        seen.add(current)
+        seen |= frontier
         try:
-            media = get(current)
+            level = get_many(sorted(frontier))
         except ProviderError:
-            continue  # a dangling relation must not kill the whole walk
-        by_id[current] = media
-        for relation_type, related_id, _fmt in media.relations:
-            # Continue through sequels and prequels; don't branch into
-            # side-stories/spin-offs — those aren't "more seasons".
-            if relation_type in ("SEQUEL", "PREQUEL"):
-                frontier.append(related_id)
+            break  # a failed level ends the walk with what we already have
+        frontier = set()
+        for media in level.values():
+            # An id AniList didn't answer for is simply missing from `level` —
+            # a dangling relation must not kill the whole walk.
+            by_id[media.id] = media
+            for relation_type, related_id, _fmt in media.relations:
+                # Continue through sequels and prequels; don't branch into
+                # side-stories/spin-offs — those aren't "more seasons".
+                if relation_type in ("SEQUEL", "PREQUEL") and related_id not in seen:
+                    frontier.add(related_id)
 
     # Aired seasons sort by (year, title); unreleased ones (year is None, e.g.
     # an announced sequel with no date yet) sort after them rather than leaping

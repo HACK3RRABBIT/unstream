@@ -145,11 +145,15 @@ const en = {
     quality: {
       label: 'Video quality',
       original: 'Original',
-      hint: 'The resolution every anime download starts at.',
-      unavailable: (quality: string) => `${quality} isn't available for this anime.`,
-      checking: 'Checking available qualities…',
-      undetermined: "This episode's available qualities couldn't be determined.",
+      hint: 'The default resolution — set it per episode below to use something else for just that one.',
+      unavailable: (quality: string) => `${quality} isn't available for this episode.`,
+      checking: 'Checking…',
+      undetermined:
+        "This episode's verified qualities couldn't be confirmed — the pill is still a valid request.",
       retry: 'Retry',
+      verified: 'Verified available for this episode',
+      custom: 'Custom resolution',
+      customAria: 'Custom resolution, in pixels',
     },
     /** Real provider-chain search progress while a download resolves sources.
      *  Driven by the backend's provider execution, never a timer. */

@@ -10,7 +10,7 @@ import pytest
 
 from app import downloader, jobs
 from app.anime import downloader as anime_downloader
-from app.models import Track
+from app.models import ProviderError, Track
 
 
 def make_episode_track(track_id="1:s1e1", episode=1) -> Track:
@@ -309,6 +309,68 @@ def test_nyaa_search_picks_best_seeded_matching_episode(monkeypatch):
     torrent = p._search_episode(src, 1100)
     assert torrent["seeders"] == 60  # the best-seeded episode, not the batch
     assert "ep60" in torrent["magnet"]
+
+
+def test_nyaa_asks_its_two_query_forms_together(monkeypatch):
+    """Both search forms still run — concurrently, so the second one no longer
+    waits out the first before a download can start."""
+    from app.anime import nyaa
+
+    asked: list[str] = []
+
+    class FakeResp:
+        text = "<html>No results found</html>"
+
+        def raise_for_status(self):
+            return None
+
+    def fake_get(url, params=None, **kwargs):
+        asked.append(params["q"])
+        return FakeResp()
+
+    monkeypatch.setattr(nyaa._client, "get", fake_get)
+    src = nyaa.EpisodeSource(
+        provider="nyaa", anime_id="One Piece", anime_title="One Piece",
+        year=1999, season=1, episode=1100,
+    )
+    with pytest.raises(ProviderError):
+        nyaa.NyaaProvider()._search_episode(src, 1100)
+    assert sorted(asked) == ["One Piece 1100", "One Piece S01E1100"]
+
+
+def test_nyaa_search_failure_is_never_an_empty_result(monkeypatch):
+    """A search that didn't happen must not read as a search that found
+    nothing — even when the other query in flight succeeded."""
+    from app.anime import nyaa
+
+    def fake_get(url, params=None, **kwargs):
+        raise OSError("connection reset")
+
+    monkeypatch.setattr(nyaa._client, "get", fake_get)
+    src = nyaa.EpisodeSource(
+        provider="nyaa", anime_id="Show", anime_title="Show",
+        year=None, season=1, episode=1,
+    )
+    with pytest.raises(ProviderError):
+        nyaa.NyaaProvider()._search_episode(src, 1)
+
+
+def test_aria2_progress_reads_the_latest_summary(tmp_path):
+    """Torrent downloads used to sit at 0% until the file appeared — aria2 has
+    no callback, so its summary line is read back out of the log."""
+    from app.anime import nyaa
+
+    log = tmp_path / "aria2.log"
+    assert nyaa._aria2_progress(log) is None  # nothing written yet
+
+    log.write_text(
+        "[#7c9e0f 12MiB/1.3GiB(0%) CN:4 SD:1 DL:1.1MiB ETA:20m]\n"
+        "[#7c9e0f 412MiB/1.3GiB(30%) CN:34 SD:6 DL:4.1MiB ETA:3m41s]\n"
+    )
+    assert nyaa._aria2_progress(log) == 0.30
+
+    log.write_text("[#7c9e0f 1.3GiB/1.3GiB(100%) CN:34 SD:6 DL:4.1MiB]\n")
+    assert nyaa._aria2_progress(log) == 1.0
 
 
 def test_nyaa_batch_only_episode_falls_back_to_batch(monkeypatch):
@@ -676,12 +738,25 @@ def test_format_selector_is_strict_for_explicit_quality():
     variant fails the download rather than silently upgrading."""
     from app.anime.downloader import _format_selector
 
-    assert _format_selector("480") == "bestvideo[height=480]+bestaudio/best[height=480]"
-    assert _format_selector("720") == "bestvideo[height=720]+bestaudio/best[height=720]"
-    assert _format_selector("1080") == "bestvideo[height=1080]+bestaudio/best[height=1080]"
     assert _format_selector("original") == "bestvideo+bestaudio/best"
     for quality in ("480", "720", "1080"):
-        assert not _format_selector(quality).endswith("/best")
+        selector = _format_selector(quality)
+        assert not selector.endswith("/best")
+        # Every alternative is constrained: no clause may match any format.
+        for clause in selector.split("/"):
+            assert "[" in clause, clause
+
+
+def test_format_selector_selects_the_rung_not_the_pixel_height():
+    """The rung's band, not an equality test: a 1080p release cut at 1920x804
+    must be selectable, and a 720p one must not sneak into a 1080 request."""
+    from app.anime.downloader import _format_selector
+
+    selector = _format_selector("1080")
+    # Heights a hair off the rung (1072/1080) are inside the band; 720 is not.
+    assert "[height>=1015][height<=1145]" in selector
+    # The widescreen cut is caught by its width instead of its height.
+    assert "[width>=1804][width<=2035]" in selector
 
 
 def test_served_quality_comes_from_probed_height(monkeypatch, tmp_path):
@@ -1336,6 +1411,91 @@ def test_batch_rel_path_normalizes_safely():
 # ── Persian subtitle integration: subs list + provider muxing ─────────────────
 
 
+def test_anime_download_request_episode_qualities_validation():
+    """episode_qualities accepts 'original' and well-formed resolutions per
+    episode id; rejects anything is_video_resolution wouldn't."""
+    from app.anime.routes import AnimeDownloadRequest
+
+    req = AnimeDownloadRequest(
+        media_id=1, season=1,
+        episode_qualities={"1:s1e1": "1080", "1:s1e2": "original", "1:s1e3": "480"},
+    )
+    assert req.episode_qualities == {"1:s1e1": "1080", "1:s1e2": "original", "1:s1e3": "480"}
+    assert AnimeDownloadRequest(media_id=1, season=1).episode_qualities == {}
+    with pytest.raises(Exception):
+        AnimeDownloadRequest(media_id=1, season=1, episode_qualities={"1:s1e1": "1080p"})
+    with pytest.raises(Exception):
+        AnimeDownloadRequest(media_id=1, season=1, episode_qualities={"1:s1e1": "best"})
+
+
+def test_download_route_applies_per_episode_quality_overrides(monkeypatch):
+    """Each episode's Track carries its own quality when the request gives
+    one; an episode absent from the map is left to the job's default."""
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.anime import anilist, providers as providers_module
+    from app.anime.providers import EpisodeSource, EpisodeStream
+
+    class FakeProvider:
+        name = "hianime"
+        streams_hls = True
+
+        def available(self):
+            return True
+
+        def resolve(self, title, year):
+            return EpisodeSource(
+                provider="hianime", anime_id="show", anime_title=title,
+                year=year, season=0, episode=0,
+            )
+
+        def episode_count(self, src):
+            return 3
+
+        def episode_stream(self, src, quality):
+            return EpisodeStream(provider="hianime", url="https://cdn.example/p.m3u8")
+
+    monkeypatch.setattr(providers_module, "providers", lambda: [FakeProvider()])
+    monkeypatch.setattr(
+        anilist,
+        "franchise",
+        lambda media_id: [
+            anilist.AniMedia(
+                id=media_id, title_romaji="SHOW", format="TV",
+                episodes=3, season_year=2020, status="FINISHED",
+            )
+        ],
+    )
+    from app import jobs as jobs_module
+    from types import SimpleNamespace
+
+    captured = {"tracks": None}
+    monkeypatch.setattr(
+        jobs_module,
+        "start",
+        lambda name, tracks, quality, embed_lyrics, owner, visitor: (
+            captured.__setitem__("tracks", tracks) or SimpleNamespace(id="job123")
+        ),
+    )
+
+    client = TestClient(app)
+    resp = client.post(
+        "/api/anime/download",
+        json={
+            "media_id": 16498,
+            "season": 1,
+            "quality": "720",
+            "episode_ids": ["16498:s1e1", "16498:s1e2", "16498:s1e3"],
+            "episode_qualities": {"16498:s1e1": "1080", "16498:s1e3": "original"},
+        },
+    )
+    assert resp.status_code == 200
+    by_id = {t.id: t for t in captured["tracks"]}
+    assert by_id["16498:s1e1"].quality == "1080"
+    assert by_id["16498:s1e2"].quality is None  # falls back to the job's "720"
+    assert by_id["16498:s1e3"].quality == "original"
+
+
 def test_anime_download_request_subs_validation():
     """subs accepts a list, a legacy single string, and 'none'/[]; rejects
     unknown languages."""
@@ -1623,16 +1783,15 @@ def test_is_video_resolution_accepts_arbitrary_heights():
 
 
 def test_format_selector_accepts_arbitrary_resolutions():
-    """The strict selector (exact height, no `/best` fallback) is emitted for
-    any explicit resolution, whatever its value."""
+    """The strict selector (the rung's band, no `/best` fallback) is emitted
+    for any explicit resolution, whatever its value."""
     from app.anime.downloader import _format_selector
 
-    assert _format_selector("240") == "bestvideo[height=240]+bestaudio/best[height=240]"
-    assert _format_selector("540") == "bestvideo[height=540]+bestaudio/best[height=540]"
-    assert _format_selector("1440") == "bestvideo[height=1440]+bestaudio/best[height=1440]"
-    assert _format_selector("2160") == "bestvideo[height=2160]+bestaudio/best[height=2160]"
     for quality in ("240", "540", "1440", "2160"):
-        assert not _format_selector(quality).endswith("/best")
+        selector = _format_selector(quality)
+        assert not selector.endswith("/best")
+        low, high = int(quality) * 0.94, int(quality) * 1.06
+        assert f"[height>={int(low)}][height<={round(high)}]" in selector
 
 
 def test_check_served_quality_enforces_arbitrary_heights():

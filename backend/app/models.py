@@ -35,6 +35,13 @@ class Track:
     # Subtitle languages to mux into a video episode ("eng"/"fas"); empty means
     # no subtitles. Captured at job start like quality; ignored for audio.
     subs: list[str] = field(default_factory=lambda: ["eng"])
+    # Per-track quality override. None means "use the job's own quality" — the
+    # one setting every music track in a job shares. Anime is the exception:
+    # different episodes of the same season genuinely have different verified
+    # resolutions, so each episode's Track can carry its own choice, made from
+    # what that specific episode was shown to support rather than one setting
+    # forced onto a whole season.
+    quality: str | None = None
 
     @property
     def query(self) -> str:

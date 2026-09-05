@@ -31,8 +31,6 @@ import { AnimeSearchResults } from './components/AnimeSearchResults'
 import { TabSwitch, type AppTab } from './components/TabSwitch'
 import { DownloadsDock } from './components/DownloadsDock'
 import { QualityPicker } from './components/QualityPicker'
-import { VideoQualityPicker } from './components/VideoQualityPicker'
-import { useAnimeSeasonDiscovery } from './lib/animeDiscovery'
 import { LyricsToggle } from './components/LyricsToggle'
 import { LanguagePicker } from './components/LanguagePicker'
 import { SettingsSheet } from './components/SettingsSheet'
@@ -500,18 +498,6 @@ function Shell() {
   const view = stack.at(-1)
   const previous = stack.at(-2)
 
-  // The video-quality picker is the single global selector. It discovers which
-  // resolutions actually exist from the season on screen — loading while the
-  // probe runs, then only verified options, and always `original` when there
-  // is no season context. One probe per active season, shared with the season
-  // view's own /sources query (same key + staleTime) so only one request fires.
-  const activeSeason =
-    view?.type === 'anime-season' ? { id: view.anime.id, season: view.season.season } : null
-  const { discovery: videoDiscovery, refetch: videoDiscoveryRefetch } = useAnimeSeasonDiscovery(
-    activeSeason?.id ?? null,
-    activeSeason?.season ?? null,
-  )
-
   // Nothing asked for yet: the only time the hero earns its screen space.
   // `busy` counts as landed — the skeleton is already below, and holding the
   // hero up through the first search then dropping it reads as a jump. An
@@ -571,21 +557,19 @@ function Shell() {
         />
         {/* Preferences, so they share the trailing edge; the two that change
             what a download *is* come first. Below `sm` they move into a sheet:
-            three chip strips do not fit beside the wordmark, and a flex row
+            two chip strips do not fit beside the wordmark, and a flex row
             will not shrink below its content, so leaving them here gave the
-            document a horizontal scrollbar. Each tab shows the quality axis
-            that applies to it — music picks a bitrate, anime a resolution. */}
+            document a horizontal scrollbar. Music picks one bitrate for every
+            track here; anime's resolution is chosen per season (a default)
+            and per episode (an override) inside the season itself, since
+            different episodes genuinely support different qualities — there
+            is no single global axis left to put in this header. */}
         <div className="ms-auto hidden items-center gap-2.5 sm:flex">
-          {tab === 'music' ? (
+          {tab === 'music' && (
             <>
               <LyricsToggle />
               <QualityPicker />
             </>
-          ) : (
-            <VideoQualityPicker
-              discovery={videoDiscovery}
-              onRetry={() => videoDiscoveryRefetch()}
-            />
           )}
           <LanguagePicker />
         </div>
@@ -599,14 +583,7 @@ function Shell() {
         </button>
       </header>
 
-      {settingsOpen && (
-        <SettingsSheet
-          tab={tab}
-          onClose={() => setSettingsOpen(false)}
-          videoDiscovery={videoDiscovery}
-          onRetryDiscovery={() => videoDiscoveryRefetch()}
-        />
-      )}
+      {settingsOpen && <SettingsSheet tab={tab} onClose={() => setSettingsOpen(false)} />}
 
       <main className="mx-auto w-full max-w-3xl flex-1 px-5 pb-24">
         {sharedArrival ? (

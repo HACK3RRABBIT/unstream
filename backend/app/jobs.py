@@ -254,6 +254,12 @@ def _run_track(job: Job, state: TrackState) -> None:
 
     label = f"{', '.join(state.track.artists)} - {state.track.title}"
     started = time.monotonic()
+    # A track's own quality wins when it has one — anime episodes can each
+    # carry a different verified resolution; job.quality is the season-wide
+    # default every other track (and any episode with no override) falls
+    # back to. Resolved once so progress, tagging and analytics all agree on
+    # what was actually asked for.
+    quality = state.track.quality or job.quality
     # The video pipeline reports which provider served the episode and the
     # actual resolution (ffprobe'd); audio leaves it empty.
     meta: dict = {}
@@ -263,7 +269,7 @@ def _run_track(job: Job, state: TrackState) -> None:
             job.dir,
             on_progress,
             filename=state.filename,
-            quality=job.quality,
+            quality=quality,
             on_source=on_source,
             embed_lyrics=job.embed_lyrics,
             should_cancel=job.stopped.is_set,
@@ -287,7 +293,7 @@ def _run_track(job: Job, state: TrackState) -> None:
             "track_done",
             visitor=job.visitor or None,
             source=_host_of(chosen["url"]),
-            detail=job.quality,
+            detail=quality,  # what this track actually asked for, not the job default
             label=label,
             value=chosen["attempt"],
             ms=int((time.monotonic() - started) * 1000),

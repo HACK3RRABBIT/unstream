@@ -40,6 +40,34 @@ def node(
     }
 
 
+@pytest.fixture(autouse=True)
+def _fresh_media_cache():
+    """Media entries are module state shared by every walk; clear them so one
+    test's canned AniList never answers the next one's query."""
+    anilist._media_cache.clear()
+    yield
+
+
+def stub_gql(monkeypatch, by_id, calls=None):
+    """Answer both query shapes from one canned catalog.
+
+    A walk asks for a whole level at once (`idIn`) and a single lookup asks for
+    one id (`id`); the fake serves either, and counts requests when asked, so a
+    test can assert how many round trips a franchise actually costs.
+    """
+
+    def fake_gql(variables):
+        if calls is not None:
+            calls.append(variables)
+        if variables.get("idIn") is not None:
+            return {"media": [by_id[i] for i in variables["idIn"] if i in by_id]}
+        media_id = variables.get("id")
+        return {"media": [by_id[media_id]] if media_id in by_id else []}
+
+    monkeypatch.setattr(anilist, "_gql", fake_gql)
+    return fake_gql
+
+
 def test_search_maps_fields(monkeypatch):
     monkeypatch.setattr(
         anilist,
@@ -85,22 +113,15 @@ def test_franchise_walks_sequels_and_sorts_by_year(monkeypatch):
         9: node(9, romaji="Alpha Chibi", episodes=1, year=2004),
     }
 
-    def fake_get(media_id):
-        return anilist._media_from_node(by_id[media_id])
-
-    def fake_gql(variables):
-        mid = variables["id"]
-        if mid not in by_id:
-            return {"media": []}
-        return {"media": [by_id[mid]]}
-
-    monkeypatch.setattr(anilist, "get", fake_get)
-    monkeypatch.setattr(anilist, "_gql", fake_gql)
+    calls = []
+    stub_gql(monkeypatch, by_id, calls)
     monkeypatch.setattr(anilist, "_franchise_cache", {})
 
     seasons = anilist.franchise(1)
     # Spin-off (id 9) is reachable but not via SEQUEL/PREQUEL, so dropped.
     assert [m.id for m in seasons] == [1, 2, 3]
+    # The seed, then one request per level of the chain — not one per season.
+    assert len(calls) == 3
 
 
 def test_franchise_unreleased_sorts_last(monkeypatch):
@@ -109,14 +130,7 @@ def test_franchise_unreleased_sorts_last(monkeypatch):
         2: node(2, romaji="Alpha Next", episodes=0, year=None, relations=[]),
     }
 
-    def fake_get(media_id):
-        return anilist._media_from_node(by_id[media_id])
-
-    def fake_gql(variables):
-        return {"media": [by_id[variables["id"]]]}
-
-    monkeypatch.setattr(anilist, "get", fake_get)
-    monkeypatch.setattr(anilist, "_gql", fake_gql)
+    stub_gql(monkeypatch, by_id)
     monkeypatch.setattr(anilist, "_franchise_cache", {})
 
     seasons = anilist.franchise(1)
@@ -124,39 +138,40 @@ def test_franchise_unreleased_sorts_last(monkeypatch):
 
 
 def test_franchise_caches(monkeypatch):
-    calls = {"n": 0}
     by_id = {1: node(1, romaji="Alpha", relations=[])}
 
-    def fake_get(media_id):
-        calls["n"] += 1
-        return anilist._media_from_node(by_id[media_id])
-
-    def fake_gql(variables):
-        return {"media": [by_id[variables["id"]]]}
-
-    monkeypatch.setattr(anilist, "get", fake_get)
-    monkeypatch.setattr(anilist, "_gql", fake_gql)
+    requests = []
+    stub_gql(monkeypatch, by_id, requests)
     monkeypatch.setattr(anilist, "_franchise_cache", {})
 
     anilist.franchise(1)
     anilist.franchise(1)
-    assert calls["n"] == 1  # second call served from cache
+    assert len(requests) == 1  # second call served from cache
+
+
+def test_seasons_are_fetched_once_across_franchise_walks(monkeypatch):
+    """A search page's cards overlap — every season of a franchise names its
+    siblings. Fetching each id once is what keeps the page's walks cheap."""
+    by_id = {
+        1: node(1, romaji="Alpha", year=2000, relations=[("SEQUEL", 2)]),
+        2: node(2, romaji="Alpha II", year=2003, relations=[("PREQUEL", 1)]),
+    }
+    requests = []
+    stub_gql(monkeypatch, by_id, requests)
+    monkeypatch.setattr(anilist, "_franchise_cache", {})
+
+    assert [m.id for m in anilist.franchise(1)] == [1, 2]
+    before = len(requests)
+    # The sibling's own walk asks for ids the first walk already fetched.
+    assert [m.id for m in anilist.franchise(2)] == [1, 2]
+    assert len(requests) == before
 
 
 def test_dangling_relation_does_not_break_franchise(monkeypatch):
     # A SEQUEL edge pointing at an id that no longer exists on AniList.
     by_id = {1: node(1, romaji="Alpha", relations=[("SEQUEL", 999)])}
 
-    def fake_get(media_id):
-        if media_id not in by_id:
-            raise ProviderError("not found")
-        return anilist._media_from_node(by_id[media_id])
-
-    def fake_gql(variables):
-        return {"media": [] if variables["id"] not in by_id else [by_id[variables["id"]]]}
-
-    monkeypatch.setattr(anilist, "get", fake_get)
-    monkeypatch.setattr(anilist, "_gql", fake_gql)
+    stub_gql(monkeypatch, by_id)
     monkeypatch.setattr(anilist, "_franchise_cache", {})
 
     assert [m.id for m in anilist.franchise(1)] == [1]

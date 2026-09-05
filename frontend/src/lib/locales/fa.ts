@@ -132,11 +132,15 @@ const fa: Messages = {
     quality: {
       label: 'کیفیت ویدیو',
       original: 'اورجینال',
-      hint: 'کیفیتی که هر دانلود انیمه با آن شروع می‌شود.',
-      unavailable: (quality: string) => `کیفیت ${quality} برای این انیمه در دسترس نیست.`,
-      checking: 'در حال بررسی کیفیت‌های در دسترس...',
-      undetermined: 'کیفیت‌های در دسترس این قسمت مشخص نشد.',
+      hint: 'کیفیت پیش‌فرض — برای هر قسمت می‌توانید جداگانه کیفیت دیگری انتخاب کنید.',
+      unavailable: (quality: string) => `کیفیت ${quality} برای این قسمت در دسترس نیست.`,
+      checking: 'در حال بررسی...',
+      undetermined:
+        'کیفیت‌های تأییدشدهٔ این قسمت مشخص نشد — همچنان می‌توانید همین گزینه را درخواست کنید.',
       retry: 'تلاش دوباره',
+      verified: 'برای این قسمت تأیید شده',
+      custom: 'کیفیت دلخواه',
+      customAria: 'کیفیت دلخواه، بر حسب پیکسل',
     },
     searchingProviders: 'در حال جستجو در منابع انیمه...',
     checkingSource: (index: number, total: number, name: string) =>

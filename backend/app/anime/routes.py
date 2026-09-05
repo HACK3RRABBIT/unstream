@@ -30,10 +30,28 @@ class AnimeDownloadRequest(BaseModel):
     quality: str = DEFAULT_VIDEO_QUALITY
     # Optional subset of episode_ids to download; None/omitted = the whole season.
     episode_ids: list[str] | None = None
+    # Per-episode resolution overrides, keyed by the same id `episode_ids`
+    # uses ("<media_id>:s<season>e<episode>"). Different episodes of one
+    # season genuinely have different verified resolutions — a batch fansub
+    # in 1080p, a fill-in episode only ever released in 720p — so the request
+    # need not force one quality onto every episode in it. An episode absent
+    # from this map downloads at `quality`, the season-wide default.
+    episode_qualities: dict[str, str] = Field(default_factory=dict)
     # Subtitle languages to mux into each episode ("eng"/"fas"); an empty list
     # (or the legacy "none") means no subtitles. Captured at job start like
     # quality. Defaults to English soft subs.
     subs: list[str] = Field(default_factory=lambda: ["eng"])
+
+    @field_validator("episode_qualities")
+    @classmethod
+    def _validate_episode_qualities(cls, value: dict[str, str]) -> dict[str, str]:
+        for episode_id, quality in value.items():
+            if quality != "original" and not is_video_resolution(quality):
+                raise ValueError(
+                    f"Bad quality '{quality}' for episode '{episode_id}': "
+                    "must be 'original' or a resolution like '480', '1080'."
+                )
+        return value
 
     @field_validator("subs", mode="before")
     @classmethod
@@ -181,13 +199,18 @@ def anime_search(request: Request, q: str = Query(max_length=200)) -> dict:
     series, movies = _group_franchises(results)
     # The card's season count must match what opening it shows, so walk the
     # full chain (TTL-cached, cheap) rather than counting only what happened
-    # to land on this search page.
-    for item in series:
+    # to land on this search page. The walks are independent, so they run
+    # together: done one after another, a page of results spent its whole
+    # latency budget waiting on AniList before any card could render.
+    def _season_count(item: dict) -> None:
         try:
-            chain = anilist.franchise(item["id"])
-            item["season_count"] = len(chain)
+            item["season_count"] = len(anilist.franchise(item["id"]))
         except ProviderError:
             pass  # keep the page-level count
+
+    if series:
+        with ThreadPoolExecutor(max_workers=min(len(series), 8)) as pool:
+            list(pool.map(_season_count, series))
     analytics.record(
         "anime_search",
         visitor=limits.visitor(request),
@@ -327,6 +350,7 @@ def anime_download(body: AnimeDownloadRequest, request: Request) -> dict:
                 track_number=episode,
                 media="video",
                 subs=body.subs,
+                quality=body.episode_qualities.get(episode_key),
                 source_url=(
                     f"anime://{plan.provider}/{plan.anime_id}/"
                     f"{season_component}/{episode}"
@@ -433,6 +457,76 @@ def anime_sources(media_id: int, season: int, request: Request) -> dict:
     return {"media_id": season_media.id, "season": season, "providers": results}
 
 
+# How many episodes one batched quality request may ask about. A season is
+# well inside this; One Piece is not, and an unbounded list would let one
+# request fan out into thousands of provider probes. Episodes past the cap are
+# simply not determined, which every consumer already handles (an undetermined
+# episode never blocks a download).
+MAX_QUALITY_EPISODES = 50
+
+# Episodes probed at once inside one batched request. The probes are almost
+# entirely waiting, but each one asks Nyaa and the sidecar directly, so this
+# stays low enough to look like a browser rather than a scraper.
+_QUALITY_PROBE_WORKERS = 6
+
+
+@router.get("/{media_id}/season/{season}/qualities")
+def anime_season_episode_qualities(
+    media_id: int,
+    season: int,
+    request: Request,
+    # Generous enough that a long list is truncated to the cap below rather
+    # than rejected outright — an over-long selection should lose its tail,
+    # not its answer.
+    episodes: str = Query(max_length=1000),
+) -> dict:
+    """Verified per-provider qualities for SEVERAL episodes in one request.
+
+    The batched twin of the per-episode endpoint below, and the one the season
+    view actually uses. Asking per episode meant a selected season opened 24
+    connections for 24 nearly identical probes — six at a time through the
+    browser's socket limit, each paying the full provider round trip, and the
+    whole burst counted 24 times against the resolve rate limit, so the tail of
+    a long season answered 429 and rendered as "couldn't check".
+
+    `episodes` is a comma-separated list of episode numbers (at most
+    MAX_QUALITY_EPISODES; the rest are dropped rather than erroring, since an
+    episode this endpoint doesn't answer for is simply undetermined). The
+    probes run concurrently and share the provider caches, so the batch costs
+    little more than its slowest single episode.
+    """
+    if media_id <= 0 or season <= 0:
+        raise HTTPException(status_code=400, detail="Bad anime id or season")
+    numbers: list[int] = []
+    for raw in episodes.split(","):
+        raw = raw.strip()
+        if raw.isdigit() and int(raw) > 0 and int(raw) not in numbers:
+            numbers.append(int(raw))
+    if not numbers:
+        raise HTTPException(status_code=400, detail="No episodes to check")
+    numbers = numbers[:MAX_QUALITY_EPISODES]
+
+    limits.enforce("resolve", request)
+    season_media = _season_media(media_id, season)
+
+    def one(episode: int) -> tuple[int, list[dict]]:
+        return episode, _episode_provider_qualities(season_media, season, episode)
+
+    with ThreadPoolExecutor(
+        max_workers=min(len(numbers), _QUALITY_PROBE_WORKERS)
+    ) as pool:
+        probed = dict(pool.map(one, numbers))
+
+    return {
+        "media_id": season_media.id,
+        "season": season,
+        "episodes": {
+            str(episode): {"providers": providers_for}
+            for episode, providers_for in sorted(probed.items())
+        },
+    }
+
+
 @router.get("/{media_id}/season/{season}/episode/{episode}/qualities")
 def anime_episode_qualities(
     media_id: int, season: int, episode: int, request: Request
@@ -460,6 +554,17 @@ def anime_episode_qualities(
     if media_id <= 0 or season <= 0 or episode <= 0:
         raise HTTPException(status_code=400, detail="Bad anime id, season or episode")
     limits.enforce("resolve", request)
+    season_media = _season_media(media_id, season)
+    return {
+        "media_id": season_media.id,
+        "season": season,
+        "episode": episode,
+        "providers": _episode_provider_qualities(season_media, season, episode),
+    }
+
+
+def _season_media(media_id: int, season: int) -> anilist.AniMedia:
+    """The AniList entry for one season of a franchise, or a 400."""
     try:
         seasons = anilist.franchise(media_id)
     except ProviderError as exc:
@@ -467,7 +572,17 @@ def anime_episode_qualities(
     season_index = season - 1
     if season_index < 0 or season_index >= len(seasons):
         raise HTTPException(status_code=400, detail="Bad season number")
-    season_media = seasons[season_index]
+    return seasons[season_index]
+
+
+def _episode_provider_qualities(
+    season_media: anilist.AniMedia, season: int, episode: int
+) -> list[dict]:
+    """Every provider's verified qualities for one episode, probed together.
+
+    Shared by the single-episode endpoint and the batched one above, so both
+    answer with exactly the same shape and the same never-guess semantics.
+    """
     season_media_id = season_media.id
 
     # hianime deliberately has no probe — it reports qualities: null and is
@@ -520,13 +635,7 @@ def anime_episode_qualities(
         }
 
     with ThreadPoolExecutor(max_workers=len(order_for("1080"))) as pool:
-        results = list(pool.map(probe, ordered_providers("1080")))
-    return {
-        "media_id": season_media_id,
-        "season": season,
-        "episode": episode,
-        "providers": results,
-    }
+        return list(pool.map(probe, ordered_providers("1080")))
 
 
 def seed_best_title(media_id: int, seasons: list[anilist.AniMedia]) -> str:
