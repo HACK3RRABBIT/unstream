@@ -620,7 +620,8 @@ const en = {
     notReady: "That file isn't ready yet.",
     unknownJob: 'That download is no longer on the server.',
     emptyQuery: "You haven't typed anything to search for.",
-    providerUnreachable: "Couldn't reach that source — check your connection and try again.",
+    providerUnreachable:
+      "Couldn't reach that source — check your connection, or try a VPN if it's blocked on your network.",
     badRequest: "That link wouldn't open — it may be private, or its source unavailable.",
     notFound: 'Not found.',
     rateLimited: "That's a bit fast — give it a moment.",
