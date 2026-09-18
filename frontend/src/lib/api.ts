@@ -11,6 +11,9 @@ export interface Track {
   track_number: number
   release_date: string
   preview_url: string | null
+  source_url: string | null
+  /** Lyrics preview attached by the backend if known. */
+  lyrics?: string | null
 }
 
 export interface Collection {
@@ -21,8 +24,6 @@ export interface Collection {
   tracks: Track[]
 }
 
-/** `cancelled` is terminal like `done` and `error`, and is not a failure: it
- *  means someone stopped this job. Mirrors the statuses in backend/app/jobs.py. */
 export type TrackStatus =
   'queued' | 'searching' | 'downloading' | 'tagging' | 'retrying' | 'done' | 'error' | 'cancelled'
 
@@ -45,12 +46,15 @@ export interface JobTrack {
   ext: string | null
   /** Anime only, while searching. Real backend progress, not a timer. */
   provider_progress?: ProviderProgress | null
+  /** Absolute path on disk, for the desktop app to reveal/open directly. */
+  path?: string
 }
 
 export interface Job {
   id: string
   name: string
   quality: Quality
+  dir: string | null
   tracks: JobTrack[]
   done: number
   failed: number
@@ -176,7 +180,7 @@ const URL_PATTERNS = [
   /open\.spotify\.com\/(intl-[a-zA-Z-]+\/)?(track|album|playlist)\//,
   /deezer\.com\/([a-z]{2}\/)?(track|album|playlist)\/\d+/,
   /music\.apple\.com\/([a-z]{2}\/)?(album|song)\//,
-  /(music\.|www\.|m\.)?(youtube\.com\/(watch|playlist)\?|youtu\.be\/)/,
+  /(music\.|www\.|m\.)?(youtube\.com\/(watch|playlist|shorts)|youtu\.be\/)/,
   /(www\.|m\.|on\.)?soundcloud\.com\/./,
 ]
 
@@ -275,6 +279,16 @@ export async function getJobs(jobIds: string[]): Promise<Job[]> {
  *  poll to stop claiming the download is still going. */
 export async function cancelJob(jobId: string): Promise<Job> {
   const { data } = await client.post<Job>(`/jobs/${jobId}/cancel`)
+  return data
+}
+
+export async function retryJob(jobId: string): Promise<Job> {
+  const { data } = await client.post<Job>(`/jobs/${jobId}/retry`)
+  return data
+}
+
+export async function retryTrack(jobId: string, trackId: string): Promise<Job> {
+  const { data } = await client.post<Job>(`/jobs/${jobId}/tracks/${trackId}/retry`)
   return data
 }
 
@@ -499,4 +513,54 @@ export async function startAnimeDownload(
       : {}),
   })
   return data.job_id
+}
+
+/** One playable file from the on-disk library. Tags come from the file
+ *  itself; anything the tags don't name arrives empty and the UI falls
+ *  back to the filename-derived title. */
+export interface LibraryTrack {
+  id: string
+  title: string
+  artist: string
+  album: string
+  duration_ms: number
+  size: number
+  mtime: number
+  has_lyrics: boolean
+  has_cover: boolean
+}
+
+export async function getLibrary(): Promise<LibraryTrack[]> {
+  const { data } = await client.get<{ root: string; tracks: LibraryTrack[] }>('/library')
+  return data.tracks
+}
+
+export const libraryFileUrl = (fileId: string) => `/api/library/file/${fileId}`
+
+/** Embedded cover art. Served with an ETag, so the browser revalidates
+ *  instead of re-decoding; a track with no art answers 404 and the caller
+ *  shows its own glyph. */
+export const libraryCoverUrl = (fileId: string) => `/api/library/cover/${fileId}`
+
+/** Lyrics already on the machine — the sidecar `.lrc` written at download
+ *  time, or the embedded frame. Null when the track carries neither, which
+ *  is the caller's cue to try the online lookup. */
+export async function getLibraryLyrics(fileId: string): Promise<Lyrics | null> {
+  try {
+    const { data } = await client.get<{ plain: string; synced: string; source: string }>(
+      `/library/lyrics/${fileId}`,
+    )
+    // A backend older than this frontend has no such route, and the SPA
+    // fallback used to answer it with index.html — which parses into an
+    // object with no `plain` and reads as "this song has no lyrics".
+    // Anything that isn't recognisably lyrics means go to the network.
+    if (typeof data !== 'object' || data === null) return null
+    const plain = typeof data.plain === 'string' ? data.plain : ''
+    const synced = typeof data.synced === 'string' ? data.synced : ''
+    if (!plain && !synced) return null
+    return { status: 'found', plain: plain || null, synced: synced || null, source: 'file' }
+  } catch (err) {
+    if (axios.isAxiosError(err) && err.response?.status === 404) return null
+    throw err
+  }
 }

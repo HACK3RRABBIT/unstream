@@ -1,0 +1,84 @@
+{
+  "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/refs/heads/v2/crates/tauri-cli/schema.json",
+  "productName": "Unstream",
+  "version": "0.1.7",
+  "identifier": "xyz.amiralibg.unstream",
+  "build": {
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm --prefix ../frontend run dev -- --port 5173 --strictPort",
+    "beforeBuildCommand": "npm --prefix ../frontend run build",
+    "frontendDist": "../../frontend/dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Unstream",
+        "width": 1120,
+        "height": 780,
+        "minWidth": 640,
+        "minHeight": 540,
+        "center": true,
+        "decorations": true,
+        "resizable": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "dragDropEnabled": true,
+        "visible": false
+      },
+      {
+        "label": "splash",
+        "url": "splash.html",
+        "title": "Unstream",
+        "width": 400,
+        "height": 320,
+        "center": true,
+        "decorations": false,
+        "resizable": false,
+        "transparent": true,
+        "skipTaskbar": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "signingIdentity": "-",
+      "entitlements": "entitlements.plist",
+      "minimumSystemVersion": "11.0"
+    },
+    "resources": {
+      "bin/": "",
+      "../../backend/dist/unstream-api/": "unstream-api/",
+      "../../frontend/dist/": "dist/"
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "unstream"
+        ]
+      }
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDFGODRCRTM5MzhGRDc0NDkKUldSSmRQMDRPYjZFSDAvTEpJbnkvWk84MHpCK1dNUUZxRlIzN2F3cng1QjlaRjV4dUJMOVhPYU8K",
+      "endpoints": [
+        "https://github.com/amiralibg/unstream/releases/latest/download/latest.json"
+      ]
+    }
+  }
+}

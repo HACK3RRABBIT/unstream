@@ -1,0 +1,329 @@
+name: Release Desktop App
+
+on:
+  push:
+    tags: ["v*"]
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  QJS_VERSION: v0.16.2
+
+jobs:
+  build-desktop:
+    name: Build (${{ matrix.platform.name }})
+    runs-on: ${{ matrix.platform.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: macOS-arm64
+            os: macos-14
+            target: aarch64-apple-darwin
+            qjs: qjs-darwin-arm64
+          # No Intel runners exist anymore (macos-13 is retired — a job pinned
+          # to it waits for a runner forever), so the Intel build
+          # cross-compiles on an ARM runner: Rosetta + an x86_64 interpreter
+          # for the Python sidecar, a static Intel ffmpeg, and
+          # `--target x86_64-apple-darwin` for the Rust shell.
+          - name: macOS-x64
+            os: macos-14
+            target: x86_64-apple-darwin
+            qjs: qjs-darwin-x86_64
+          - name: Linux-x64
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            qjs: qjs-linux-x86_64
+            ffmpeg: ffmpeg-master-latest-linux64-lgpl.tar.xz
+          - name: Linux-arm64
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            qjs: qjs-linux-aarch64
+            ffmpeg: ffmpeg-master-latest-linuxarm64-lgpl.tar.xz
+          - name: Windows-x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            qjs: qjs-windows-x86_64.exe
+            ffmpeg: ffmpeg-master-latest-win64-lgpl.zip
+          - name: Windows-arm64
+            os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            # quickjs-ng publishes no arm64 Windows binary; Windows on ARM
+            # runs x64 under emulation, and this is a short-lived subprocess.
+            qjs: qjs-windows-x86_64.exe
+            ffmpeg: ffmpeg-master-latest-winarm64-lgpl.zip
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # Native jobs already have their target; the cross-compiled Intel job
+      # does not, and cargo would fail asking for it. Idempotent everywhere.
+      - name: Add Rust target
+        run: rustup target add ${{ matrix.platform.target }}
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            xdg-utils
+
+      - name: Build Frontend
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+
+      # tauri-action shells out to `npm run tauri build` in ./desktop, which
+      # needs that project's own devDependency to exist. Installing only the
+      # frontend left the CLI missing and the build died with exit 127.
+      - name: Install Tauri CLI
+        run: |
+          cd desktop
+          npm ci
+
+      - name: Build Backend Bundle with PyInstaller
+        if: matrix.platform.target != 'x86_64-apple-darwin'
+        run: |
+          cd backend
+          uv sync --dev
+          uv run pyinstaller --noconfirm unstream-api.spec
+          # The frozen binary must stay executable through Tauri's resource
+          # bundling — a lost exec bit is a backend that never starts and a
+          # blank window with no error.
+          chmod +x dist/unstream-api/unstream-api || chmod +x dist/unstream-api.exe || true
+
+      # Intel sidecar, built on an ARM runner. python.org ships universal2, so
+      # everything spawned under `arch -x86_64` — including the interpreter uv
+      # queries and the venv it creates — resolves x86_64 wheels, and the
+      # PyInstaller output is an Intel binary. A native-ARM venv would smuggle
+      # arm64 .so files into it instead.
+      - name: Build Backend Bundle with PyInstaller (macOS Intel)
+        if: matrix.platform.target == 'x86_64-apple-darwin'
+        run: |
+          set -euo pipefail
+          if ! pgrep -q oahd; then sudo softwareupdate --install-rosetta --agree-to-license; fi
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 -o /tmp/Python312.pkg \
+            "https://www.python.org/ftp/python/3.12.9/python-3.12.9-macos11.pkg"
+          sudo installer -pkg /tmp/Python312.pkg -target /
+          PY312=/Library/Frameworks/Python.framework/Versions/3.12/bin/python3
+          arch -x86_64 "$PY312" -c "import platform; assert platform.machine() == 'x86_64', platform.machine()"
+          # astral-sh publishes stable per-arch uv archives, unlike the
+          # interpreter above — and uv must itself run translated, or the
+          # children it spawns fall back to the ARM slice.
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 -o /tmp/uv-x64.tar.gz \
+            "https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-apple-darwin.tar.gz"
+          tar -xzf /tmp/uv-x64.tar.gz -C /tmp
+          UV_X64=/tmp/uv-x86_64-apple-darwin/uv
+          cd backend
+          arch -x86_64 "$UV_X64" sync --frozen --dev --python "$PY312"
+          arch -x86_64 "$UV_X64" run --no-sync pyinstaller --noconfirm unstream-api.spec
+          chmod +x dist/unstream-api/unstream-api
+          file dist/unstream-api/unstream-api | grep -q "x86_64" || {
+            echo "sidecar is not an Intel binary" >&2
+            file dist/unstream-api/unstream-api >&2
+            exit 1
+          }
+
+      # yt-dlp solves YouTube's JS challenge with whatever runtime it finds.
+      # deno did the job in 77MB; quickjs does it in about one, and yt-dlp
+      # has had a quickjs backend since well before the version pinned here.
+      # The binary must be named `qjs` — that is the name yt-dlp's own
+      # discovery looks for, and app/ytdlp.py maps it back to the "quickjs"
+      # option key.
+      - name: Bundle qjs + ffmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          mkdir -p desktop/src-tauri/bin
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 -o desktop/src-tauri/bin/qjs \
+            "https://github.com/quickjs-ng/quickjs/releases/download/${QJS_VERSION}/${{ matrix.platform.qjs }}"
+          chmod +x desktop/src-tauri/bin/qjs
+          # A real static build. The old step copied the runner's apt ffmpeg
+          # without its shared libraries, which cannot launch anywhere else.
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 -o /tmp/ffmpeg.tar.xz \
+            "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/${{ matrix.platform.ffmpeg }}"
+          tar -xf /tmp/ffmpeg.tar.xz -C /tmp
+          cp /tmp/ffmpeg-*/bin/ffmpeg desktop/src-tauri/bin/ffmpeg
+          chmod +x desktop/src-tauri/bin/ffmpeg
+
+      - name: Bundle qjs + ffmpeg (macOS arm64)
+        if: runner.os == 'macOS' && matrix.platform.target == 'aarch64-apple-darwin'
+        run: |
+          set -euo pipefail
+          mkdir -p desktop/src-tauri/bin
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 -o desktop/src-tauri/bin/qjs \
+            "https://github.com/quickjs-ng/quickjs/releases/download/${QJS_VERSION}/${{ matrix.platform.qjs }}"
+          chmod +x desktop/src-tauri/bin/qjs
+          # BtbN publishes no macOS build, so Homebrew's ffmpeg is made
+          # self-contained instead: dylibbundler copies each dependency in
+          # beside it and rewrites the load paths to @executable_path.
+          brew install ffmpeg dylibbundler
+          cp "$(which ffmpeg)" desktop/src-tauri/bin/ffmpeg
+          chmod +x desktop/src-tauri/bin/ffmpeg
+          dylibbundler --overwrite-dir --bundle-deps --create-dir \
+            --fix-file desktop/src-tauri/bin/ffmpeg \
+            --dest-dir desktop/src-tauri/bin/libs \
+            --install-path "@executable_path/libs"
+
+      - name: Bundle qjs + ffmpeg (macOS Intel)
+        if: runner.os == 'macOS' && matrix.platform.target == 'x86_64-apple-darwin'
+        run: |
+          set -euo pipefail
+          mkdir -p desktop/src-tauri/bin
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 -o desktop/src-tauri/bin/qjs \
+            "https://github.com/quickjs-ng/quickjs/releases/download/${QJS_VERSION}/${{ matrix.platform.qjs }}"
+          chmod +x desktop/src-tauri/bin/qjs
+          # No Homebrew here: this runner is ARM, and its ffmpeg would be too.
+          # evermeet's static Intel build links nothing but the system, so
+          # there is no dylib tree to bundle — the otool check below proves it.
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 -o /tmp/ffmpeg-mac-x64.zip \
+            "https://evermeet.cx/ffmpeg/ffmpeg-7.1.zip"
+          unzip -o -q /tmp/ffmpeg-mac-x64.zip -d /tmp/ffmpeg-mac-x64
+          cp /tmp/ffmpeg-mac-x64/ffmpeg desktop/src-tauri/bin/ffmpeg
+          chmod +x desktop/src-tauri/bin/ffmpeg
+          file desktop/src-tauri/bin/ffmpeg | grep -q "x86_64" || {
+            echo "ffmpeg is not an Intel binary" >&2
+            file desktop/src-tauri/bin/ffmpeg >&2
+            exit 1
+          }
+
+      - name: Bundle qjs + ffmpeg (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path desktop/src-tauri/bin | Out-Null
+          Invoke-WebRequest -Uri "https://github.com/quickjs-ng/quickjs/releases/download/$env:QJS_VERSION/${{ matrix.platform.qjs }}" -OutFile desktop/src-tauri/bin/qjs.exe
+          Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/${{ matrix.platform.ffmpeg }}" -OutFile "$env:TEMP/ffmpeg.zip"
+          Expand-Archive -Path "$env:TEMP/ffmpeg.zip" -DestinationPath "$env:TEMP/ffmpeg" -Force
+          Copy-Item (Get-ChildItem -Path "$env:TEMP/ffmpeg" -Filter ffmpeg.exe -Recurse | Select-Object -First 1).FullName desktop/src-tauri/bin/ffmpeg.exe
+
+      # Both binaries are useless if they cannot start on a machine that is
+      # not this runner, and that failure would only show up as a download
+      # that mysteriously never finishes. Fail the build here instead.
+      - name: Ad-hoc sign nested binaries (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          # Tauri signs the outer .app ad-hoc at bundle time (signingIdentity
+          # "-" in tauri.conf.json), but the nested Mach-O files — the
+          # PyInstaller sidecar, ffmpeg, qjs and the dylibbundler libs — must
+          # already be valid Mach-O with the exec bit set, or the deep sign
+          # leaves an invalid seal behind. An invalid seal is exactly what the
+          # OS reports as "damaged" even after `xattr -cr`, so fail here.
+          chmod +x desktop/src-tauri/bin/* backend/dist/unstream-api/unstream-api
+          codesign --force --sign - desktop/src-tauri/bin/ffmpeg desktop/src-tauri/bin/qjs
+          codesign --force --sign - backend/dist/unstream-api/unstream-api
+          for lib in desktop/src-tauri/bin/libs/*.dylib; do
+            [ -e "$lib" ] && codesign --force --sign - "$lib"
+          done
+          codesign --verify --deep --strict desktop/src-tauri/bin/ffmpeg || true
+
+      - name: Verify bundled binaries run standalone
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN=desktop/src-tauri/bin
+          EXT=""
+          [ "$RUNNER_OS" = "Windows" ] && EXT=".exe"
+          # The Intel job builds for another CPU on this runner; Rosetta was
+          # installed with the backend step, so that pair runs translated.
+          ARCH_RUN=""
+          if [ "${{ matrix.platform.target }}" = "x86_64-apple-darwin" ]; then
+            ARCH_RUN="arch -x86_64"
+          fi
+          $ARCH_RUN "$BIN/ffmpeg$EXT" -version | head -1
+          # qjs has no --version and exits non-zero on --help.
+          $ARCH_RUN "$BIN/qjs$EXT" --help 2>&1 | head -1 || true
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            if [ "${{ matrix.platform.target }}" = "x86_64-apple-darwin" ]; then
+              # A static build: anything outside the system libraries is a
+              # dylib that will not exist on the user's machine.
+              if otool -L "$BIN/ffmpeg" | grep -qE "^[[:space:]]+/(opt|usr/local)/"; then
+                echo "Intel ffmpeg is not static" >&2
+                otool -L "$BIN/ffmpeg" >&2
+                exit 1
+              fi
+            elif otool -L "$BIN/ffmpeg" | grep -qE "/opt/homebrew|/usr/local/(opt|Cellar)"; then
+              echo "ffmpeg still links to Homebrew paths; it would not run elsewhere" >&2
+              otool -L "$BIN/ffmpeg" >&2
+              exit 1
+            fi
+          fi
+          du -sh "$BIN"
+
+      # The version in tauri.conf.json is what lands in latest.json, and
+      # latest.json is the only thing an installed app compares itself
+      # against. A scheduled rebuild that keeps the released version would
+      # publish a fresh yt-dlp that no one ever receives — the app would
+      # look updated and quietly rot. So: a tag build takes its version
+      # from the tag, and every other build takes a patch number that only
+      # ever goes up. Both are written into the manifests so the tag, the
+      # binary and the update feed can never disagree.
+      - name: Resolve version
+        shell: bash
+        run: |
+          node -e '
+            const fs = require("fs");
+            const confPath = "desktop/src-tauri/tauri.conf.json";
+            const conf = JSON.parse(fs.readFileSync(confPath, "utf8"));
+            const ref = process.env.GITHUB_REF || "";
+            const version = ref.startsWith("refs/tags/v")
+              ? ref.slice("refs/tags/v".length)
+              // run_number is monotonic for the life of the workflow, so
+              // consecutive rebuilds always compare as newer. Bumping the
+              // minor in a tagged release stays ahead of it.
+              : conf.version.split(".").slice(0, 2).concat(process.env.GITHUB_RUN_NUMBER).join(".");
+            conf.version = version;
+            fs.writeFileSync(confPath, JSON.stringify(conf, null, 2) + "\n");
+            const cargoPath = "desktop/src-tauri/Cargo.toml";
+            fs.writeFileSync(
+              cargoPath,
+              fs.readFileSync(cargoPath, "utf8").replace(/^version = ".*"$/m, `version = "${version}"`),
+            );
+            fs.appendFileSync(process.env.GITHUB_ENV, `APP_VERSION=${version}\n`);
+            console.log("building version", version);
+          '
+
+      - name: Build Tauri App
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: "./desktop"
+          # Native jobs build for their host; the Intel job cross-compiles
+          # from an ARM runner, which only works with the target stated.
+          args: --target ${{ matrix.platform.target }}
+          tagName: v${{ env.APP_VERSION }}
+          releaseName: "Unstream Desktop __VERSION__"
+          releaseBody: "See release assets below for macOS, Windows, and Linux."
+          releaseDraft: false
+          prerelease: false

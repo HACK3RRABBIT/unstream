@@ -35,7 +35,7 @@ from yt_dlp.utils import DownloadCancelled
 
 from . import analytics, lyrics
 from .models import Track
-from .ytdlp import base_opts
+from .ytdlp import base_opts, bot_check_message
 
 # A candidate must be within this many seconds of the catalog duration.
 MAX_DURATION_DRIFT = 20
@@ -56,6 +56,16 @@ _AUDIO_EXTS = {".webm", ".m4a", ".opus", ".ogg", ".aac", ".wav", ".flac", ".mp4"
 
 class DownloadError(Exception):
     pass
+
+
+# YouTube's answer to an address it doesn't trust. It arrives at the
+# playability check, before a PO token is asked for and before a challenge
+# exists to solve, so neither the provider nor the solver in app/ytdlp.py ever
+# gets a turn — only a cookie gets past it. The sentence the user reads comes
+# from ytdlp.bot_check_message(), which names the fix available where they are.
+_BOT_CHECK_RE = re.compile(
+    r"Sign in to confirm you.{0,3}re not a bot|LOGIN_REQUIRED|The page needs to be reloaded", re.IGNORECASE
+)
 
 
 class Cancelled(Exception):
@@ -90,13 +100,21 @@ def _sibling_outputs(dest: Path) -> list[Path]:
     return [p for p in dest.parent.iterdir() if p.name.startswith(prefix)]
 
 
-def _clean_partials(dest: Path) -> None:
+def _clean_partials(dest: Path, keep_part: bool = False) -> None:
     """Drop leftovers from a failed attempt so a retry starts clean.
 
     A stale .part or half-converted .webm makes yt-dlp resume a broken
     download, which is one way ffmpeg ends up with no mp3 to produce.
+    When `keep_part` is true, `.part` files are preserved so yt-dlp can
+    resume a partial download on retry (critical for large files / flaky
+    connections). Only cancelled downloads should drop everything.
     """
     for path in _sibling_outputs(dest):
+        if keep_part and path.suffix == ".part":
+            continue
+        # also keep .ytdl temp fragments when resuming
+        if keep_part and path.suffix in (".ytdl", ".temp"):
+            continue
         path.unlink(missing_ok=True)
 
 
@@ -400,7 +418,21 @@ def embed_tags(path: Path, track: Track, lyrics_text: str | None = None) -> None
         tagger(path, track, _cover_bytes(track), lyrics_text)
 
 
-def _find_lyrics(track: Track) -> str | None:
+def _write_lrc(audio: Path, synced: str) -> None:
+    """Drop the time-synced lyric next to the audio as `<stem>.lrc`.
+
+    The embedded frame can only hold words; timings have to live in a
+    sidecar, which is also the convention every desktop player already
+    reads. This is what lets the karaoke view run with no network — the
+    file and its timings travel together.
+    """
+    try:
+        audio.with_suffix(".lrc").write_text(synced, encoding="utf-8")
+    except OSError:
+        pass  # a lyric is never worth failing a download over
+
+
+def _find_lyrics(track: Track) -> lyrics.Lyrics | None:
     """Best-effort lyrics for embedding. Never raises, never blocks a download.
 
     Same contract as cover art: nice to have, silent when it fails.
@@ -412,16 +444,16 @@ def _find_lyrics(track: Track) -> str | None:
     reading, since what it means is that we did not get an answer.
     """
     artist = ", ".join(track.artists)
-    outcome, plain = "unavailable", None
+    outcome, result = "unavailable", None
     try:
         found = lyrics.fetch(artist, track.title, track.album, track.duration_ms / 1000)
         outcome = "found" if found else "absent"
-        plain = found.plain if found else None
+        result = found or None
     except Exception:
         pass  # a lyric is never worth failing a download over
     # `record` swallows its own errors, so counting cannot cost a download.
     analytics.record("lyrics_embed", detail=outcome, label=f"{artist} - {track.title}")
-    return plain
+    return result
 
 
 def download_track(
@@ -482,6 +514,7 @@ def download_track(
 
     failed_urls: set[str] = set()
     last_error: Exception | None = None
+    bot_checked = False
     for attempt in range(attempts):
         if attempt:
             on_progress("retrying", 0.0)
@@ -502,7 +535,8 @@ def download_track(
 
             if on_source:
                 on_source(url, attempt + 1)
-            _clean_partials(dest)
+            # keep .part on retry so yt-dlp can resume; full clean only on first attempt or cancel
+            _clean_partials(dest, keep_part=attempt > 0)
             on_progress("downloading", 0.0)
             audio = download_audio(
                 url,
@@ -513,7 +547,10 @@ def download_track(
             )
 
             on_progress("tagging", 1.0)
-            embed_tags(audio, track, _find_lyrics(track) if embed_lyrics else None)
+            found = _find_lyrics(track) if embed_lyrics else None
+            embed_tags(audio, track, found.plain if found else None)
+            if found and found.synced:
+                _write_lrc(audio, found.synced)
             return audio
         except Cancelled:
             # Whatever came down is half a song nobody asked to keep, and the
@@ -523,8 +560,15 @@ def download_track(
             raise
         except Exception as exc:
             last_error = exc
+            if _BOT_CHECK_RE.search(str(exc)):
+                bot_checked = True
             if url:
                 failed_urls.add(url)
+    # The last attempt searches SoundCloud, so `last_error` is whatever that
+    # unrelated upload happened to say — "This video is DRM protected", most
+    # often. Reporting it verbatim hides the one cause an operator can act on.
+    if bot_checked:
+        raise DownloadError(bot_check_message()) from last_error
     raise DownloadError(
         f"Failed after {attempts} attempts: {last_error}"
     ) from last_error

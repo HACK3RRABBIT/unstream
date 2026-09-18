@@ -184,7 +184,7 @@ def test_video_job_reports_mp4_ext(monkeypatch, tmp_path):
         "download_track",
         lambda *a, **k: out,
     )
-    jobs._run_track(job, state)
+    jobs._run_track(job, state, state.generation)
     assert state.status == "done"
     assert state.as_dict()["ext"] == "mp4"
 
@@ -835,7 +835,7 @@ def test_track_state_exposes_provider_and_served_quality(monkeypatch, tmp_path):
         return out
 
     monkeypatch.setattr(jobs.downloader, "download_track", fake_download_track)
-    jobs._run_track(job, state)
+    jobs._run_track(job, state, state.generation)
     assert state.status == "done"
     assert state.provider == "nyaa"
     assert state.served_quality == "480p"
@@ -864,7 +864,7 @@ def test_failed_track_still_records_served_quality(monkeypatch, tmp_path):
         )
 
     monkeypatch.setattr(jobs.downloader, "download_track", fake_download_track)
-    jobs._run_track(job, state)
+    jobs._run_track(job, state, state.generation)
     assert state.status == "error"
     assert state.provider == "nyaa"
     assert state.served_quality == "720p"

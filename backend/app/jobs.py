@@ -31,7 +31,17 @@ log = logging.getLogger("unstream.jobs")
 from . import analytics, downloader
 from .models import Track
 
-DOWNLOADS_DIR = Path(__file__).resolve().parent.parent / "downloads"
+DOWNLOADS_DIR = Path(
+    os.getenv("UNSTREAM_DOWNLOADS_DIR", Path(__file__).resolve().parent.parent / "downloads")
+)
+
+
+def set_downloads_dir(path: str | Path) -> str:
+    global DOWNLOADS_DIR
+    p = Path(path).resolve()
+    p.mkdir(parents=True, exist_ok=True)
+    DOWNLOADS_DIR = p
+    return str(DOWNLOADS_DIR)
 
 # 0 keeps finished downloads forever. The default suits a server whose disk
 # is shared with strangers; it is the wrong default for someone downloading
@@ -111,6 +121,11 @@ class TrackState:
     # Delivered files live on a shorter retention clock — the user has the
     # bytes, so the server copy can go sooner.
     delivered: bool = False
+    # Bumped every time this track is called off or re-queued. A worker
+    # captures it when it starts and compares on every check, so a cancel
+    # is per-track: clearing the job-wide flag to retry one track cannot
+    # hand a still-running worker permission to carry on. See `cancel()`.
+    generation: int = 0
 
     def as_dict(self) -> dict:
         return {
@@ -123,6 +138,7 @@ class TrackState:
             "provider": self.provider,
             "served_quality": self.served_quality,
             "provider_progress": self.provider_progress,
+            "path": str(self.file_path.resolve()) if self.file_path else None,
         }
 
 
@@ -148,9 +164,12 @@ class Job:
     # queueing behind whatever else is writing track state.
     stopped: threading.Event = field(default_factory=threading.Event)
 
+    folder_name: str = ""
+
     @property
     def dir(self) -> Path:
-        return DOWNLOADS_DIR / self.id
+        target = self.folder_name or self.id
+        return DOWNLOADS_DIR / target
 
     @property
     def finished(self) -> bool:
@@ -167,6 +186,7 @@ class Job:
             "id": self.id,
             "name": self.name,
             "quality": self.quality,
+            "dir": str(self.dir.resolve()),
             "tracks": states,
             "done": done,
             "failed": failed,
@@ -218,8 +238,26 @@ def _host_of(url: str) -> str:
     return "other"
 
 
-def _run_track(job: Job, state: TrackState) -> None:
-    if job.stopped.is_set():
+def _run_track(job: Job, state: TrackState, generation: int) -> None:
+    """Download one track, as the attempt identified by `generation`.
+
+    The generation is handed in by whoever queued this attempt, never read
+    off `state` here. A track can sit in the pool for a long time — `start()`
+    submits the whole album at once — and by the time it runs, `state` may
+    already belong to a later attempt. Reading the number at submit time is
+    what lets this worker notice that it is the stale one and stand down,
+    instead of racing the attempt that superseded it into the same filename.
+    """
+
+    def cancelled() -> bool:
+        # Anything that calls the track off — a job-wide cancel, or a retry
+        # that supersedes this attempt — bumps the generation, and every
+        # check below then reads as "stop". Asking about our own generation
+        # rather than only `job.stopped` is what keeps a cancel true for this
+        # track after a retry of a *different* track clears that flag.
+        return job.stopped.is_set() or state.generation != generation
+
+    if cancelled():
         # Cancelled while this one sat in the pool's queue. cancel() has
         # already written the status; there is nothing to do but not start.
         return
@@ -229,7 +267,7 @@ def _run_track(job: Job, state: TrackState) -> None:
             # Reporting a stage after cancel() has settled this track would
             # walk it back out of a terminal state, and the UI would show a
             # cancelled download carrying on.
-            if job.stopped.is_set():
+            if cancelled():
                 return
             state.status = stage
             state.progress = fraction
@@ -272,11 +310,11 @@ def _run_track(job: Job, state: TrackState) -> None:
             quality=quality,
             on_source=on_source,
             embed_lyrics=job.embed_lyrics,
-            should_cancel=job.stopped.is_set,
+            should_cancel=cancelled,
             meta=meta,
             on_provider_progress=on_provider_progress,
         )
-        if job.stopped.is_set():
+        if cancelled():
             # Finished in the window between the cancel landing and the last
             # check inside the pipeline. Keeping it would mean a job answering
             # "cancelled" and then handing out one more file than it reported.
@@ -301,11 +339,19 @@ def _run_track(job: Job, state: TrackState) -> None:
     except downloader.Cancelled:
         # cancel() writes this status too, and whichever gets there first wins
         # the same value. Not an error, and not counted as one: nothing failed.
+        #
+        # The generation check is for the other way this is reached: a retry
+        # supersedes this attempt, and the abandoned worker unwinds *after*
+        # the fresh one has already started. Writing "cancelled" then would
+        # stamp a terminal status onto a download that is currently running.
         with job.lock:
-            state.status = "cancelled"
-            state.progress = 0.0
+            if state.generation == generation:
+                state.status = "cancelled"
+                state.progress = 0.0
     except Exception as exc:  # any failure marks just this track, not the job
         with job.lock:
+            if state.generation != generation:
+                return  # superseded by a retry; that attempt owns the status
             state.status = "error"
             state.error = str(exc)
             # The pipeline writes provider/served_quality into `meta` before it
@@ -354,9 +400,11 @@ def start(
     visitor: str = "",
 ) -> Job:
     _check_disk()
+    folder = downloader.safe_filename(name) or uuid.uuid4().hex[:12]
     job = Job(
         id=uuid.uuid4().hex[:12],
         name=name,
+        folder_name=folder,
         quality=quality,
         embed_lyrics=embed_lyrics,
         owner=owner,
@@ -381,7 +429,7 @@ def start(
     # else (audio) uses the shared one.
     pool = _anime_executor if tracks and tracks[0].media == "video" else _executor
     for state in job.tracks.values():
-        pool.submit(_run_track, job, state)
+        pool.submit(_run_track, job, state, state.generation)
     return job
 
 
@@ -405,10 +453,71 @@ def cancel(job: Job) -> int:
         for state in job.tracks.values():
             if state.status in SETTLED:
                 continue
+            # Bumped as well as flagged. `job.stopped` is cleared again the
+            # moment anything in this job is retried, and without a per-track
+            # mark a worker still unwinding from *this* cancel would read the
+            # cleared flag as permission to finish the track it was told to
+            # drop — the download would come back to life after the stop.
+            state.generation += 1
             state.status = "cancelled"
             state.progress = 0.0
             stopped += 1
     return stopped
+
+
+def _requeue(state: TrackState) -> None:
+    """Reset one track for a fresh attempt. Caller holds `job.lock`.
+
+    Bumping the generation is what retires whatever worker still holds this
+    track — an attempt abandoned mid-flight, or one unwinding from a cancel.
+    It keeps running until it next looks, and then finds it is no longer the
+    attempt that owns the status, so it writes nothing.
+    """
+    state.generation += 1
+    state.status = "queued"
+    state.progress = 0.0
+    state.error = None
+
+
+def retry_track(job: Job, track_id: str) -> bool:
+    """Re-queue a single failed/cancelled track. True if it was queued.
+
+    Retrying anything clears the job-wide stop flag — the pool has to be
+    allowed to run this track. Tracks the cancel already settled stay
+    settled, because each carries its own generation: clearing the flag
+    lets *this* attempt through and nothing else.
+    """
+    with job.lock:
+        state = job.tracks.get(track_id)
+        if not state or state.status not in ("error", "cancelled"):
+            return False
+        _requeue(state)
+        job.stopped.clear()
+        generation = state.generation
+    pool = _anime_executor if state.track.media == "video" else _executor
+    pool.submit(_run_track, job, state, generation)
+    return True
+
+
+def retry_failed(job: Job) -> int:
+    """Re-queue every failed track in a job. Returns how many were queued.
+
+    Failures only: a track someone cancelled was stopped on purpose, and
+    "retry the ones that broke" must not restart it. Those come back one at
+    a time through `retry_track`.
+    """
+    with job.lock:
+        failed = [s for s in job.tracks.values() if s.status == "error"]
+        if not failed:
+            return 0
+        for state in failed:
+            _requeue(state)
+        job.stopped.clear()
+        queued = [(state, state.generation) for state in failed]
+    for state, generation in queued:
+        pool = _anime_executor if state.track.media == "video" else _executor
+        pool.submit(_run_track, job, state, generation)
+    return len(failed)
 
 
 def _measure(path: Path) -> tuple[float, int] | None:
@@ -552,6 +661,9 @@ def _sweep(
             # the app did not generate inside a named job folder.
             continue
         job = _jobs.get(path.name)
+        if not job:
+            # Check by folder_name
+            job = next((j for j in _jobs.values() if j.folder_name == path.name or j.id == path.name), None)
         if job and not job.finished:
             continue  # never pull files out from under a running job
 

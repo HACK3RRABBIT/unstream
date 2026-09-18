@@ -9,7 +9,8 @@
 </p>
 
 <p align="center">
-  <a href="#quick-start"><b>Quick start</b></a> ·
+  <a href="#get-the-app"><b>Get Desktop App</b></a> ·
+  <a href="#quick-start">Quick start</a> ·
   <a href="#configuration">Configuration</a> ·
   <a href="#when-downloads-fail">Troubleshooting</a> ·
   <a href="README.fa.md">فارسی</a>
@@ -21,7 +22,20 @@ No accounts. No API keys. Nothing paid. You run it, so the files are yours and n
 
 > The interface ships in **Farsi and English**, switchable from the header. Farsi is the default because that is the audience it was built for ([why](docs/DESIGN.md#farsi-only)); set `UNSTREAM_DEFAULT_LOCALE=en` if you want English to be what people land on.
 
-## Quick start
+## Get the App (Recommended)
+
+The easiest way to run Unstream without Docker — it runs completely locally on your device and saves tagged audio straight into your music library. Any running instance also has a **Download the app** page that always points at the latest release with the right file for your system.
+
+| Platform | File | First-run notes |
+| --- | --- | --- |
+| **macOS (Apple Silicon)** | `.dmg` | Unsigned build: after installing, run `sudo xattr -cr /Applications/Unstream.app`. If it still reports the app is damaged, re-sign it locally with `sudo codesign --force --deep --sign - /Applications/Unstream.app`, then right-click → Open once. |
+| **macOS (Intel)** | `.dmg` | Same as above |
+| **Windows (64-bit / ARM)** | `.exe` installer (or `.msi`) | If SmartScreen appears: "More info" → "Run anyway" |
+| **Linux (64-bit / ARM)** | `.AppImage` or `.deb` | `chmod +x` the AppImage and run it, or `sudo dpkg -i` the package |
+
+All files: <https://github.com/amiralibg/unstream/releases/latest>
+
+## Quick start (Docker)
 
 You need [Docker](https://docs.docker.com/get-started/get-docker/). Nothing else — no Python, no Node, no ffmpeg on your machine.
 
@@ -121,11 +135,11 @@ That takes effect on restart — no rebuild, even on the prebuilt images, becaus
 
 ## Can I host this for other people?
 
-Not on an ordinary VPS, and this is the one thing that works locally and fails on a rented server.
+Not for YouTube audio on an ordinary VPS — and this is why the [Desktop App](#get-the-app) exists.
 
-YouTube treats a datacenter address differently from a home one. From a VPS it answers `LOGIN_REQUIRED` at the playability check — before a proof-of-origin token is asked for and before a JS challenge exists to solve — so the defences the image ships cannot reach the point where they'd help. From a home connection none of that happens.
+YouTube treats a datacenter address differently from a home one. From a VPS it answers `LOGIN_REQUIRED` at the playability check — before a proof-of-origin token is asked for and before a JS challenge exists to solve — so the defences the image ships cannot reach the point where they'd help. From the desktop app on a home connection, none of that happens.
 
-Making a public instance work needs egress from a non-datacenter address: a residential or ISP proxy, which costs money. There is no free workaround; if there were, it would be in this repo. SoundCloud is unaffected throughout.
+Everything else — metadata resolution, search, Deezer/Spotify/Apple Music scraping, lyrics, and SoundCloud downloads — works fine from a VPS. If hosting a public instance, set `UNSTREAM_YOUTUBE_DISABLED=true` in `compose.dokploy.yml` to serve everything else honestly while prompting users to use the Desktop app for YouTube downloads.
 
 **Anime is different.** Episodes come from three keyless sources, tried in order for the resolution you asked for: **Nyaa torrents** (the English-subbed archive, reliable from a datacenter IP the way YouTube isn't), the bundled **anivexa** streaming sidecar (a slim scrape of the big anime CDNs — built by `docker compose up`), and the **hianime** scraper (the one that bot-checks VPS addresses). `docker compose` ships all three on by default in that order; set `ANIME_PROVIDER_ORDER` in a gitignored `.env` (e.g. `hianime,nyaa`) to reorder or drop a source. Torrenting adds outbound access to public UDP trackers and DHT (default: any outbound; some hosts block tracker ports, in which case open them or switch the order). A torrent can take a while for a large episode, and the very first episodes of an old series may only exist inside a multi-episode batch, which the downloader extracts as a single file — never whole-downloading the batch.
 

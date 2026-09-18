@@ -42,7 +42,7 @@ def test_track_quality_override_wins(monkeypatch):
         raise downloader.DownloadError("stop here — only the argument matters")
 
     monkeypatch.setattr(downloader, "download_track", download)
-    jobs._run_track(job, job.tracks["e1"])
+    jobs._run_track(job, job.tracks["e1"], job.tracks["e1"].generation)
 
     assert seen["quality"] == "1080"  # the episode's own choice, not the job's
 
@@ -56,7 +56,7 @@ def test_track_without_override_falls_back_to_job_quality(monkeypatch):
         raise downloader.DownloadError("stop here — only the argument matters")
 
     monkeypatch.setattr(downloader, "download_track", download)
-    jobs._run_track(job, job.tracks["e1"])
+    jobs._run_track(job, job.tracks["e1"], job.tracks["e1"].generation)
 
     assert seen["quality"] == "720"
 
@@ -78,6 +78,6 @@ def test_two_episodes_in_one_job_can_each_get_their_own_resolution(monkeypatch):
 
     monkeypatch.setattr(downloader, "download_track", download)
     for episode_id in ("e1", "e2", "e3"):
-        jobs._run_track(job, job.tracks[episode_id])
+        jobs._run_track(job, job.tracks[episode_id], job.tracks[episode_id].generation)
 
     assert seen == {"e1": "1080", "e2": "480", "e3": "720"}

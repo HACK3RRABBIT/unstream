@@ -35,6 +35,109 @@ const en = {
     label: 'Settings',
     open: 'Open settings',
     close: 'Close settings',
+    downloadsFolder: 'Downloads folder',
+    downloadsLocation: 'Download destination',
+    changeFolder: 'Change folder',
+    openInFinder: 'Open folder',
+    resetDefault: 'Reset to default',
+    defaultFolderHint: 'Default: ~/Music/Unstream',
+    folderSaved: 'Folder updated',
+    appVersion: (v: string) => `App version ${v}`,
+    ytdlpVersion: (v: string) => `yt-dlp ${v}`,
+    serverUrl: 'Server URL',
+    serverUrlHint: 'Metadata & search server',
+    saveServer: 'Save',
+    resetServer: 'Reset',
+    checkUpdates: 'Check for updates',
+    checkingUpdates: 'Checking for updates…',
+    upToDate: 'Up to date',
+    updateAvailable: (v: string) => `Update available (${v})`,
+    downloadingUpdate: 'Downloading update…',
+    installUpdate: 'Install & relaunch',
+    installing: 'Installing…',
+    updateFailed: 'Update failed — try again later',
+    restartApp: 'Restart app',
+    updateReady: 'Update installed! Restart the app to apply.',
+  },
+
+  banner: {
+    youtubeDisabled:
+      'YouTube downloads are disabled on this instance. Use the Unstream desktop app for unlimited local downloads.',
+    getApp: 'Get Desktop App',
+  },
+
+  /** The dedicated `/download` page. Version and file links resolve at run
+   *  time from the latest GitHub release, so publishing a new release updates
+   *  the page with no code change. */
+  download: {
+    eyebrow: 'Desktop app',
+    title: 'Download the app',
+    blurb:
+      'Unlimited local downloads at the quality you pick, with lyrics saved into the file. It runs entirely on your machine — no account, no server in between.',
+    promoBlurb:
+      'Unlimited local downloads with lyrics in the file. It runs entirely on your machine.',
+    version: (v: string) => `Version ${v}`,
+    latest: 'Latest',
+    loading: 'Finding the latest version…',
+    failed: "Couldn't reach GitHub for the latest version — the full list is still there.",
+    retry: 'Try again',
+    viewAll: 'All downloads on GitHub',
+    backHome: 'Back to Unstream',
+    /** Accessible name for a file button; the visible label stays the bare
+     *  filename, which is a technical token and never translated. */
+    downloadFor: (detail: string) => `Download ${detail}`,
+    otherPlatforms: 'Other platforms',
+    mac: 'macOS',
+    windows: 'Windows',
+    linux: 'Linux',
+    appleSilicon: 'Apple Silicon',
+    intel: 'Intel',
+    bit64: '64-bit',
+    arm64: 'ARM',
+    setupInstaller: 'Installer',
+    portableImage: 'Portable',
+    package: 'Package',
+    macStepsTitle: 'Opening it on a Mac',
+    /** Unsigned-build help. The commands are code, not copy — they stay Latin
+     *  in every locale; only the explanation is translated. */
+    macStepInstall: 'Install the .dmg, then clear the quarantine flag:',
+    macStepResign:
+      'If it still says the app is damaged, re-sign it locally (this is what fixes it when clearing alone does not):',
+    macStepOpen:
+      'Then open it with right-click → Open once, or allow it in System Settings → Privacy & Security.',
+    heroTitle: 'All your music. Truly offline.',
+    heroSubtitle:
+      'High-fidelity downloads, synchronized lyrics baked into your files, and a dedicated offline player. Runs 100% on your machine with zero accounts or subscriptions.',
+    downloadForPlatform: (p: string) => `Download for ${p}`,
+    otherOptionsFor: (p: string) => `Other options for ${p}`,
+    allPlatformsTitle: 'All Platforms & Packages',
+    allPlatformsSubtitle: 'Native binaries built and optimized for your processor architecture.',
+    featuresTitle: 'Engineered for pure listening',
+    featuresSubtitle: 'Everything you love about Unstream, natively optimized for your desktop.',
+    featureLocalTitle: '100% Local & Private',
+    featureLocalDesc:
+      'Runs completely on your machine. No accounts, no sign-ups, and no intermediate servers touching your audio.',
+    featureAudioTitle: 'Lossless & 320 kbps',
+    featureAudioDesc:
+      'Save crystal-clear MP3s or original lossless audio, tagged with verified cover artwork and full ID3 metadata.',
+    featureLyricsTitle: 'Embedded Synced Lyrics',
+    featureLyricsDesc:
+      'Time-synced lyrics embedded directly into your files, ready for any offline media player or karaoke.',
+    featurePlayerTitle: 'Built-in Player & Library',
+    featurePlayerDesc:
+      'Browse your offline music library, play songs with real-time waveform visualizers, and sing along in karaoke view.',
+    macStepsSubtitle:
+      'Because Unstream is community-built and unsigned, macOS Gatekeeper may show a warning. Follow these two quick commands:',
+    macStepsTab: 'macOS Gatekeeper Guide',
+    showMacGuide: 'Show macOS Gatekeeper guide',
+    hideMacGuide: 'Hide guide',
+    selectPlatform: 'Select platform',
+    previewNowPlaying: 'Now Playing',
+    previewLyricsPreview: 'Live Synced Lyrics',
+    copy: 'Copy',
+    copied: 'Copied',
+    yourPlatform: 'Your OS',
+    runningLocally: 'You are currently running Unstream locally on this machine.',
   },
 
   /** The document's own metadata — `<title>`, the description, Open Graph and
@@ -69,6 +172,96 @@ const en = {
     },
   },
 
+  desktopNav: {
+    search: 'Search & Explore',
+    downloads: 'Downloads',
+    library: 'Library',
+    settings: 'Settings',
+    openFolder: 'Open Folder',
+    activeDownloads: (n: number) => `${n} active`,
+    completed: 'Completed',
+    musicDownloader: 'Music downloader',
+    navigationLabel: 'Desktop navigation',
+    noActiveDownloads: 'No active downloads',
+    noCompletedDownloads: 'No completed downloads yet',
+    emptyDownloadsHint:
+      'Search for a track, album, or artist to start building your offline music library.',
+    settingsDescription: 'Fine-tune audio, file organization, language, and app updates.',
+    audioDefaults: 'Audio defaults',
+    audioDefaultsHint: 'These options apply to every new download.',
+    languageHint: 'Choose the language and reading direction used throughout Unstream.',
+    downloadsFolderHint: 'Finished albums and tracks are organized inside this folder.',
+    about: 'About Unstream',
+    appName: 'Unstream Desktop',
+    newVersion: 'New version available:',
+    builtBy: 'Built by',
+    and: 'and',
+    totalDownloads: 'Total',
+    clearCompleted: 'Clear completed',
+    revealInFolder: 'Reveal in folder',
+    commandPaletteHint: 'Search or paste link…',
+    supportedSources: 'Supported services',
+    offlineLibrary: 'Offline Music Library',
+    keyboardShortcut: 'Shortcut',
+    quickActions: 'Quick actions',
+    window: {
+      minimize: 'Minimize',
+      maximize: 'Maximize',
+      restore: 'Restore',
+      close: 'Close',
+    },
+  },
+
+  palette: {
+    placeholder: 'Type a command, search, or paste a link…',
+    searchFor: (q: string) => `Search for "${q}"`,
+    openLink: 'Open this link',
+    recent: 'Recent',
+    empty: 'Nothing matches — press Enter to search anyway',
+  },
+
+  cookies: {
+    title: 'Browser cookies',
+    hint: 'If YouTube asks for a sign-in mid-download, pick the browser you are signed into YouTube in. Downloads use your own account, on your own machine.',
+    off: 'Off',
+    saved: 'Saved',
+    failed: 'Could not save — try again',
+    noneFound: 'No supported browser found on this device',
+  },
+
+  player: {
+    play: 'Play',
+    pause: 'Pause',
+    next: 'Next track',
+    previous: 'Previous track',
+    seek: 'Seek',
+    close: 'Close the player',
+    karaoke: 'Karaoke',
+    upNext: 'Up next',
+    searchLibrary: 'Search your library…',
+    refresh: 'Rescan the folder',
+    empty: 'No music yet',
+    emptyHint: 'Finished downloads land here — press play on anything.',
+    trackCount: (n: number) => `${n} songs`,
+    unknownArtist: 'Unknown artist',
+    playAll: 'Play all',
+    shuffleAll: 'Shuffle all',
+    shuffle: 'Shuffle',
+    repeat: {
+      off: 'Repeat off',
+      all: 'Repeat all',
+      one: 'Repeat this song',
+    },
+    volume: 'Volume',
+    mute: 'Mute',
+    unmute: 'Unmute',
+    unplayable: "This file can't be played — it may have moved",
+    lyricsOnDisk: 'Lyrics from this file',
+    sortRecent: 'Newest',
+    sortTitle: 'Title',
+    sortArtist: 'Artist',
+  },
+
   hero: {
     titleLine1: 'Download music,',
     titleLine2: 'albums and playlists',
@@ -76,6 +269,7 @@ const en = {
       'Paste a Spotify, YouTube, SoundCloud, Deezer or Apple Music link — or search every catalog at once. Get tagged MP3 files with cover art at the quality you pick. No account, no sign-up.',
     shortcutBefore: 'Press',
     shortcutAfter: 'to search, or paste a link anywhere on the page.',
+    appEmpty: 'Paste a link or search — files land in Music/Unstream',
   },
 
   form: {
@@ -341,6 +535,9 @@ const en = {
     starting: 'Starting…',
     downloadFile: (title: string, ext: string) => `Download ${title}.${ext}`,
     downloadFileLong: (title: string, ext: string) => `Download ${title} as ${ext}`,
+    revealInFolder: (title: string) => `Reveal ${title} in folder`,
+    playTrack: (title: string) => `Play ${title}`,
+    openFolder: 'Open downloads folder',
     failed: 'Failed',
     deleted: 'Deleted',
     /** Stopping a job in progress. Whatever has already finished is kept, so
@@ -349,6 +546,7 @@ const en = {
     cancelling: 'Stopping…',
     cancelled: 'Stopped',
     cancelledCount: (n: number) => `${n} stopped`,
+    retry: 'Retry',
   },
 
   share: {

@@ -7,7 +7,9 @@ import {
   CircleSlash,
   CircleStop,
   Download,
+  FolderOpen,
   LoaderCircle,
+  RefreshCw,
   TriangleAlert,
   X,
 } from 'lucide-react'
@@ -23,6 +25,7 @@ import {
   type JobTrack,
   type Quality,
 } from '../lib/api'
+import { isDesktop as isTauri, revealFile, openFolder, setWindowProgress } from '../lib/desktop'
 import { useDownloads, type DownloadEntry } from '../lib/downloads'
 import { faNumerals, useMessages, useStartAlign } from '../lib/i18n'
 import { useToast } from '../lib/toast'
@@ -56,6 +59,9 @@ function TrackLine({
 }) {
   const m = useMessages()
   const startAlign = useStartAlign()
+  const { retryOne } = useDownloads()
+  const { push } = useToast()
+  const [retrying, setRetrying] = useState(false)
   const track = entry.tracks.find((t) => t.id === state.id)
   const title = track ? track.title : state.id
   const available = state.status === 'done' && !entry.expired
@@ -63,6 +69,17 @@ function TrackLine({
   // itself is the only honest source for this label.
   const ext = state.ext ?? 'mp3'
   const active = isActive(state.status)
+
+  const onRetry = async () => {
+    setRetrying(true)
+    try {
+      await retryOne(entry.jobId, state.id)
+    } catch (err) {
+      push(apiError(err, m), 'error')
+    } finally {
+      setRetrying(false)
+    }
+  }
 
   return (
     <li className="relative flex items-center gap-2.5 px-4 py-1.5">
@@ -102,19 +119,49 @@ function TrackLine({
             ext={ext}
             size="compact"
           />
-          <a
-            href={trackFileUrl(entry.jobId, state.id)}
-            download
-            title={m.dock.downloadFile(title, ext)}
-            aria-label={m.dock.downloadFileLong(title, ext)}
-            className="tap-target flex shrink-0 items-center gap-1 rounded-ctl border border-ink-600 px-2 py-0.5 text-micro font-medium text-lime-flash transition hover:border-lime-flash/50 hover:bg-ink-800"
-          >
-            <Download className="size-3" />
-            {ext}
-          </a>
+          {isTauri() ? (
+            <button
+              type="button"
+              onClick={() => {
+                if (state.path) {
+                  revealFile(state.path)
+                }
+              }}
+              title={m.dock.revealInFolder(title)}
+              aria-label={m.dock.revealInFolder(title)}
+              className="tap-target flex shrink-0 items-center gap-1 rounded-ctl border border-ink-600 px-2 py-0.5 text-micro font-medium text-lime-flash transition hover:border-lime-flash/50 hover:bg-ink-800"
+            >
+              <FolderOpen className="size-3" />
+              {ext}
+            </button>
+          ) : (
+            <a
+              href={trackFileUrl(entry.jobId, state.id)}
+              download
+              title={m.dock.downloadFile(title, ext)}
+              aria-label={m.dock.downloadFileLong(title, ext)}
+              className="tap-target flex shrink-0 items-center gap-1 rounded-ctl border border-ink-600 px-2 py-0.5 text-micro font-medium text-lime-flash transition hover:border-lime-flash/50 hover:bg-ink-800"
+            >
+              <Download className="size-3" />
+              {ext}
+            </a>
+          )}
         </>
       ) : state.status === 'error' ? (
-        <span className="text-xs text-danger">{m.dock.failed}</span>
+        <button
+          type="button"
+          onClick={onRetry}
+          disabled={retrying}
+          className="tap-target flex shrink-0 items-center gap-1 rounded-ctl border border-danger/40 px-2 py-0.5 text-micro font-medium text-danger transition hover:bg-danger/10 disabled:opacity-50"
+          title={state.error ?? m.dock.failed}
+        >
+          {retrying ? (
+            <LoaderCircle className="size-3 animate-spin" />
+          ) : (
+            <RefreshCw className="size-3" />
+          )}
+          {m.dock.retry ?? 'Retry'}
+        </button>
       ) : state.status === 'cancelled' ? (
         <span className="text-xs text-ink-400">{m.dock.cancelled}</span>
       ) : entry.expired ? (
@@ -151,7 +198,7 @@ function TrackLine({
 }
 
 function JobCard({ entry, capped = true }: { entry: DownloadEntry; capped?: boolean }) {
-  const { cancel, dismiss } = useDownloads()
+  const { cancel, dismiss, retry } = useDownloads()
   const { push } = useToast()
   const m = useMessages()
   const startAlign = useStartAlign()
@@ -172,6 +219,14 @@ function JobCard({ entry, capped = true }: { entry: DownloadEntry; capped?: bool
   const onCancel = async () => {
     try {
       await cancel(entry.jobId)
+    } catch (err) {
+      push(apiError(err, m), 'error')
+    }
+  }
+
+  const onRetryAll = async () => {
+    try {
+      await retry(entry.jobId)
     } catch (err) {
       push(apiError(err, m), 'error')
     }
@@ -243,16 +298,44 @@ function JobCard({ entry, capped = true }: { entry: DownloadEntry; capped?: bool
             ? videoQualityLabel(entry.videoQuality ?? DEFAULT_VIDEO_QUALITY, m)
             : qualityLabel(entry.quality as Quality, m)}
         </span>
-        {showZip && (
-          <a
-            href={jobZipUrl(entry.jobId)}
-            download
-            title={m.dock.zip}
-            aria-label={m.dock.zipLong}
-            className="tap-target grid size-7 shrink-0 place-items-center rounded-ctl border border-ink-600 text-ink-100 transition hover:border-lime-flash/50 hover:text-lime-flash"
+        {showZip &&
+          (isTauri() ? (
+            <button
+              type="button"
+              onClick={() => {
+                const firstDone = entry.job?.tracks.find((t) => t.path)
+                if (firstDone?.path) {
+                  revealFile(firstDone.path)
+                } else if (entry.job?.dir) {
+                  openFolder(entry.job.dir)
+                }
+              }}
+              title={m.dock.openFolder}
+              aria-label={m.dock.openFolder}
+              className="tap-target grid size-7 shrink-0 place-items-center rounded-ctl border border-ink-600 text-ink-100 transition hover:border-lime-flash/50 hover:text-lime-flash"
+            >
+              <FolderOpen className="size-3.5" />
+            </button>
+          ) : (
+            <a
+              href={jobZipUrl(entry.jobId)}
+              download
+              title={m.dock.zip}
+              aria-label={m.dock.zipLong}
+              className="tap-target grid size-7 shrink-0 place-items-center rounded-ctl border border-ink-600 text-ink-100 transition hover:border-lime-flash/50 hover:text-lime-flash"
+            >
+              <Archive className="size-3.5" />
+            </a>
+          ))}
+        {finished && failed > 0 && !expired && (
+          <button
+            onClick={onRetryAll}
+            title={m.dock.retry ?? 'Retry failed'}
+            className="tap-target flex items-center gap-1 rounded-ctl border border-ink-600 px-2 py-1 text-micro font-medium text-lime-flash transition hover:border-lime-flash/50 hover:bg-ink-800"
           >
-            <Archive className="size-3.5" />
-          </a>
+            <RefreshCw className="size-3" />
+            {m.dock.retry ?? 'Retry'}
+          </button>
         )}
         {finished ? (
           <button
@@ -451,25 +534,47 @@ function DownloadsSheet({
 
 export function DownloadsDock() {
   const { entries, activeCount, panelOpen, setPanelOpen } = useDownloads()
-  const isDesktop = useIsDesktop()
+  const isWide = useIsDesktop()
+  const isApp = isTauri()
   const m = useMessages()
+
+  // Native window progress bar (macOS dock / Windows taskbar)
+  const totalsForProgress = entries.reduce(
+    (acc, e) => ({
+      settled: acc.settled + (e.job ? e.job.done + e.job.failed + inFlightFraction(e.job) : 0),
+      total: acc.total + (e.job?.total ?? e.tracks.length),
+    }),
+    { settled: 0, total: 0 },
+  )
+  const globalFraction = totalsForProgress.total
+    ? Math.min(1, totalsForProgress.settled / totalsForProgress.total)
+    : 0
+  useEffect(() => {
+    if (!isApp) return
+    if (activeCount > 0) {
+      void setWindowProgress(globalFraction)
+    } else {
+      void setWindowProgress(null)
+    }
+  }, [activeCount, globalFraction, isApp])
 
   // Toasts are full width on phones, so whatever this pins to the bottom edge
   // ends up under them. --dock-lift says how much room to leave, and this is
   // its only writer: the FAB's footprint, then the sheet's measured height,
   // and nothing on desktop where the two sit in opposite corners.
   const docked = entries.length > 0
-  const sheetOpen = panelOpen && !isDesktop
+  const sheetOpen = panelOpen && !isWide && !isApp
   const [sheetHeight, setSheetHeight] = useState(0)
   useEffect(() => {
     const root = document.documentElement
-    const lift = isDesktop ? 0 : sheetOpen ? sheetHeight : docked ? 76 : 0
+    // App has its own persistent bar, not the FAB footprint
+    const lift = isApp ? 0 : isWide ? 0 : sheetOpen ? sheetHeight : docked ? 76 : 0
     if (lift > 0) root.style.setProperty('--dock-lift', `${lift}px`)
     else root.style.removeProperty('--dock-lift')
     return () => {
       root.style.removeProperty('--dock-lift')
     }
-  }, [docked, isDesktop, sheetOpen, sheetHeight])
+  }, [docked, isWide, isApp, sheetOpen, sheetHeight])
 
   const close = useCallback(() => setPanelOpen(false), [setPanelOpen])
 
@@ -490,9 +595,14 @@ export function DownloadsDock() {
     .reverse()
     .map((entry) => <JobCard key={entry.jobId} entry={entry} capped={entries.length > 1} />)
 
+  // Web keeps FAB + centered panel + bottom sheet. Desktop (Tauri) has dedicated sidebar tab.
+  if (isApp) {
+    return null
+  }
+
   return (
     <div className="fixed end-5 bottom-[calc(1.25rem+var(--safe-bottom))] z-50 flex flex-col items-end gap-3">
-      {panelOpen && isDesktop && (
+      {panelOpen && isWide && (
         <section
           aria-label={m.dock.heading}
           className="flex w-[min(24rem,calc(100vw-2.5rem))] animate-fade-up flex-col overflow-hidden rounded-panel border border-ink-700 bg-ink-900 shadow-2xl shadow-black/60"
@@ -516,11 +626,9 @@ export function DownloadsDock() {
         aria-label={panelOpen ? m.dock.close : m.dock.show}
         className={clsx(
           'relative grid size-14 place-items-center rounded-full bg-lime-flash text-lime-ink shadow-lg shadow-black/40 transition duration-200 hover:bg-lime-soft hover:scale-105 active:scale-95',
-          // The sheet owns the bottom edge and its own dismissal.
           sheetOpen && 'pointer-events-none opacity-0',
         )}
       >
-        {/* progress ring around the button while anything is downloading */}
         {activeCount > 0 && (
           <svg viewBox="0 0 56 56" className="absolute inset-0 -rotate-90">
             <circle

@@ -104,22 +104,119 @@ def _writable_cookiefile(source: str) -> str:
 COOKIEFILE_LIVE = _writable_cookiefile(COOKIEFILE) if COOKIEFILE else ""
 
 
+# Browsers yt-dlp can read cookies out of (`--cookies-from-browser`). On a
+# server this would tie every download to one account; on a desktop it is the
+# person's own browser and their own account, which makes it the highest-hit
+# fix for a bot check that survives the solver and the token provider below.
+# A name outside the allowlist is ignored — the value travels from a settings
+# dropdown, but the endpoint takes a string and yt-dlp would hand an unknown
+# one to an OS-specific reader.
+BROWSER_ALLOWLIST = (
+    "chrome",
+    "chromium",
+    "brave",
+    "edge",
+    "firefox",
+    "safari",
+    "opera",
+    "vivaldi",
+)
+
+
+def _env_browser() -> str:
+    name = os.getenv("YTDLP_COOKIES_FROM_BROWSER", "").strip().lower()
+    return name if name in BROWSER_ALLOWLIST else ""
+
+
+# Runtime override from /api/desktop/config; None means "follow the env".
+_cookies_from_browser: str | None = None
+
+
+def set_cookies_from_browser(name: str) -> str:
+    """Live-switch the browser cookies are read from. Empty clears it."""
+    cleaned = (name or "").strip().lower()
+    if cleaned and cleaned not in BROWSER_ALLOWLIST:
+        raise ValueError(f"Unsupported browser: {name!r}")
+    global _cookies_from_browser
+    _cookies_from_browser = cleaned
+    return cleaned
+
+
+def cookies_from_browser() -> str:
+    if _cookies_from_browser is not None:
+        return _cookies_from_browser
+    return _env_browser()
+
+
+# Which YouTube player clients to try, in order (`tv,web`). The default is
+# "whatever yt-dlp tries" — pinning this is how a desktop that starts failing
+# gets un-broken without a release, and the launcher sets a desktop default.
+# Operator-controlled like every other env here: a typo surfaces in yt-dlp's
+# own client error, so values pass through and only empties are dropped.
+def player_clients() -> list[str]:
+    clients = [
+        c.strip().lower()
+        for c in os.getenv("YTDLP_PLAYER_CLIENTS", "").split(",")
+    ]
+    return [c for c in clients if c]
+
+
+def is_desktop() -> bool:
+    return os.getenv("UNSTREAM_DESKTOP", "").lower() in ("1", "true", "yes")
+
+
 def base_opts(**extra) -> dict:
     """Options every yt-dlp call in the project shares."""
     opts = {"quiet": True, "no_warnings": True, **extra}
     if REMOTE_COMPONENTS:
         opts["remote_components"] = REMOTE_COMPONENTS.split(",")
+    # yt-dlp only auto-enables deno as its JS runtime; bun and node exist but
+    # are ignored unless named. A machine with bun and no deno (a laptop, say)
+    # would otherwise solve no challenges and get videos with missing formats.
+    runtime = _js_runtime()
+    if runtime and runtime != "deno":
+        opts["js_runtimes"] = {runtime: {}}
     if CACHE_DIR:
         opts["cachedir"] = CACHE_DIR
     if COOKIEFILE_LIVE:
         opts["cookiefile"] = COOKIEFILE_LIVE
+    browser = cookies_from_browser()
+    if browser:
+        # yt-dlp reads the live store at extraction time, so switching
+        # browsers takes effect on the next download with no restart.
+        opts["cookiesfrombrowser"] = (browser,)
+    # Copied rather than mutated: `extra` belongs to the caller, and the
+    # dict inside it would outlive this call.
+    args = dict(opts.get("extractor_args") or {})
     if POT_PROVIDER_URL:
-        # Copied rather than mutated: `extra` belongs to the caller, and the
-        # dict inside it would outlive this call.
-        args = dict(opts.get("extractor_args") or {})
         args["youtubepot-bgutilhttp"] = {"base_url": [POT_PROVIDER_URL]}
+    clients = player_clients()
+    if clients:
+        args["youtube"] = {**dict(args.get("youtube") or {}), "player_client": clients}
+    if args:
         opts["extractor_args"] = args
     return opts
+
+
+def bot_check_message() -> str:
+    """What a bot-check failure tells the person who can act on it.
+
+    The server copy names the env var because its operator is the reader. The
+    desktop copy names the Settings toggle because the reader is the person
+    whose browser holds the fix.
+    """
+    if is_desktop():
+        return (
+            "YouTube asked for a sign-in to confirm this download is not a bot, "
+            "so the audio could not be fetched. Open Settings → Browser cookies "
+            "and pick the browser you are signed into YouTube in, then try again."
+        )
+    return (
+        "YouTube asked this server to sign in to confirm it is not a bot, so the "
+        "audio could not be fetched. Datacenter and VPN addresses get this long "
+        "before a home connection does. Point YTDLP_COOKIEFILE at a cookies.txt "
+        "exported from a signed-in throwaway account to get past it."
+    )
 
 
 def status() -> dict:
@@ -129,6 +226,8 @@ def status() -> dict:
         "js_runtime": _js_runtime(),
         "pot_provider_url": POT_PROVIDER_URL or None,
         "cache_dir": CACHE_DIR or None,
+        "cookies_from_browser": cookies_from_browser() or None,
+        "player_clients": player_clients() or None,
         "cookiefile": COOKIEFILE or None,
         # True means YTDLP_COOKIEFILE was set and pointed at nothing: almost
         # always a mount that didn't happen.
@@ -138,20 +237,34 @@ def status() -> dict:
         # nowhere to put a writable copy, and the cookie is being ignored
         # rather than crashing every extraction on the way out.
         "cookiefile_live": COOKIEFILE_LIVE or None,
+        "youtube_disabled": os.getenv("UNSTREAM_YOUTUBE_DISABLED", "").lower()
+        in ("1", "true", "yes"),
     }
+
+
+# (runtime key, binary name). The two differ for QuickJS: yt-dlp's option
+# takes "quickjs", but the interpreter ships as `qjs` and that is the name
+# yt-dlp's own discovery looks for. Probing for "quickjs" finds nothing on a
+# machine that has it.
+_JS_RUNTIMES = (
+    ("deno", "deno"),
+    ("bun", "bun"),
+    ("node", "node"),
+    ("quickjs", "qjs"),
+)
 
 
 def _js_runtime() -> str | None:
     """Which JS runtime is on PATH, if any — None means challenges can't be
     solved and YouTube will hand back videos with no audio on them."""
-    for runtime in ("deno", "bun", "node", "quickjs"):
-        if shutil.which(runtime):
+    for runtime, binary in _JS_RUNTIMES:
+        if shutil.which(binary):
             return runtime
     return None
 
 
 _YOUTUBE_RE = re.compile(
-    r"(?:music\.|www\.|m\.)?(?:youtube\.com/(?:watch\?|playlist\?)|youtu\.be/)"
+    r"(?:music\.|www\.|m\.)?(?:youtube\.com/(?:watch\?|playlist\?|shorts/)|youtu\.be/)"
 )
 _SOUNDCLOUD_RE = re.compile(r"(?:www\.|m\.|on\.)?soundcloud\.com/")
 

@@ -25,3 +25,13 @@ files/
 # and lyrics SQLite files, and the Telegram session (which acts as the
 # owner's account, so committing it would publish their identity).
 backend/data/
+
+# Build artifacts and dependencies
+backend/build/
+backend/dist/
+desktop/src-tauri/target/
+desktop/src-tauri/bin/
+desktop/src-tauri/resources/
+desktop/node_modules/
+*.key
+desktop/updater.key*
