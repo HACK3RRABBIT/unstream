@@ -146,6 +146,13 @@ const ERROR_PHRASES: [RegExp, (m: Messages, n: string) => string][] = [
   [/^Track not ready/, (m) => m.errors.notReady],
   [/^Unknown job/, (m) => m.errors.unknownJob],
   [/^Empty search query/, (m) => m.errors.emptyQuery],
+  // Every provider raises this exact shape (backend/app/{deezer,embed,itunes,
+  // soundcloud}.py, anime/{anilist,anivexa,hianime,nyaa}.py) when it can't be
+  // reached at all — a network/DNS failure, not a bad request. It answers
+  // 400 like validation errors do (see anilist.py), so without this pattern
+  // it fell through to the generic "that link wouldn't open" text — wrong
+  // for a plain search, which never had a link to begin with.
+  [/^Could not reach /, (m) => m.errors.providerUnreachable],
 ]
 
 /** For anything the table missed: provider and yt-dlp errors are raw internals,
