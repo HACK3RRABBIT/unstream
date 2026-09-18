@@ -38,7 +38,20 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
+  # Docker refs must be lowercase; a GitHub username/org isn't guaranteed to
+  # be (this one isn't). Computed once so both jobs below stay in sync.
+  owner:
+    runs-on: ubuntu-latest
+    outputs:
+      lower: ${{ steps.lower.outputs.value }}
+    steps:
+      - id: lower
+        run: echo "value=${OWNER,,}" >> "$GITHUB_OUTPUT"
+        env:
+          OWNER: ${{ github.repository_owner }}
+
   build:
+    needs: owner
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       fail-fast: false
@@ -72,7 +85,7 @@ jobs:
           # No tags here on purpose. Two architectures pushing the same tag
           # would race, and the loser would silently win: the tag would point
           # at one arch instead of at a manifest listing both.
-          outputs: type=image,name=${{ env.REGISTRY }}/${{ github.repository_owner }}/unstream-${{ matrix.image.name }},push-by-digest=true,name-canonical=true,push=true
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ needs.owner.outputs.lower }}/unstream-${{ matrix.image.name }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=${{ matrix.image.name }}-${{ matrix.platform.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}-${{ matrix.platform.arch }}
 
@@ -93,7 +106,7 @@ jobs:
           if-no-files-found: error
 
   merge:
-    needs: build
+    needs: [owner, build]
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -119,7 +132,7 @@ jobs:
       - id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/unstream-${{ matrix.image }}
+          images: ${{ env.REGISTRY }}/${{ needs.owner.outputs.lower }}/unstream-${{ matrix.image }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}
@@ -131,4 +144,4 @@ jobs:
         run: |
           docker buildx imagetools create \
             $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf "${{ env.REGISTRY }}/${{ github.repository_owner }}/unstream-${{ matrix.image }}@sha256:%s " *)
+            $(printf "${{ env.REGISTRY }}/${{ needs.owner.outputs.lower }}/unstream-${{ matrix.image }}@sha256:%s " *)
