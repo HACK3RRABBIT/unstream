@@ -27,6 +27,8 @@ pub struct AppState {
 struct SavedSettings {
     pub downloads_dir: Option<String>,
     pub cookies_from_browser: Option<String>,
+    /// "system", "off", or a proxy URL — see `backend/app/net.py`.
+    pub proxy: Option<String>,
     /// The sidecar port from last launch — see `choose_port`.
     pub port: Option<u16>,
 }
@@ -405,6 +407,9 @@ fn spawn_backend(
             cmd.env("YTDLP_COOKIES_FROM_BROWSER", browser);
         }
     }
+    if let Some(ref proxy) = saved_settings.proxy {
+        cmd.env("UNSTREAM_PROXY", proxy);
+    }
 
     #[cfg(windows)]
     {
@@ -475,6 +480,16 @@ fn set_cookies_from_browser(
     let app_data_dir = state.app_data_dir.lock().unwrap().clone();
     let mut settings = load_saved_settings(&app_data_dir);
     settings.cookies_from_browser = if browser.is_empty() { None } else { Some(browser) };
+    save_settings(&app_data_dir, &settings)
+}
+
+/// Persists the proxy for the next launch; the running sidecar is switched
+/// live through /api/desktop/config, which also validates the value.
+#[tauri::command]
+fn set_proxy(proxy: String, state: State<AppState>) -> Result<(), String> {
+    let app_data_dir = state.app_data_dir.lock().unwrap().clone();
+    let mut settings = load_saved_settings(&app_data_dir);
+    settings.proxy = if proxy.is_empty() || proxy == "system" { None } else { Some(proxy) };
     save_settings(&app_data_dir, &settings)
 }
 
@@ -795,6 +810,7 @@ pub fn run() {
             get_downloads_dir,
             set_downloads_dir,
             set_cookies_from_browser,
+            set_proxy,
             get_desktop_info,
             list_installed_browsers,
             start_dragging,

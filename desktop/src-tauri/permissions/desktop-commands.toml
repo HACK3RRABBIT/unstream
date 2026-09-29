@@ -17,6 +17,7 @@ commands.allow = [
   "get_downloads_dir",
   "set_downloads_dir",
   "set_cookies_from_browser",
+  "set_proxy",
   "get_desktop_info",
   "list_installed_browsers",
   "start_dragging",

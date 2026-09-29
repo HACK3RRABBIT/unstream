@@ -24,6 +24,31 @@ export interface Collection {
   tracks: Track[]
 }
 
+export type FailureKind =
+  'bot_check' | 'network' | 'tls' | 'cookies' | 'encoding' | 'not_found' | 'other'
+
+/** Failures a setting can fix: the connection, or the browser cookies. */
+export const FIXABLE_IN_SETTINGS: ReadonlySet<FailureKind> = new Set([
+  'bot_check',
+  'network',
+  'tls',
+  'cookies',
+])
+
+/** The failure most of a job's broken tracks share — one explanation per
+ *  album, not one per row. */
+export function commonFailure(tracks: JobTrack[]): FailureKind | null {
+  const counts = new Map<FailureKind, number>()
+  for (const track of tracks) {
+    if (track.status !== 'error') continue
+    const kind = track.error_kind ?? 'other'
+    counts.set(kind, (counts.get(kind) ?? 0) + 1)
+  }
+  let best: FailureKind | null = null
+  for (const [kind, n] of counts) if (best === null || n > counts.get(best)!) best = kind
+  return best
+}
+
 export type TrackStatus =
   'queued' | 'searching' | 'downloading' | 'tagging' | 'retrying' | 'done' | 'error' | 'cancelled'
 
@@ -42,6 +67,9 @@ export interface JobTrack {
   status: TrackStatus
   progress: number
   error: string | null
+  /** What kind of failure `error` is — mirrors `error_kind()` in
+   *  backend/app/net.py. The UI words it; `error` stays the raw record. */
+  error_kind?: FailureKind | null
   /** Format the finished file actually came out as ('mp3' | 'm4a' | 'opus'). */
   ext: string | null
   /** Anime only, while searching. Real backend progress, not a timer. */
@@ -130,6 +158,20 @@ export interface Lyrics {
 
 const client = axios.create({ baseURL: '/api' })
 
+/** A search or link that failed because nothing could be reached, as opposed
+ *  to one that was reached and said no. */
+const UNREACHABLE =
+  /^Search failed|^Could not reach|timed out|Unable to download (?:webpage|API page)|getaddrinfo|Name or service not known|nodename nor servname|Connection (?:refused|reset|aborted)|Network is unreachable|CERTIFICATE_VERIFY_FAILED|Tunnel connection failed|Remote end closed|HTTP Error 401/
+
+/** True when a request failed for want of a connection to the services — the
+ *  case a VPN or proxy setting can fix, so the UI offers a way there. */
+export function isConnectionError(err: unknown): boolean {
+  if (!axios.isAxiosError(err)) return false
+  if (err.response?.status == null) return false
+  const detail = err.response.data?.detail
+  return typeof detail === 'string' && UNREACHABLE.test(detail)
+}
+
 /** Backend `detail` strings, matched to a dictionary entry. The wire carries a
  *  terse machine-facing message; each surface renders it in its own voice and
  *  its own language (docs/DESIGN.md). The capture group, when there is one,
@@ -146,13 +188,8 @@ const ERROR_PHRASES: [RegExp, (m: Messages, n: string) => string][] = [
   [/^Track not ready/, (m) => m.errors.notReady],
   [/^Unknown job/, (m) => m.errors.unknownJob],
   [/^Empty search query/, (m) => m.errors.emptyQuery],
-  // Every provider raises this exact shape (backend/app/{deezer,embed,itunes,
-  // soundcloud}.py, anime/{anilist,anivexa,hianime,nyaa}.py) when it can't be
-  // reached at all — a network/DNS failure, not a bad request. It answers
-  // 400 like validation errors do (see anilist.py), so without this pattern
-  // it fell through to the generic "that link wouldn't open" text — wrong
-  // for a plain search, which never had a link to begin with.
-  [/^Could not reach /, (m) => m.errors.providerUnreachable],
+  // Last, and not anchored: provider errors wrap the socket's own words.
+  [UNREACHABLE, (m) => m.errors.unreachable],
 ]
 
 /** For anything the table missed: provider and yt-dlp errors are raw internals,

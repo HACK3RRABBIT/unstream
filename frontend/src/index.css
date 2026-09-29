@@ -119,8 +119,10 @@
   --color-ink-800: #1a1e17;
   --color-ink-700: #242a20;
   --color-ink-600: #39412f;
+  --color-ink-500: #596150;
   --color-ink-400: #79816f;
   --color-ink-300: #a3ab98;
+  --color-ink-200: #c6cbbe;
   --color-ink-100: #e9ece4;
 
   /* Lime accent — the only chromatic colour in the UI. It marks the one

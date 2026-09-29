@@ -1,10 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import {
   Apple,
   AudioLines,
   Check,
   ChevronDown,
-  ChevronUp,
   Copy,
   Download,
   ExternalLink,
@@ -32,6 +31,8 @@ import { RELEASES_URL, detectArm, detectOS, filesFor, useRelease, type OS } from
 
 const MAC_QUARANTINE_CMD = 'sudo xattr -cr /Applications/Unstream.app'
 const MAC_RESIGN_CMD = 'sudo codesign --force --deep --sign - /Applications/Unstream.app'
+const LINUX_APPIMAGE_CMD = 'chmod +x Unstream_*.AppImage && ./Unstream_*.AppImage'
+const LINUX_DEB_CMD = 'sudo apt install ./Unstream_*.deb'
 
 function CopyButton({
   text,
@@ -74,6 +75,160 @@ function CopyButton({
 }
 
 const OS_ICONS = { mac: Apple, windows: Grid2x2, linux: Terminal } as const
+
+/** A command to paste, with its own copy button. Commands are code, not copy:
+ *  they stay Latin and left-to-right in every locale. */
+function CommandBlock({ command, caption }: { command: string; caption: string }) {
+  const t = useMessages().download
+  return (
+    <div className="overflow-hidden rounded-btn border border-ink-800 bg-black/50">
+      <div className="flex items-center justify-between gap-3 border-b border-ink-800/80 px-4 py-2">
+        <span className="text-micro text-ink-400">{caption}</span>
+        <CopyButton text={command} label={t.copy} copiedLabel={t.copied} />
+      </div>
+      <div dir="ltr" className="overflow-x-auto p-4 font-mono text-mini text-ink-100">
+        <span className="me-2 font-bold text-lime-flash select-none">$</span>
+        <code className="select-all">{command}</code>
+      </div>
+    </div>
+  )
+}
+
+function GuideStep({ n, children }: { n: number; children: ReactNode }) {
+  const m = useMessages()
+  return (
+    <li className="flex gap-3.5">
+      <span className="grid size-6 shrink-0 place-items-center rounded-full border border-ink-700 bg-ink-800 text-micro font-bold text-ink-100 tabular-nums">
+        {m.app.num(n)}
+      </span>
+      <div className="min-w-0 flex-1 space-y-3 pt-0.5 text-mini leading-relaxed text-ink-300">
+        {children}
+      </div>
+    </li>
+  )
+}
+
+/** What to do the first time each OS refuses to open an unsigned app. Opens
+ *  on the visitor's own OS; the others are one tab away for anyone
+ *  downloading for a different machine. */
+function FirstLaunchGuide({ initialOs }: { initialOs: OS }) {
+  const t = useMessages().download
+  const [os, setOs] = useState<OS>(initialOs)
+  const tabs: { id: OS; label: string }[] = [
+    { id: 'mac', label: t.mac },
+    { id: 'windows', label: t.windows },
+    { id: 'linux', label: t.linux },
+  ]
+
+  return (
+    <section aria-labelledby="first-launch" className="mt-16 sm:mt-20">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div className="max-w-xl">
+          <h2 id="first-launch" className="font-display text-2xl font-bold text-ink-100">
+            {t.guideTitle}
+          </h2>
+          <p className="mt-2 text-mini leading-relaxed text-ink-300 text-pretty">
+            {t.guideSubtitle}
+          </p>
+        </div>
+        <div
+          role="radiogroup"
+          aria-label={t.guideTabs}
+          className="flex h-9 items-center rounded-ctl border border-ink-800 bg-ink-900 p-1"
+        >
+          {tabs.map((tab) => {
+            const Icon = OS_ICONS[tab.id]
+            const active = os === tab.id
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                onClick={() => setOs(tab.id)}
+                className={clsx(
+                  'flex h-7 items-center gap-1.5 rounded-[7px] px-3 text-micro font-semibold transition-colors duration-150',
+                  active ? 'bg-ink-700 text-ink-100' : 'text-ink-400 hover:text-ink-100',
+                )}
+              >
+                <Icon className="size-3.5" />
+                {tab.label}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      <ol
+        key={os}
+        className="mt-6 animate-fade-up space-y-6 rounded-panel border border-ink-800 bg-ink-900/60 p-5 sm:p-6"
+      >
+        {os === 'mac' && (
+          <>
+            <GuideStep n={1}>
+              <p>{t.macStepInstall}</p>
+              <CommandBlock command={MAC_QUARANTINE_CMD} caption="Terminal" />
+            </GuideStep>
+            <GuideStep n={2}>
+              <p>{t.macStepResign}</p>
+              <CommandBlock command={MAC_RESIGN_CMD} caption={t.resignCaption} />
+            </GuideStep>
+            <GuideStep n={3}>
+              <p>{t.macStepOpen}</p>
+            </GuideStep>
+          </>
+        )}
+        {os === 'windows' && (
+          <>
+            <GuideStep n={1}>
+              <p>{t.winStepInstall}</p>
+            </GuideStep>
+            <GuideStep n={2}>
+              <p>{t.winStepSmartScreen}</p>
+            </GuideStep>
+          </>
+        )}
+        {os === 'linux' && (
+          <>
+            <GuideStep n={1}>
+              <p>{t.linuxStepAppImage}</p>
+              <CommandBlock command={LINUX_APPIMAGE_CMD} caption="Terminal" />
+            </GuideStep>
+            <GuideStep n={2}>
+              <p>{t.linuxStepDeb}</p>
+              <CommandBlock command={LINUX_DEB_CMD} caption="Terminal" />
+            </GuideStep>
+          </>
+        )}
+      </ol>
+    </section>
+  )
+}
+
+/** The questions the support inbox actually gets. Native <details>, so each
+ *  answer opens with the keyboard and is found by the browser's own search. */
+function Troubleshooting() {
+  const t = useMessages().download
+  return (
+    <section aria-labelledby="troubleshooting" className="mt-16 sm:mt-20">
+      <h2 id="troubleshooting" className="font-display text-2xl font-bold text-ink-100">
+        {t.faqTitle}
+      </h2>
+      <p className="mt-2 text-mini text-ink-300">{t.faqSubtitle}</p>
+      <div className="mt-6 divide-y divide-ink-800 overflow-hidden rounded-panel border border-ink-800 bg-ink-900/60">
+        {t.faq.map((item) => (
+          <details key={item.q} className="group">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-5 py-4 text-body font-semibold text-ink-100 transition-colors hover:bg-ink-800/40 [&::-webkit-details-marker]:hidden">
+              <span className="text-pretty">{item.q}</span>
+              <ChevronDown className="size-4 shrink-0 text-ink-400 transition-transform duration-200 group-open:rotate-180" />
+            </summary>
+            <p className="px-5 pb-5 text-mini leading-relaxed text-ink-300 text-pretty">{item.a}</p>
+          </details>
+        ))}
+      </div>
+    </section>
+  )
+}
 
 /** Stylized, high-fidelity interactive showcase mockup of the desktop application */
 function DesktopAppShowcase() {
@@ -281,7 +436,6 @@ function Shell() {
   const [detectedOs] = useState<OS>(detectOS)
   const [arm] = useState<boolean | null>(detectArm)
   const [selectedVariant, setSelectedVariant] = useState<string | null>(null)
-  const [showMacGuide, setShowMacGuide] = useState<boolean>(() => detectOS() === 'mac')
   const local = isLocal()
 
   const files = release ? filesFor(release.version) : null
@@ -321,7 +475,7 @@ function Shell() {
         {
           id: 'win-x64-exe',
           label: `${t.bit64} ${t.setupInstaller}`,
-          detail: 'Standard .exe',
+          detail: t.variantExe,
           file: files.winX64Exe,
           ext: '.exe',
           available: hasAsset(files.winX64Exe),
@@ -329,7 +483,7 @@ function Shell() {
         {
           id: 'win-x64-msi',
           label: `${t.bit64} MSI`,
-          detail: 'Enterprise .msi',
+          detail: t.variantMsi,
           file: files.winX64Msi,
           ext: '.msi',
           available: hasAsset(files.winX64Msi),
@@ -337,7 +491,7 @@ function Shell() {
         {
           id: 'win-arm-exe',
           label: `${t.arm64} ${t.setupInstaller}`,
-          detail: 'ARM64 .exe',
+          detail: t.variantArmExe,
           file: files.winArmExe,
           ext: '.exe',
           available: hasAsset(files.winArmExe),
@@ -419,7 +573,7 @@ function Shell() {
           },
           {
             title: t.intel,
-            subtitle: 'Intel Processor',
+            subtitle: t.intelProcessor,
             links: [
               {
                 label: '.dmg',
@@ -481,7 +635,7 @@ function Shell() {
         archs: [
           {
             title: t.bit64,
-            subtitle: 'x86_64 Distributions',
+            subtitle: t.linuxX64,
             links: [
               {
                 label: `.AppImage · ${t.portableImage}`,
@@ -585,7 +739,7 @@ function Shell() {
           {/* Hero Section */}
           <section className="text-center pt-4 sm:pt-6 pb-2">
             {/* Version & Eyebrow Pill */}
-            <div className="inline-flex items-center gap-2 rounded-full border border-lime-flash/30 bg-lime-flash/[0.08] px-3.5 py-1 text-mini font-semibold text-lime-flash shadow-sm animate-fade-up">
+            <div className="inline-flex items-center gap-2 rounded-full border border-lime-flash/30 bg-lime-flash/[0.08] px-3.5 py-1 text-mini font-semibold text-lime-flash animate-fade-up">
               <Sparkles className="size-3.5" />
               <span>{t.eyebrow}</span>
               <span className="size-1 rounded-full bg-lime-flash/60" />
@@ -651,7 +805,7 @@ function Shell() {
                 {/* Platform detection badge */}
                 <div className="flex items-center justify-between gap-3 pb-5 border-b border-ink-800/80">
                   <div className="flex items-center gap-3">
-                    <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-lime-flash text-lime-ink shadow-md shadow-lime-flash/20">
+                    <span className="grid size-11 shrink-0 place-items-center rounded-ctl bg-lime-flash text-lime-ink">
                       <PrimaryIcon className="size-5" strokeWidth={2.25} />
                     </span>
                     <div>
@@ -684,7 +838,7 @@ function Shell() {
                           ? t.downloadFor(activeVariant.file)
                           : t.downloadForPlatform(detectedOsName)
                       }
-                      className="group relative flex items-center justify-between gap-3 overflow-hidden rounded-btn bg-lime-flash px-5 py-4 text-ink-950 font-bold transition duration-200 hover:bg-lime-soft active:scale-[0.99] shadow-lg shadow-lime-flash/25"
+                      className="group relative flex items-center justify-between gap-3 overflow-hidden rounded-btn bg-lime-flash px-5 py-4 text-ink-950 font-bold transition duration-200 hover:bg-lime-soft active:scale-[0.99]"
                     >
                       <div className="flex items-center gap-3 min-w-0">
                         <span className="grid size-9 shrink-0 place-items-center rounded-ctl bg-ink-950/10 transition-transform duration-200 group-hover:-translate-y-0.5">
@@ -725,7 +879,7 @@ function Shell() {
                         <div className="min-w-0 text-start">
                           <div className="text-body font-bold leading-tight">{t.viewAll}</div>
                           <div className="text-micro text-ink-400 truncate mt-0.5">
-                            {activeVariant?.label} not packaged in v{release?.version}
+                            {t.notPackaged(activeVariant?.label ?? '', release?.version ?? '')}
                           </div>
                         </div>
                       </div>
@@ -751,14 +905,14 @@ function Shell() {
                             className={clsx(
                               'flex flex-col items-start rounded-ctl p-2 text-start transition text-mini relative',
                               isSelected
-                                ? 'bg-lime-flash/15 border border-lime-flash/40 text-lime-flash shadow-sm'
+                                ? 'bg-lime-flash/15 border border-lime-flash/40 text-lime-flash'
                                 : 'bg-ink-800/60 border border-ink-700/60 text-ink-300 hover:bg-ink-800 hover:text-ink-100',
                             )}
                           >
                             <div className="flex items-center justify-between w-full">
                               <span className="font-semibold">{variant.label}</span>
                               {!variant.available && (
-                                <span className="text-[10px] text-ink-400">N/A</span>
+                                <span className="text-micro text-ink-400">{t.unavailable}</span>
                               )}
                             </div>
                             <span className="text-micro text-ink-400 font-mono mt-0.5">
@@ -770,6 +924,11 @@ function Shell() {
                     </div>
                   </div>
                 )}
+
+                <p className="mt-4 flex items-center justify-center gap-1.5 text-micro text-ink-400">
+                  <RefreshCw className="size-3" aria-hidden="true" />
+                  {t.autoUpdates}
+                </p>
               </div>
             </section>
           )}
@@ -779,18 +938,16 @@ function Shell() {
             <DesktopAppShowcase />
           </section>
           {/* Features Highlights Grid */}
-          <section className="mt-14 sm:mt-16">
-            <div className="text-center mb-8">
-              <h2 className="font-display text-2xl font-bold tracking-tight text-ink-100">
-                {t.featuresTitle}
-              </h2>
+          <section className="mt-16 sm:mt-20">
+            <div className="mb-6">
+              <h2 className="font-display text-2xl font-bold text-ink-100">{t.featuresTitle}</h2>
               <p className="mt-2 text-mini text-ink-300">{t.featuresSubtitle}</p>
             </div>
 
             <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
               {/* Feature 1 */}
-              <div className="rounded-btn border border-ink-800 bg-ink-900/70 p-5 transition hover:border-ink-700">
-                <span className="grid size-10 place-items-center rounded-xl bg-lime-flash/10 text-lime-flash mb-3.5">
+              <div className="rounded-panel border border-ink-800 bg-ink-900/60 p-5 transition-colors hover:border-ink-700">
+                <span className="grid size-10 place-items-center rounded-ctl bg-lime-flash/10 text-lime-flash mb-3.5">
                   <ShieldCheck className="size-5" />
                 </span>
                 <h3 className="font-display text-body font-bold text-ink-100">
@@ -802,8 +959,8 @@ function Shell() {
               </div>
 
               {/* Feature 2 */}
-              <div className="rounded-btn border border-ink-800 bg-ink-900/70 p-5 transition hover:border-ink-700">
-                <span className="grid size-10 place-items-center rounded-xl bg-lime-flash/10 text-lime-flash mb-3.5">
+              <div className="rounded-panel border border-ink-800 bg-ink-900/60 p-5 transition-colors hover:border-ink-700">
+                <span className="grid size-10 place-items-center rounded-ctl bg-lime-flash/10 text-lime-flash mb-3.5">
                   <Zap className="size-5" />
                 </span>
                 <h3 className="font-display text-body font-bold text-ink-100">
@@ -815,8 +972,8 @@ function Shell() {
               </div>
 
               {/* Feature 3 */}
-              <div className="rounded-btn border border-ink-800 bg-ink-900/70 p-5 transition hover:border-ink-700">
-                <span className="grid size-10 place-items-center rounded-xl bg-lime-flash/10 text-lime-flash mb-3.5">
+              <div className="rounded-panel border border-ink-800 bg-ink-900/60 p-5 transition-colors hover:border-ink-700">
+                <span className="grid size-10 place-items-center rounded-ctl bg-lime-flash/10 text-lime-flash mb-3.5">
                   <Music className="size-5" />
                 </span>
                 <h3 className="font-display text-body font-bold text-ink-100">
@@ -828,8 +985,8 @@ function Shell() {
               </div>
 
               {/* Feature 4 */}
-              <div className="rounded-btn border border-ink-800 bg-ink-900/70 p-5 transition hover:border-ink-700">
-                <span className="grid size-10 place-items-center rounded-xl bg-lime-flash/10 text-lime-flash mb-3.5">
+              <div className="rounded-panel border border-ink-800 bg-ink-900/60 p-5 transition-colors hover:border-ink-700">
+                <span className="grid size-10 place-items-center rounded-ctl bg-lime-flash/10 text-lime-flash mb-3.5">
                   <FolderOpen className="size-5" />
                 </span>
                 <h3 className="font-display text-body font-bold text-ink-100">
@@ -844,9 +1001,9 @@ function Shell() {
 
           {/* All Platforms & Packages Matrix */}
           {release && (
-            <section className="mt-14 sm:mt-16">
-              <div className="text-center mb-8">
-                <h2 className="font-display text-2xl font-bold tracking-tight text-ink-100">
+            <section className="mt-16 sm:mt-20">
+              <div className="mb-6">
+                <h2 className="font-display text-2xl font-bold text-ink-100">
                   {t.allPlatformsTitle}
                 </h2>
                 <p className="mt-2 text-mini text-ink-300">{t.allPlatformsSubtitle}</p>
@@ -863,7 +1020,7 @@ function Shell() {
                       className={clsx(
                         'flex flex-col rounded-panel border p-5 transition',
                         isCurrentOs
-                          ? 'border-lime-flash/30 bg-ink-900/90 shadow-lg shadow-black/40'
+                          ? 'border-lime-flash/30 bg-ink-900/90'
                           : 'border-ink-800 bg-ink-900/60 hover:border-ink-700',
                       )}
                     >
@@ -907,7 +1064,7 @@ function Shell() {
                                     <span
                                       key={link.name}
                                       className="inline-flex items-center gap-1 rounded-ctl border border-ink-800/80 bg-ink-900/40 px-2.5 py-1 text-micro text-ink-500 line-through"
-                                      title="Not available in this release"
+                                      title={t.unavailable}
                                     >
                                       {link.label}
                                     </span>
@@ -937,102 +1094,9 @@ function Shell() {
             </section>
           )}
 
-          {/* macOS Gatekeeper Terminal Guide */}
-          <section className="mt-14 sm:mt-16">
-            <div className="rounded-panel border border-ink-800 bg-ink-900/80 overflow-hidden shadow-xl">
-              {/* Card Header with Collapsible Toggle */}
-              <button
-                type="button"
-                onClick={() => setShowMacGuide((prev) => !prev)}
-                className="w-full flex items-center justify-between p-5 text-start transition hover:bg-ink-800/40"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="grid size-9 place-items-center rounded-ctl bg-ink-800 text-ink-200">
-                    <Apple className="size-4.5" />
-                  </span>
-                  <div>
-                    <h2 className="font-display text-body font-bold text-ink-100">
-                      {t.macStepsTitle}
-                    </h2>
-                    <p className="text-mini text-ink-400">{t.macStepsSubtitle}</p>
-                  </div>
-                </div>
+          <FirstLaunchGuide initialOs={detectedOs} />
 
-                <span className="grid size-7 place-items-center rounded-ctl border border-ink-700 text-ink-300">
-                  {showMacGuide ? (
-                    <ChevronUp className="size-4" />
-                  ) : (
-                    <ChevronDown className="size-4" />
-                  )}
-                </span>
-              </button>
-
-              {/* Terminal View */}
-              {showMacGuide && (
-                <div className="border-t border-ink-800 p-5 sm:p-6 space-y-4 bg-ink-950/60 animate-fade-up">
-                  {/* Step 1 */}
-                  <div className="flex items-start gap-3 rounded-btn border border-ink-800 bg-ink-900/90 p-4">
-                    <span className="grid size-6 shrink-0 place-items-center rounded-full bg-lime-flash text-micro font-bold text-ink-950">
-                      1
-                    </span>
-                    <p className="text-mini leading-relaxed text-ink-300 pt-0.5">
-                      {t.macStepInstall}
-                    </p>
-                  </div>
-
-                  {/* Step 2: Terminal Command */}
-                  <div className="rounded-btn border border-ink-800 bg-ink-900/90 overflow-hidden">
-                    <div className="flex items-center justify-between px-4 py-2 border-b border-ink-800/80 bg-black/40">
-                      <div className="flex items-center gap-1.5" aria-hidden="true">
-                        <span className="size-2.5 rounded-full bg-[#ff5f56]" />
-                        <span className="size-2.5 rounded-full bg-[#ffbd2e]" />
-                        <span className="size-2.5 rounded-full bg-[#27c93f]" />
-                        <span className="ms-2 font-mono text-[11px] text-ink-400">
-                          Terminal — zsh
-                        </span>
-                      </div>
-                      <CopyButton text={MAC_QUARANTINE_CMD} label={t.copy} copiedLabel={t.copied} />
-                    </div>
-                    <div
-                      dir="ltr"
-                      className="p-4 font-mono text-mini text-ink-100 overflow-x-auto bg-black/60 select-all"
-                    >
-                      <span className="text-lime-flash select-none me-2 font-bold">$ </span>
-                      <code>{MAC_QUARANTINE_CMD}</code>
-                    </div>
-                  </div>
-
-                  {/* Step 3: Resign if damaged */}
-                  <div className="space-y-2">
-                    <p className="text-mini text-ink-300 ps-1">{t.macStepResign}</p>
-                    <div className="rounded-btn border border-ink-800 bg-ink-900/90 overflow-hidden">
-                      <div className="flex items-center justify-between px-4 py-2 border-b border-ink-800/80 bg-black/40">
-                        <span className="font-mono text-[11px] text-ink-400">
-                          Code sign fallback
-                        </span>
-                        <CopyButton text={MAC_RESIGN_CMD} label={t.copy} copiedLabel={t.copied} />
-                      </div>
-                      <div
-                        dir="ltr"
-                        className="p-4 font-mono text-mini text-ink-100 overflow-x-auto bg-black/60 select-all"
-                      >
-                        <span className="text-lime-flash select-none me-2 font-bold">$ </span>
-                        <code>{MAC_RESIGN_CMD}</code>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Step 4 */}
-                  <div className="flex items-start gap-3 rounded-btn border border-ink-800 bg-ink-900/90 p-4">
-                    <span className="grid size-6 shrink-0 place-items-center rounded-full bg-lime-flash text-micro font-bold text-ink-950">
-                      2
-                    </span>
-                    <p className="text-mini leading-relaxed text-ink-300 pt-0.5">{t.macStepOpen}</p>
-                  </div>
-                </div>
-              )}
-            </div>
-          </section>
+          <Troubleshooting />
 
           {/* GitHub releases & verification footer */}
           <div className="mt-12 text-center space-y-3">

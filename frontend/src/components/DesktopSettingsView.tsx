@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import {
-  Cookie,
   FolderOpen,
   Globe2,
   HardDrive,
@@ -10,21 +9,23 @@ import {
   Sparkles,
 } from 'lucide-react'
 import clsx from 'clsx'
-import { Dropdown } from './Dropdown'
+import {
+  ConnectionCard,
+  CookiesCard,
+  settingsCard,
+  settingsCardHeading,
+} from './DesktopConnectionSettings'
 import { LanguagePicker } from './LanguagePicker'
 import { LyricsToggle } from './LyricsToggle'
 import { QualityPicker } from './QualityPicker'
 import {
   checkForAppUpdates,
-  getBackendDesktopConfig,
   getDesktopInfo,
   getDownloadsDir,
   downloadAndInstallUpdate,
   relaunchApp,
-  listInstalledBrowsers,
   openFolder,
   pickDownloadsDir,
-  setCookiesFromBrowser,
   type DesktopInfo,
   type UpdateProgress,
 } from '../lib/desktop'
@@ -33,17 +34,6 @@ import { useMessages } from '../lib/i18n'
 /** Update sizes are tens of megabytes, so MB with one decimal is the unit
  *  that actually moves while a download runs. */
 const mb = (bytes: number) => (bytes / 1024 / 1024).toFixed(1)
-
-const COOKIE_BROWSERS = [
-  { value: 'chrome', label: 'Google Chrome' },
-  { value: 'brave', label: 'Brave' },
-  { value: 'edge', label: 'Microsoft Edge' },
-  { value: 'firefox', label: 'Firefox' },
-  { value: 'safari', label: 'Safari' },
-  { value: 'chromium', label: 'Chromium' },
-  { value: 'opera', label: 'Opera' },
-  { value: 'vivaldi', label: 'Vivaldi' },
-] as const
 
 function Credit({ href, image, name }: { href: string; image: string; name: string }) {
   return (
@@ -59,7 +49,7 @@ function Credit({ href, image, name }: { href: string; image: string; name: stri
   )
 }
 
-export function DesktopSettingsView() {
+export function DesktopSettingsView({ focusConnection = false }: { focusConnection?: boolean }) {
   const m = useMessages()
   const [downloadsDir, setDownloadsDir] = useState('')
   const [info, setInfo] = useState<DesktopInfo | null>(null)
@@ -72,36 +62,11 @@ export function DesktopSettingsView() {
   const [updateAvailable, setUpdateAvailable] = useState<{ version: string; body: string } | null>(
     null,
   )
-  const [cookiesBrowser, setCookiesBrowser] = useState('')
-  const [cookiesNote, setCookiesNote] = useState<'saved' | 'failed' | null>(null)
-  const [installedBrowsers, setInstalledBrowsers] = useState<string[] | null>(null)
 
   useEffect(() => {
     getDownloadsDir().then(setDownloadsDir)
     getDesktopInfo().then(setInfo)
-    listInstalledBrowsers().then(setInstalledBrowsers)
-    getBackendDesktopConfig().then((config) => {
-      if (config?.cookies_from_browser) setCookiesBrowser(config.cookies_from_browser)
-    })
   }, [])
-
-  const browserOptions = [
-    { value: '', label: m.cookies.off },
-    ...COOKIE_BROWSERS.filter(
-      (browser) =>
-        installedBrowsers === null ||
-        installedBrowsers.includes(browser.value) ||
-        browser.value === cookiesBrowser,
-    ).map((browser) => ({ value: browser.value, label: browser.label })),
-  ]
-  const foundNone = installedBrowsers !== null && browserOptions.length === 1
-
-  const handleCookiesChange = async (value: string) => {
-    setCookiesBrowser(value)
-    setCookiesNote(null)
-    const ok = await setCookiesFromBrowser(value)
-    setCookiesNote(ok ? 'saved' : 'failed')
-  }
 
   const handlePickFolder = async () => {
     const picked = await pickDownloadsDir()
@@ -157,10 +122,8 @@ export function DesktopSettingsView() {
     }
   }
 
-  const card =
-    'rounded-panel border border-white/[0.08] bg-ink-900/70 p-5 sm:p-6 shadow-lg backdrop-blur-sm transition hover:border-white/[0.12]'
-  const cardHeading =
-    'flex items-center gap-2 text-micro font-bold uppercase tracking-wider text-ink-300'
+  const card = settingsCard
+  const cardHeading = settingsCardHeading
 
   return (
     <div className="flex h-full min-w-0 flex-col overflow-hidden bg-ink-950">
@@ -248,41 +211,9 @@ export function DesktopSettingsView() {
             </div>
           </section>
 
-          {/* YouTube Cookies Integration Card */}
-          <section className={clsx(card, 'lg:col-span-2 relative z-20')}>
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div className="min-w-0 max-w-lg">
-                <h2 className={cardHeading}>
-                  <span className="grid size-7 place-items-center rounded-lg bg-lime-flash/10 text-lime-flash">
-                    <Cookie className="size-4" />
-                  </span>
-                  <span>{m.cookies.title}</span>
-                </h2>
-                <p className="mt-2 text-mini leading-relaxed text-ink-400">{m.cookies.hint}</p>
-              </div>
-              <div className="flex shrink-0 items-center gap-3">
-                {cookiesNote && (
-                  <span
-                    className={clsx(
-                      'text-mini font-semibold',
-                      cookiesNote === 'saved' ? 'text-lime-flash' : 'text-danger',
-                    )}
-                  >
-                    {cookiesNote === 'saved' ? m.cookies.saved : m.cookies.failed}
-                  </span>
-                )}
-                {foundNone && <span className="text-mini text-ink-500">{m.cookies.noneFound}</span>}
-                <Dropdown
-                  value={cookiesBrowser}
-                  options={browserOptions}
-                  onChange={(next) => void handleCookiesChange(next)}
-                  label={m.cookies.title}
-                  placeholder={m.cookies.off}
-                  className="w-44"
-                />
-              </div>
-            </div>
-          </section>
+          <ConnectionCard autoCheck={focusConnection} />
+
+          <CookiesCard />
 
           {/* App Info & Software Updates Card */}
           <section className={clsx(card, 'lg:col-span-2 relative z-10')}>

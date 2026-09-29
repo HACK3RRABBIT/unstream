@@ -97,7 +97,6 @@ const en = {
     setupInstaller: 'Installer',
     portableImage: 'Portable',
     package: 'Package',
-    macStepsTitle: 'Opening it on a Mac',
     /** Unsigned-build help. The commands are code, not copy — they stay Latin
      *  in every locale; only the explanation is translated. */
     macStepInstall: 'Install the .dmg, then clear the quarantine flag:',
@@ -126,11 +125,6 @@ const en = {
     featurePlayerTitle: 'Built-in Player & Library',
     featurePlayerDesc:
       'Browse your offline music library, play songs with real-time waveform visualizers, and sing along in karaoke view.',
-    macStepsSubtitle:
-      'Because Unstream is community-built and unsigned, macOS Gatekeeper may show a warning. Follow these two quick commands:',
-    macStepsTab: 'macOS Gatekeeper Guide',
-    showMacGuide: 'Show macOS Gatekeeper guide',
-    hideMacGuide: 'Hide guide',
     selectPlatform: 'Select platform',
     previewNowPlaying: 'Now Playing',
     previewLyricsPreview: 'Live Synced Lyrics',
@@ -138,6 +132,44 @@ const en = {
     copied: 'Copied',
     yourPlatform: 'Your OS',
     runningLocally: 'You are currently running Unstream locally on this machine.',
+    autoUpdates: 'The app updates itself — you only need this page once.',
+    notPackaged: (label: string, v: string) => `${label} isn't in version ${v}`,
+    unavailable: 'Not in this release',
+    variantExe: 'Standard installer',
+    variantMsi: 'MSI package',
+    variantArmExe: 'ARM64 installer',
+    intelProcessor: 'Intel processor',
+    linuxX64: 'x86_64 distributions',
+    guideTitle: 'Opening it the first time',
+    guideSubtitle:
+      "Unstream is community-built and isn't signed with a paid certificate, so your system may warn you once. Here's how to get past it.",
+    guideTabs: 'Operating system',
+    resignCaption: "If it still won't open",
+    winStepInstall: 'Run the installer you downloaded.',
+    winStepSmartScreen:
+      'If Windows shows “Windows protected your PC”, click More info, then Run anyway. It only asks the first time.',
+    linuxStepAppImage: 'For the AppImage, make it executable and run it:',
+    linuxStepDeb: 'Or install the .deb package on Debian and Ubuntu:',
+    faqTitle: 'Having trouble?',
+    faqSubtitle: 'The problems people run into most, and the fix for each.',
+    faq: [
+      {
+        q: "Search finds nothing, or downloads fail, while I'm on a VPN",
+        a: "Open Settings → Connection and press Test connection. If a service is red, press Find my VPN's proxy and use what it finds — or switch your VPN to TUN / full-device mode, which routes every app.",
+      },
+      {
+        q: 'YouTube keeps asking me to confirm I’m not a bot',
+        a: 'VPN addresses get this a lot. In Settings → Browser cookies, pick a browser where you’re signed in to YouTube. Firefox reads most reliably; on Windows, Chrome and Edge lock their cookies.',
+      },
+      {
+        q: 'macOS says the app is damaged',
+        a: 'It isn’t — it’s unsigned. Run the two commands in the guide above, then open it again.',
+      },
+      {
+        q: 'How do I update?',
+        a: 'The app checks for new versions itself, and you can check any time in Settings → Check for updates. There’s no need to download it again from here.',
+      },
+    ],
   },
 
   /** The document's own metadata — `<title>`, the description, Open Graph and
@@ -227,6 +259,115 @@ const en = {
     saved: 'Saved',
     failed: 'Could not save — try again',
     noneFound: 'No supported browser found on this device',
+    checking: 'Reading cookies…',
+    signedIn: (browser: string) => `Signed in to YouTube in ${browser}`,
+    notSignedIn: (browser: string) =>
+      `${browser} has no YouTube sign-in — sign in to YouTube there, then pick it again`,
+    unreadable: (browser: string) => `Couldn't read ${browser}'s cookies`,
+    /** Why a store would not open, by platform. */
+    unreadableWindowsChromium:
+      'Chrome, Edge and Brave lock their cookies on Windows. Quit the browser completely, or use Firefox.',
+    unreadableSafari:
+      'Safari needs Full Disk Access: System Settings → Privacy & Security → Full Disk Access → turn on Unstream.',
+    unreadableOther: 'Quit the browser completely and pick it again, or use Firefox.',
+    recommended: 'Firefox reads most reliably.',
+  },
+
+  connection: {
+    title: 'Connection',
+    hint: 'Unstream reaches the music services from this computer. If they are filtered where you are, send it through your VPN.',
+    modeLabel: 'How to connect',
+    modes: {
+      system: 'Automatic',
+      custom: 'Proxy',
+      off: 'Direct',
+    },
+    modeHints: {
+      system: 'Follow the system proxy settings, as your browser does.',
+      custom: "Use your VPN app's local proxy for everything.",
+      off: 'Ignore any system proxy and connect directly.',
+    },
+    systemProxy: 'System proxy',
+    noSystemProxy: 'No system proxy set — connecting directly.',
+    proxyPlaceholder: 'http://127.0.0.1:10809 or socks5://127.0.0.1:10808',
+    save: 'Save',
+    saved: 'Saved',
+    invalidProxy:
+      "That isn't a proxy address — write it as host:port, like http://127.0.0.1:10809.",
+    detect: "Find my VPN's proxy",
+    detecting: 'Looking…',
+    detected: 'Found on this computer:',
+    use: 'Use',
+    inUse: 'In use',
+    noneDetected:
+      "No proxy found on the usual ports. Look for an HTTP or SOCKS port in your VPN app's settings and type it above.",
+    test: 'Test connection',
+    testing: 'Testing…',
+    allGood: 'Everything is reachable.',
+    someFailed: (ok: number, total: number) => `${ok} of ${total} services reachable`,
+    services: {
+      deezer: 'Deezer',
+      itunes: 'Apple Music',
+      soundcloud: 'SoundCloud',
+      youtube: 'YouTube',
+    },
+    /** What each service is for, so a red row says what stops working. */
+    serviceRole: {
+      deezer: 'Search and links',
+      itunes: 'Search and links',
+      soundcloud: 'Search and downloads',
+      youtube: 'Downloads',
+    },
+    ms: (ms: number) => `${ms} ms`,
+    failures: {
+      dns: 'Name lookup failed',
+      timeout: 'Timed out',
+      refused: 'Connection refused',
+      blocked: 'Blocked',
+      proxy: 'Proxy not answering',
+      tls: 'Secure connection failed',
+      refused_by_service: 'Refused this address',
+      network: 'Unreachable',
+    },
+    cookiesRow: 'Browser cookies',
+    cookiesOff: 'Off',
+    toolsRow: 'Audio tools',
+    toolsOk: 'Ready',
+    ffmpegMissing: 'Audio converter missing — reinstall the app',
+    jsMissing: 'YouTube solver missing — reinstall the app',
+    tips: {
+      proxyDown:
+        "The proxy isn't answering. Make sure your VPN app is connected and that the port matches.",
+      noRoute:
+        'Nothing is sending this app through your VPN. Use "Find my VPN\'s proxy", or switch your VPN to TUN / full-device mode.',
+      serviceRefused:
+        "Some services refuse your VPN server's address. Try another server or location in your VPN app.",
+      generic:
+        'Some services could not be reached. Check that your VPN is connected, then test again.',
+      youtubeSignIn:
+        'YouTube often asks VPN addresses to sign in. Set Browser cookies below to a browser where you are signed in.',
+    },
+  },
+
+  /** Why a track failed, by `error_kind` from the backend. */
+  failure: {
+    bot_check: 'YouTube wants a sign-in for this one — set Browser cookies in Settings.',
+    network: "Couldn't reach the music services — check your VPN or proxy in Settings.",
+    tls: "A secure connection couldn't be verified — check your VPN or proxy in Settings.",
+    cookies: "Your browser's cookies couldn't be read — pick another browser in Settings.",
+    encoding: "The audio couldn't be converted.",
+    not_found: 'No matching audio was found for this track.',
+    other: 'This track failed to download.',
+    fix: 'Fix in Settings',
+  },
+
+  /** The same failures on the web, where the connection is the server's. */
+  failureServer: {
+    bot_check: 'YouTube asked this server to sign in, so these tracks could not be fetched.',
+    network: "This server couldn't reach the music services.",
+    tls: "This server couldn't make a secure connection to the music services.",
+    cookies: "This server's YouTube cookies couldn't be read.",
+    desktopHint: 'The desktop app downloads over your own connection instead.',
   },
 
   player: {
@@ -620,13 +761,14 @@ const en = {
     notReady: "That file isn't ready yet.",
     unknownJob: 'That download is no longer on the server.',
     emptyQuery: "You haven't typed anything to search for.",
-    providerUnreachable:
-      "Couldn't reach that source — check your connection, or try a VPN if it's blocked on your network.",
     badRequest: "That link wouldn't open — it may be private, or its source unavailable.",
     notFound: 'Not found.',
     rateLimited: "That's a bit fast — give it a moment.",
     noAnswer: "The server didn't answer — give it another try.",
     offline: "Couldn't reach the server — check your connection.",
+    unreachable:
+      "Couldn't reach the service. If you use a VPN, check that it's on — or set its proxy in Settings → Connection.",
+    checkConnection: 'Check connection',
     unknown: 'Something went wrong',
   },
 }

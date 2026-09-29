@@ -17,7 +17,7 @@ hiddenimports = [
     "sqlite3",
 ]
 
-for pkg in ("yt_dlp", "yt_dlp_plugins", "uvicorn", "fastapi", "starlette", "mutagen"):
+for pkg in ("yt_dlp", "yt_dlp_plugins", "uvicorn", "fastapi", "starlette", "mutagen", "certifi"):
     pkg_datas, pkg_binaries, pkg_hidden = collect_all(pkg)
     datas += pkg_datas
     binaries += pkg_binaries

@@ -82,6 +82,16 @@ A **download** is ours: `jobs.py` owns the threads, so `POST /api/jobs/{id}/canc
 
 A **search** is not ours. It fans out to four providers inside one synchronous request, and there is no handle to call that off — so cancelling drops our end of it and gives the person their page back, which is the whole of what they were asking for. The work finishes into a response nobody reads. Both wear the same word in the UI («لغو», "stop") because the difference is ours, not theirs: what someone means by cancelling is that they want the screen back.
 
+### The desktop's connection, and why it is one setting
+
+On the desktop the egress is the person's own, and for many of them the services are filtered and a VPN is how they reach anything. The app used to follow that VPN only by accident: `urlopen` read the system proxy once, on the first request, so a VPN switched on after launch was never used; it could not read a PAC file or speak SOCKS, which is how many VPN clients offer their proxy; and the Intel macOS sidecar could not verify HTTPS at all, because its OpenSSL looked for certificates where the build machine kept them. Every one of those failures looked the same from the window — search found nothing, and downloads failed.
+
+`app/net.py` is now the only way out. It installs the opener every provider's `urlopen` goes through and hands yt-dlp the same proxy, so there is one setting: **Automatic** (the system proxy, re-read per request), **Proxy** (a URL, HTTP or SOCKS), or **Direct**. SOCKS is always resolved on the far side (`socks5h`), because resolving names locally is exactly what DNS filtering intercepts. The settings page can look for a proxy on the ports common VPN clients use, and its connection test runs through the same routing the real requests do. That second point is what makes a green row mean something. It checks SoundCloud's *API* rather than its homepage, because some VPN addresses load the site and get a 401 from every API call.
+
+Browser cookies are read once and checked before yt-dlp is handed the browser. yt-dlp reads the store before its first request, so a store it cannot open (Chrome on Windows, Safari without Full Disk Access) used to fail every extraction, SoundCloud and search included. Now an unreadable store is skipped and reported instead.
+
+Failures carry an `error_kind` (`net.error_kind()`), so the UI can say which of these went wrong in the person's language and point at the setting that fixes it. The raw message stays in `error` for anyone debugging.
+
 ## Anime download pipeline
 
 An episode is a `Track` with `media="video"` whose `source_url` is a synthetic

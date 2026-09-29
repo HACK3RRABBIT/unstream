@@ -14,12 +14,16 @@ import os
 import re
 import shutil
 import tempfile
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from yt_dlp import YoutubeDL
+from yt_dlp.cookies import extract_cookies_from_browser
 from yt_dlp.utils import DownloadError as YtdlpError
 
+from . import net
 from .models import Collection, ProviderError, SearchResult, Track
 
 # YouTube bot-checks datacenter IPs ("Sign in to confirm you're not a bot")
@@ -139,6 +143,8 @@ def set_cookies_from_browser(name: str) -> str:
         raise ValueError(f"Unsupported browser: {name!r}")
     global _cookies_from_browser
     _cookies_from_browser = cleaned
+    with _cookie_lock:
+        _cookie_checks.pop(cleaned, None)
     return cleaned
 
 
@@ -146,6 +152,80 @@ def cookies_from_browser() -> str:
     if _cookies_from_browser is not None:
         return _cookies_from_browser
     return _env_browser()
+
+
+class _CookieLog:
+    """Collects what yt-dlp's cookie reader says instead of printing it."""
+
+    def __init__(self) -> None:
+        self.problems: list[str] = []
+
+    def debug(self, message, *args, **kwargs) -> None:
+        pass
+
+    info = debug
+
+    def warning(self, message, *args, **kwargs) -> None:
+        if message not in self.problems:
+            self.problems.append(str(message))
+
+    error = warning
+
+
+# Session cookies YouTube only sets for a signed-in account.
+_SIGNED_IN_COOKIES = {"SAPISID", "__Secure-3PAPISID", "__Secure-1PSID", "LOGIN_INFO"}
+
+_cookie_lock = threading.Lock()
+_cookie_checks: dict[str, tuple[float, dict]] = {}
+_COOKIE_CHECK_TTL = 600
+
+
+def _read_browser_cookies(browser: str) -> dict:
+    log = _CookieLog()
+    try:
+        jar = extract_cookies_from_browser(browser, logger=log)
+    except Exception as exc:  # noqa: BLE001 — every reader fails differently
+        return {
+            "browser": browser,
+            "ok": False,
+            "youtube_cookies": 0,
+            "signed_in": False,
+            "error": str(exc)[:300] or type(exc).__name__,
+        }
+    youtube = [c for c in jar if c.domain.endswith("youtube.com")]
+    return {
+        "browser": browser,
+        "ok": True,
+        "youtube_cookies": len(youtube),
+        "signed_in": any(c.name in _SIGNED_IN_COOKIES for c in youtube),
+        # Decryption failures are warnings, not exceptions: the store opens,
+        # and every cookie in it is skipped. Chrome's app-bound encryption on
+        # Windows ends up here.
+        "error": "; ".join(log.problems[:2]) or None,
+    }
+
+
+def browser_cookie_status(browser: str | None = None, *, fresh: bool = False) -> dict | None:
+    """Whether the chosen browser's cookie store can be read, and what's in it.
+
+    The answer decides whether yt-dlp is handed the browser at all. yt-dlp
+    reads the store before it makes any request, and a store it cannot open
+    (Chrome's locked database on Windows, Safari without Full Disk Access)
+    fails the whole extraction — SoundCloud and search included, since they
+    share these options. A setting meant to rescue YouTube downloads was
+    breaking everything else, so an unreadable store is skipped and reported
+    here instead.
+    """
+    browser = browser if browser is not None else cookies_from_browser()
+    if not browser:
+        return None
+    with _cookie_lock:
+        cached = _cookie_checks.get(browser)
+        if cached and not fresh and time.monotonic() - cached[0] < _COOKIE_CHECK_TTL:
+            return cached[1]
+        status = _read_browser_cookies(browser)
+        _cookie_checks[browser] = (time.monotonic(), status)
+        return status
 
 
 # Which YouTube player clients to try, in order (`tv,web`). The default is
@@ -178,10 +258,13 @@ def base_opts(**extra) -> dict:
         opts["js_runtimes"] = {runtime: {}}
     if CACHE_DIR:
         opts["cachedir"] = CACHE_DIR
+    proxy = net.ytdlp_proxy()
+    if proxy is not None:
+        opts["proxy"] = proxy
     if COOKIEFILE_LIVE:
         opts["cookiefile"] = COOKIEFILE_LIVE
     browser = cookies_from_browser()
-    if browser:
+    if browser and browser_cookie_status(browser)["ok"]:
         # yt-dlp reads the live store at extraction time, so switching
         # browsers takes effect on the next download with no restart.
         opts["cookiesfrombrowser"] = (browser,)
@@ -209,7 +292,8 @@ def bot_check_message() -> str:
         return (
             "YouTube asked for a sign-in to confirm this download is not a bot, "
             "so the audio could not be fetched. Open Settings → Browser cookies "
-            "and pick the browser you are signed into YouTube in, then try again."
+            "and pick the browser you are signed into YouTube in (Firefox reads "
+            "most reliably), then try again."
         )
     return (
         "YouTube asked this server to sign in to confirm it is not a bot, so the "
@@ -227,6 +311,7 @@ def status() -> dict:
         "pot_provider_url": POT_PROVIDER_URL or None,
         "cache_dir": CACHE_DIR or None,
         "cookies_from_browser": cookies_from_browser() or None,
+        "proxy": net.setting(),
         "player_clients": player_clients() or None,
         "cookiefile": COOKIEFILE or None,
         # True means YTDLP_COOKIEFILE was set and pointed at nothing: almost

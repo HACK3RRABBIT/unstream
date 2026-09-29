@@ -1,6 +1,6 @@
 {
   "name": "unstream-desktop",
-  "version": "0.1.7",
+  "version": "0.2.1",
   "private": true,
   "scripts": {
     "dev": "tauri dev",

@@ -30,6 +30,9 @@ def _get(path: str, **params) -> list[dict]:
             data = json.loads(resp.read().decode("utf-8"))
     except URLError as exc:
         raise ProviderError(f"Could not reach iTunes: {exc.reason}") from exc
+    except OSError as exc:
+        # A timeout or reset while the body is read arrives unwrapped.
+        raise ProviderError(f"Could not reach iTunes: {exc}") from exc
     except json.JSONDecodeError as exc:
         raise ProviderError("iTunes returned an unreadable response.") from exc
     return data.get("results") or []

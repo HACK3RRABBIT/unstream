@@ -8,6 +8,7 @@ import {
   Music2,
   RefreshCw,
   Search,
+  Settings2,
   Trash2,
   TriangleAlert,
   X,
@@ -15,7 +16,9 @@ import {
 import clsx from 'clsx'
 import {
   apiError,
+  commonFailure,
   DEFAULT_VIDEO_QUALITY,
+  FIXABLE_IN_SETTINGS,
   qualityLabel,
   videoQualityLabel,
   type Job,
@@ -37,7 +40,13 @@ function inFlightFraction(job: Job): number {
 
 type Filter = 'all' | 'active' | 'completed'
 
-export function DesktopDownloadsView({ onGoToSearch }: { onGoToSearch: () => void }) {
+export function DesktopDownloadsView({
+  onGoToSearch,
+  onOpenSettings,
+}: {
+  onGoToSearch: () => void
+  onOpenSettings: () => void
+}) {
   const m = useMessages()
   const { entries, activeCount, cancel, retry, retryOne, dismiss } = useDownloads()
   const [filter, setFilter] = useState<Filter>('all')
@@ -52,7 +61,7 @@ export function DesktopDownloadsView({ onGoToSearch }: { onGoToSearch: () => voi
 
   const filters: { id: Filter; label: string; count: number }[] = [
     { id: 'all', label: m.results.all, count: entries.length },
-    { id: 'active', label: m.desktopNav.activeDownloads(activeCount), count: activeCount },
+    { id: 'active', label: m.stages.downloading, count: activeCount },
     { id: 'completed', label: m.desktopNav.completed, count: completedCount },
   ]
 
@@ -137,6 +146,7 @@ export function DesktopDownloadsView({ onGoToSearch }: { onGoToSearch: () => voi
                   onRetry={() => retry(entry.jobId)}
                   onDismiss={() => dismiss(entry.jobId)}
                   onRetryOne={(trackId) => retryOne(entry.jobId, trackId)}
+                  onOpenSettings={onOpenSettings}
                 />
               ))
           )}
@@ -152,12 +162,14 @@ function DesktopJobCard({
   onRetry,
   onDismiss,
   onRetryOne,
+  onOpenSettings,
 }: {
   entry: DownloadEntry
   onCancel: () => Promise<void>
   onRetry: () => Promise<void>
   onDismiss: () => void
   onRetryOne: (trackId: string) => Promise<void>
+  onOpenSettings: () => void
 }) {
   const m = useMessages()
   const { push } = useToast()
@@ -180,6 +192,8 @@ function DesktopJobCard({
       path: null,
       ext: null,
     }))
+
+  const failure = failed > 0 ? commonFailure(trackItems as JobTrack[]) : null
 
   // Every one of these can be refused — a job swept past its TTL, a backend
   // that went away mid-click. Saying so is the whole difference between a
@@ -294,6 +308,25 @@ function DesktopJobCard({
         </div>
       )}
 
+      {failure && (
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-danger/15 bg-danger/[0.06] px-3.5 py-2.5">
+          <p className="flex min-w-0 items-start gap-2 text-[11px] leading-5 text-danger">
+            <TriangleAlert className="mt-1 size-3 shrink-0" />
+            <span>{m.failure[failure]}</span>
+          </p>
+          {FIXABLE_IN_SETTINGS.has(failure) && (
+            <button
+              type="button"
+              onClick={onOpenSettings}
+              className="flex h-7 shrink-0 items-center gap-1.5 rounded-lg border border-white/[0.08] bg-white/[0.04] px-2.5 text-[11px] font-semibold text-ink-100 transition hover:border-lime-flash/40 hover:text-lime-flash"
+            >
+              <Settings2 className="size-3" />
+              {m.failure.fix}
+            </button>
+          )}
+        </div>
+      )}
+
       <ul className="max-h-60 divide-y divide-white/[0.045] overflow-y-auto border-t border-white/[0.045] bg-black/[0.08]">
         {trackItems.map((item) => {
           const track = entry.tracks.find((candidate) => candidate.id === item.id)
@@ -306,6 +339,7 @@ function DesktopJobCard({
           return (
             <li
               key={item.id}
+              title={state.status === 'error' ? m.failure[state.error_kind ?? 'other'] : undefined}
               className="flex min-h-9 items-center justify-between gap-3 px-3.5 text-[11px] transition hover:bg-white/[0.025]"
             >
               <div className="flex min-w-0 flex-1 items-center gap-2.5">

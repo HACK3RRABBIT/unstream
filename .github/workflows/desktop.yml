@@ -6,6 +6,11 @@ on:
   schedule:
     - cron: "17 4 * * 1"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Rebuild an existing release (e.g. v0.2.0) instead of cutting a new version"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -38,27 +43,31 @@ jobs:
             os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             qjs: qjs-linux-x86_64
-            ffmpeg: ffmpeg-master-latest-linux64-lgpl.tar.xz
+            # The release branch rather than master: a nightly of the
+            # development tree is the likelier of the two to be broken.
+            ffmpeg: ffmpeg-n8.1-latest-linux64-lgpl-8.1.tar.xz
           - name: Linux-arm64
             os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             qjs: qjs-linux-aarch64
-            ffmpeg: ffmpeg-master-latest-linuxarm64-lgpl.tar.xz
+            ffmpeg: ffmpeg-n8.1-latest-linuxarm64-lgpl-8.1.tar.xz
           - name: Windows-x64
             os: windows-latest
             target: x86_64-pc-windows-msvc
             qjs: qjs-windows-x86_64.exe
-            ffmpeg: ffmpeg-master-latest-win64-lgpl.zip
+            ffmpeg: ffmpeg-n8.1-latest-win64-lgpl-8.1.zip
           - name: Windows-arm64
             os: windows-11-arm
             target: aarch64-pc-windows-msvc
             # quickjs-ng publishes no arm64 Windows binary; Windows on ARM
             # runs x64 under emulation, and this is a short-lived subprocess.
             qjs: qjs-windows-x86_64.exe
-            ffmpeg: ffmpeg-master-latest-winarm64-lgpl.zip
+            ffmpeg: ffmpeg-n8.1-latest-winarm64-lgpl-8.1.zip
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -217,13 +226,37 @@ jobs:
       - name: Bundle qjs + ffmpeg (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $ErrorActionPreference = "Stop"
+          $ProgressPreference = "SilentlyContinue"
           New-Item -ItemType Directory -Force -Path desktop/src-tauri/bin | Out-Null
           Invoke-WebRequest -Uri "https://github.com/quickjs-ng/quickjs/releases/download/$env:QJS_VERSION/${{ matrix.platform.qjs }}" -OutFile desktop/src-tauri/bin/qjs.exe
-          Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/${{ matrix.platform.ffmpeg }}" -OutFile "$env:TEMP/ffmpeg.zip"
-          Expand-Archive -Path "$env:TEMP/ffmpeg.zip" -DestinationPath "$env:TEMP/ffmpeg" -Force
-          Copy-Item (Get-ChildItem -Path "$env:TEMP/ffmpeg" -Filter ffmpeg.exe -Recurse | Select-Object -First 1).FullName desktop/src-tauri/bin/ffmpeg.exe
+          # BtbN rebuilds every branch daily, and the 2026-09-23 winarm64
+          # builds crashed on launch while the 09-22 ones ran fine. Walk back
+          # from the newest build to the first that encodes on this runner,
+          # which is the CPU the installer is for.
+          $suffix = "${{ matrix.platform.ffmpeg }}" -replace '^ffmpeg-n8\.1-latest-', ''
+          $pattern = '^ffmpeg-n8\.1.*-' + [regex]::Escape($suffix) + '$'
+          $releases = Invoke-RestMethod -Headers @{ Authorization = "Bearer $env:GH_TOKEN" } `
+            -Uri "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases?per_page=20"
+          $assets = $releases | Sort-Object { [datetime]$_.published_at } -Descending |
+            ForEach-Object { $_.assets } | Where-Object { $_.name -match $pattern }
+          foreach ($asset in $assets) {
+            Remove-Item -Recurse -Force "$env:TEMP/ffmpeg" -ErrorAction SilentlyContinue
+            Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "$env:TEMP/ffmpeg.zip"
+            Expand-Archive -Path "$env:TEMP/ffmpeg.zip" -DestinationPath "$env:TEMP/ffmpeg" -Force
+            $exe = (Get-ChildItem -Path "$env:TEMP/ffmpeg" -Filter ffmpeg.exe -Recurse | Select-Object -First 1).FullName
+            & $exe -hide_banner -loglevel error -f lavfi -i sine=d=1 -f null - 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+              Copy-Item $exe desktop/src-tauri/bin/ffmpeg.exe
+              Write-Host "Using $($asset.name)"
+              break
+            }
+            Write-Host ("::warning::{0} does not run here (exit 0x{1:X}); trying an older build" -f $asset.name, $LASTEXITCODE)
+          }
+          if (-not (Test-Path desktop/src-tauri/bin/ffmpeg.exe)) { throw "No recent BtbN ffmpeg build runs on this runner" }
 
       # Both binaries are useless if they cannot start on a machine that is
       # not this runner, and that failure would only show up as a download
@@ -288,12 +321,16 @@ jobs:
       # binary and the update feed can never disagree.
       - name: Resolve version
         shell: bash
+        env:
+          REBUILD_TAG: ${{ inputs.tag }}
         run: |
           node -e '
             const fs = require("fs");
             const confPath = "desktop/src-tauri/tauri.conf.json";
             const conf = JSON.parse(fs.readFileSync(confPath, "utf8"));
-            const ref = process.env.GITHUB_REF || "";
+            const ref = process.env.REBUILD_TAG
+              ? `refs/tags/${process.env.REBUILD_TAG}`
+              : process.env.GITHUB_REF || "";
             const version = ref.startsWith("refs/tags/v")
               ? ref.slice("refs/tags/v".length)
               // run_number is monotonic for the life of the workflow, so

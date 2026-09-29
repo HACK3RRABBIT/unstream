@@ -16,6 +16,7 @@ import {
 import clsx from 'clsx'
 import {
   apiError,
+  commonFailure,
   DEFAULT_VIDEO_QUALITY,
   jobZipUrl,
   trackFileUrl,
@@ -25,7 +26,13 @@ import {
   type JobTrack,
   type Quality,
 } from '../lib/api'
-import { isDesktop as isTauri, revealFile, openFolder, setWindowProgress } from '../lib/desktop'
+import {
+  isDesktop as isTauri,
+  isLocal,
+  revealFile,
+  openFolder,
+  setWindowProgress,
+} from '../lib/desktop'
 import { useDownloads, type DownloadEntry } from '../lib/downloads'
 import { faNumerals, useMessages, useStartAlign } from '../lib/i18n'
 import { useToast } from '../lib/toast'
@@ -238,6 +245,11 @@ function JobCard({ entry, capped = true }: { entry: DownloadEntry; capped?: bool
   // no percentage, and the row below goes bare.
   const only = total === 1 ? job?.tracks[0] : undefined
   const sweeping = !!only && !expired && INDETERMINATE.has(only.status)
+  const failure = finished && failed > 0 && job ? commonFailure(job.tracks) : null
+  // Only the server's own connection is at fault here, and on a hosted
+  // instance the person cannot change it — the desktop app can.
+  const suggestApp =
+    !isLocal() && (failure === 'bot_check' || failure === 'network' || failure === 'tls')
 
   return (
     <div className="border-b border-ink-800 last:border-b-0">
@@ -382,6 +394,28 @@ function JobCard({ entry, capped = true }: { entry: DownloadEntry; capped?: bool
           A lone job instead grows to whatever the panel gives it and lets the
           panel do the scrolling — capped, it clipped its own list mid-row
           while the sheet below it sat empty. */}
+      {failure && (
+        <p className="mx-4 mt-2.5 flex items-start gap-2 rounded-ctl border border-danger/20 bg-danger/[0.06] px-3 py-2 text-xs leading-5 text-danger">
+          <TriangleAlert className="mt-1 size-3 shrink-0" />
+          <span>
+            {failure in m.failureServer
+              ? m.failureServer[failure as keyof typeof m.failureServer]
+              : m.failure[failure]}
+            {suggestApp && (
+              <>
+                {' '}
+                <span className="text-ink-300">{m.failureServer.desktopHint}</span>{' '}
+                <a
+                  href="/download"
+                  className="font-semibold text-ink-100 underline decoration-ink-600 underline-offset-2 hover:text-lime-flash"
+                >
+                  {m.banner.getApp}
+                </a>
+              </>
+            )}
+          </span>
+        </p>
+      )}
       <ul className={clsx('py-1.5', capped && 'max-h-44 overflow-y-auto')}>
         {(job?.tracks ?? []).map((state) => (
           <TrackLine key={state.id} entry={entry} state={state} showBar={total > 1} />

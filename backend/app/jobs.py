@@ -28,7 +28,7 @@ from pathlib import Path
 
 log = logging.getLogger("unstream.jobs")
 
-from . import analytics, downloader
+from . import analytics, downloader, net
 from .models import Track
 
 DOWNLOADS_DIR = Path(
@@ -133,6 +133,9 @@ class TrackState:
             "status": self.status,
             "progress": round(self.progress, 3),
             "error": self.error,
+            # What kind of failure `error` is, so the UI can say it in the
+            # person's language and point at the setting that fixes it.
+            "error_kind": net.error_kind(self.error),
             # "mp3" / "m4a" / "opus" — the UI labels its save link with it.
             "ext": self.file_path.suffix.lstrip(".") if self.file_path else None,
             "provider": self.provider,

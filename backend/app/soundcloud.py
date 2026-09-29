@@ -16,6 +16,7 @@ back to yt-dlp's track search / resolve, so SoundCloud never disappears entirely
 import json
 import re
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -36,7 +37,13 @@ _SCRIPT_RE = re.compile(
 _CLIENT_ID_RE = re.compile(r'client_id\s*:\s*"([a-zA-Z0-9]{32})"')
 
 _client_id: str | None = None
+_client_id_at = 0.0
 _client_id_lock = threading.Lock()
+
+# A 401 on an id scraped this recently is not an expired id. SoundCloud
+# answers every API call from some addresses (VPN exits, mostly) with 401, and
+# re-scraping ten pages of JS per call made each search pay for it four times.
+_CLIENT_ID_FRESH_SECONDS = 300
 
 
 def is_soundcloud_url(url: str) -> bool:
@@ -64,14 +71,19 @@ def _scrape_client_id() -> str:
 
 
 def _get_client_id(force_refresh: bool = False) -> str:
-    global _client_id
+    global _client_id, _client_id_at
     with _client_id_lock:
         if _client_id is None or force_refresh:
             try:
                 _client_id = _scrape_client_id()
             except (URLError, OSError, HTTPError) as exc:
                 raise ProviderError(f"Could not reach SoundCloud: {exc}") from exc
+            _client_id_at = time.monotonic()
         return _client_id
+
+
+def _client_id_is_fresh() -> bool:
+    return time.monotonic() - _client_id_at < _CLIENT_ID_FRESH_SECONDS
 
 
 def _with_client_id(url: str, client_id: str) -> str:
@@ -90,7 +102,7 @@ def _get_json(url: str) -> dict | list:
             return json.loads(_fetch(_with_client_id(url, client_id)))
         except HTTPError as exc:
             # An expired client id answers 401/403 — re-scrape once.
-            if exc.code in (401, 403) and attempt == 0:
+            if exc.code in (401, 403) and attempt == 0 and not _client_id_is_fresh():
                 continue
             raise ProviderError(f"SoundCloud API returned HTTP {exc.code}") from exc
         except (URLError, json.JSONDecodeError) as exc:

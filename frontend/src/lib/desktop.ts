@@ -48,6 +48,11 @@ export function isLocal(): boolean {
   return false
 }
 
+export function isWindows(): boolean {
+  if (typeof navigator === 'undefined') return false
+  return /Windows|Win32|Win64/i.test(navigator.userAgent || navigator.platform)
+}
+
 /** macOS, where the window's traffic lights are drawn by the OS over the
  *  webview's physical top-left. Anything a full-screen view puts in that
  *  corner lands underneath them, so overlays reserve the space — see the
@@ -99,9 +104,28 @@ export async function setDownloadsDir(path: string): Promise<boolean> {
   }
 }
 
+/** What reading the chosen browser's cookie store turned up. `ok` false means
+ *  the store could not be opened at all, and the backend has stopped handing
+ *  it to yt-dlp; `ok` with `signed_in` false means it opened but holds no
+ *  YouTube sign-in, which is the same as having no cookies. */
+export interface CookieStatus {
+  browser: string
+  ok: boolean
+  youtube_cookies: number
+  signed_in: boolean
+  error: string | null
+}
+
+/** "system" (follow the OS), "off" (direct), or a proxy URL. */
+export type ProxySetting = string
+
 export interface BackendDesktopConfig {
   downloads_dir: string
   cookies_from_browser: string | null
+  proxy: ProxySetting
+  /** What the OS proxy settings name right now — what "system" resolves to. */
+  system_proxy: string | null
+  cookies_status?: CookieStatus | null
 }
 
 export async function getBackendDesktopConfig(): Promise<BackendDesktopConfig | null> {
@@ -134,10 +158,13 @@ export async function listInstalledBrowsers(): Promise<string[]> {
  *  Two writes on purpose. The Tauri side persists the choice so the next
  *  launch spawns the backend already carrying it; the POST applies it to the
  *  backend running right now, so the next download picks it up with no
- *  restart. Only the second one decides the return value — a setting that
- *  saved but did not take effect has not done what the toggle promised.
+ *  restart. Only the second one decides the result — a setting that saved
+ *  but did not take effect has not done what the toggle promised.
+ *
+ *  Resolves to the backend's read of the store (null when clearing), or
+ *  `false` when the backend never took the setting.
  */
-export async function setCookiesFromBrowser(browser: string): Promise<boolean> {
+export async function setCookiesFromBrowser(browser: string): Promise<CookieStatus | null | false> {
   if (!isDesktop()) return false
   try {
     await invoke('set_cookies_from_browser', { browser })
@@ -150,11 +177,79 @@ export async function setCookiesFromBrowser(browser: string): Promise<boolean> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ cookies_from_browser: browser }),
     })
-    return res.ok
+    if (!res.ok) return false
+    const config = (await res.json()) as BackendDesktopConfig
+    return config.cookies_status ?? null
   } catch (err) {
     console.error('Failed to set cookies browser:', err)
     return false
   }
+}
+
+/** Route every request through `proxy` from now on, and remember it.
+ *
+ *  The backend goes first here, unlike the cookie setter: it is the one that
+ *  validates the value, and a typo must not be saved for the next launch.
+ *  Resolves to the setting as the backend normalised it, or throws with the
+ *  backend's reason. */
+export async function setProxy(proxy: ProxySetting): Promise<ProxySetting> {
+  const res = await fetch('/api/desktop/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ proxy }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    const detail = typeof data?.detail === 'string' ? data.detail : ''
+    throw new Error(detail.replace(/^Bad proxy:\s*/, ''))
+  }
+  const saved = (data as BackendDesktopConfig).proxy
+  try {
+    await invoke('set_proxy', { proxy: saved })
+  } catch (err) {
+    console.error('Failed to persist proxy in Tauri:', err)
+  }
+  return saved
+}
+
+export interface DetectedProxies {
+  /** Proxy URLs something on this machine answered on, best first. */
+  found: string[]
+  /** What the OS proxy settings name right now, if anything. */
+  system: string | null
+}
+
+export async function detectProxies(): Promise<DetectedProxies> {
+  const res = await fetch('/api/desktop/proxy/detect')
+  if (!res.ok) throw new Error(`detect failed: ${res.status}`)
+  return (await res.json()) as DetectedProxies
+}
+
+export type ServiceId = 'deezer' | 'itunes' | 'soundcloud' | 'youtube'
+
+export type ServiceFailure =
+  'dns' | 'timeout' | 'refused' | 'blocked' | 'proxy' | 'tls' | 'refused_by_service' | 'network'
+
+export interface ServiceCheck {
+  id: ServiceId
+  ok: boolean
+  ms: number | null
+  error: ServiceFailure | null
+  status: number | null
+}
+
+export interface Diagnosis {
+  proxy: ProxySetting
+  system_proxy: string | null
+  services: ServiceCheck[]
+  cookies: CookieStatus | null
+  tools: { ffmpeg: boolean; js_runtime: string | null }
+}
+
+export async function runDiagnosis(): Promise<Diagnosis> {
+  const res = await fetch('/api/desktop/diagnose')
+  if (!res.ok) throw new Error(`diagnose failed: ${res.status}`)
+  return (await res.json()) as Diagnosis
 }
 
 export async function pickDownloadsDir(): Promise<string | null> {

@@ -1,6 +1,7 @@
 """Tests for desktop backend seams and environment configuration."""
 
 import os
+from http.cookiejar import CookieJar
 from pathlib import Path
 from starlette.testclient import TestClient
 
@@ -169,7 +170,14 @@ def test_desktop_config_endpoints(tmp_path):
     assert res.json()["downloads_dir"] == str(custom_dir.resolve())
 
 
+def _readable_cookie_stores(monkeypatch):
+    # base_opts() only passes a browser whose store opens; CI has no browsers.
+    monkeypatch.setattr(ytdlp, "extract_cookies_from_browser", lambda *a, **k: CookieJar())
+    monkeypatch.setattr(ytdlp, "_cookie_checks", {})
+
+
 def test_cookies_from_browser_env_and_opts(monkeypatch):
+    _readable_cookie_stores(monkeypatch)
     monkeypatch.setenv("YTDLP_COOKIES_FROM_BROWSER", "chrome")
     monkeypatch.setattr(ytdlp, "_cookies_from_browser", None)
     assert ytdlp.cookies_from_browser() == "chrome"
@@ -182,6 +190,7 @@ def test_cookies_from_browser_env_and_opts(monkeypatch):
 
 
 def test_cookies_from_browser_live_switch(monkeypatch):
+    _readable_cookie_stores(monkeypatch)
     monkeypatch.setattr(ytdlp, "_cookies_from_browser", None)
     try:
         assert ytdlp.set_cookies_from_browser("Firefox") == "firefox"

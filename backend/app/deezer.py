@@ -35,6 +35,9 @@ def _get(path: str, **params) -> dict:
             data = json.loads(resp.read().decode("utf-8"))
     except URLError as exc:
         raise ProviderError(f"Could not reach Deezer: {exc.reason}") from exc
+    except OSError as exc:
+        # A timeout or reset while the body is read arrives unwrapped.
+        raise ProviderError(f"Could not reach Deezer: {exc}") from exc
     except json.JSONDecodeError as exc:
         raise ProviderError("Deezer returned an unreadable response.") from exc
     if isinstance(data, dict) and data.get("error"):

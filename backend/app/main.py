@@ -22,6 +22,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
+# Importing `net` installs the proxy-aware opener every provider's urlopen()
+# goes through, before the first request can be served.
 from . import (
     analytics,
     deezer,
@@ -32,6 +34,7 @@ from . import (
     library,
     limits,
     lyrics,
+    net,
     soundcloud,
     ytdlp,
 )
@@ -170,6 +173,9 @@ def search_any(query: str, page: int = 0) -> tuple[list[SearchResult], bool]:
     errors: list[Exception] = []
     for future in futures:
         if not future.done():
+            # Counted as a failure, so a search where every source hung says
+            # it could not reach them instead of "no results".
+            errors.append(TimeoutError("timed out"))
             continue
         if future.exception():
             errors.append(future.exception())
@@ -318,6 +324,13 @@ def config_js() -> Response:
     )
 
 
+def _unreachable(exc: OSError) -> HTTPException:
+    """A connection that broke outside a provider's own error handling — a
+    timeout mid-body, a reset while paging — is still "could not reach",
+    not a 500 the UI can only call "the server didn't answer"."""
+    return HTTPException(status_code=400, detail=f"Could not reach the source: {exc}")
+
+
 @app.get("/api/search")
 def search(request: Request, q: str, page: int = 0) -> dict:
     q = q.strip()
@@ -357,6 +370,8 @@ def artist(request: Request, artist_id: str) -> dict:
         data = deezer.artist(artist_id)
     except ProviderError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    except OSError as exc:
+        raise _unreachable(exc) from exc
     analytics.record(
         "artist_view",
         visitor=limits.visitor(request),
@@ -382,6 +397,8 @@ def resolve(body: ResolveRequest, request: Request) -> dict:
             source=provider_of(body.url),
         )
         raise HTTPException(status_code=400, detail=str(exc))
+    except OSError as exc:
+        raise _unreachable(exc) from exc
     analytics.record(
         "resolve",
         visitor=limits.visitor(request),
@@ -467,6 +484,8 @@ def download(body: DownloadRequest, request: Request) -> dict:
         collection = resolve_any(body.url)
     except ProviderError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    except OSError as exc:
+        raise _unreachable(exc) from exc
 
     tracks = collection.tracks
     if body.track_ids is not None:
@@ -654,11 +673,31 @@ class DesktopConfigUpdate(BaseModel):
     downloads_dir: str | None = None
     # Browser to read YouTube cookies from (see app/ytdlp.py). Empty clears.
     cookies_from_browser: str | None = None
+    # "system", "off", or a proxy URL (see app/net.py).
+    proxy: str | None = None
+
+
+def _desktop_config() -> dict:
+    return {
+        "downloads_dir": str(jobs.DOWNLOADS_DIR.resolve()),
+        "cookies_from_browser": ytdlp.cookies_from_browser() or None,
+        "proxy": net.setting(),
+        "system_proxy": net.detect_system(),
+    }
 
 
 @app.post("/api/desktop/config")
 def update_desktop_config(payload: DesktopConfigUpdate) -> dict:
-    """Dynamically update downloads directory in the running backend."""
+    """Apply desktop settings to the running backend, no restart needed.
+
+    A changed cookie browser is read on the spot, so the settings page can
+    say whether it worked instead of the next download finding out.
+    """
+    if payload.proxy is not None:
+        try:
+            net.configure(payload.proxy)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Bad proxy: {exc}")
     if payload.downloads_dir:
         jobs.set_downloads_dir(payload.downloads_dir)
     if payload.cookies_from_browser is not None:
@@ -666,19 +705,45 @@ def update_desktop_config(payload: DesktopConfigUpdate) -> dict:
             ytdlp.set_cookies_from_browser(payload.cookies_from_browser)
         except ValueError:
             raise HTTPException(status_code=400, detail="Unsupported browser")
-    return {
-        "downloads_dir": str(jobs.DOWNLOADS_DIR.resolve()),
-        "cookies_from_browser": ytdlp.cookies_from_browser() or None,
-    }
+    config = _desktop_config()
+    if payload.cookies_from_browser:
+        config["cookies_status"] = ytdlp.browser_cookie_status(fresh=True)
+    return config
 
 
 @app.get("/api/desktop/config")
 def get_desktop_config() -> dict:
     """Return currently active backend configuration."""
-    return {
-        "downloads_dir": str(jobs.DOWNLOADS_DIR.resolve()),
-        "cookies_from_browser": ytdlp.cookies_from_browser() or None,
-    }
+    return _desktop_config()
+
+
+@app.get("/api/desktop/proxy/detect")
+def detect_proxy() -> dict:
+    """Proxies a VPN app is serving on this machine, for one-click setup.
+
+    Loopback only, and the answer is a list of candidates — nothing is
+    switched until the person picks one.
+    """
+    return net.detect()
+
+
+@app.get("/api/desktop/diagnose")
+def diagnose() -> dict:
+    """Can this machine reach each service, and is everything else in place?
+
+    Every check runs through the same routing the real requests use, so a
+    green row here means search and downloads will get through too.
+    """
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        services = pool.submit(net.check_services)
+        cookies = pool.submit(ytdlp.browser_cookie_status, fresh=True)
+        return {
+            "proxy": net.setting(),
+            "system_proxy": net.detect_system(),
+            "services": services.result(),
+            "cookies": cookies.result(),
+            "tools": net.tools(),
+        }
 
 
 @app.get("/api/library")
