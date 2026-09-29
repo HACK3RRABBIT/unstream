@@ -60,7 +60,7 @@ def _probe_embedded(video: Path) -> list[tuple[int, str]]:
                 "-show_entries", "stream=index,codec_name:stream_tags=language,title",
                 "-of", "csv=p=0", str(video),
             ],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
     except Exception:  # noqa: BLE001 — probing is best-effort
         return []
@@ -111,7 +111,7 @@ def extract_embedded(video: Path, dest: Path) -> dict[str, Path]:
             if not text.strip():
                 srt.unlink(missing_ok=True)
                 continue
-            srt.write_text(text)
+            srt.write_text(text, encoding="utf-8")
         except Exception:  # noqa: BLE001
             srt.unlink(missing_ok=True)
             continue

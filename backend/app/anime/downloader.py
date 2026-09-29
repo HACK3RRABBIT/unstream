@@ -21,6 +21,7 @@ no changes.
 """
 
 import json
+import logging
 import os
 import re
 import shutil
@@ -38,6 +39,8 @@ from ..models import ProviderError, Track
 from ..ytdlp import base_opts
 from . import quality as quality_rungs
 from .providers import EpisodeSource, EpisodeStream, QualityUnavailable
+
+log = logging.getLogger("unstream.anime")
 
 # How many HLS fragments to fetch at once. Streaming sources serve an episode
 # as hundreds of small fragments, and yt-dlp pulls them one at a time by
@@ -245,7 +248,7 @@ def _mux_subtitles(video: Path, sub: Path | None, dest: Path, language: str = "e
     if not sub or not sub.exists():
         return video
     out = _with_ext(dest, "mp4")
-    tmp = _with_ext(dest, "subbed")
+    tmp = _with_ext(dest, "subbed.mp4")  # ffmpeg picks the container by extension
     args = ["-i", str(video), "-i", str(sub), "-c", "copy"]
     if _video_has_audio(video):
         args += ["-map", "0:v", "-map", "0:a"]
@@ -255,7 +258,7 @@ def _mux_subtitles(video: Path, sub: Path | None, dest: Path, language: str = "e
     _run_ffmpeg(args, tmp, "subtitle mux")
     if video != out:
         video.unlink(missing_ok=True)
-    tmp.rename(out)
+    tmp.replace(out)  # rename() refuses to overwrite on Windows
     return out
 
 
@@ -273,6 +276,17 @@ def _finalize_subtitles(
     """
     if not requested or not eng_sub or not eng_sub.exists():
         return video
+    try:
+        return _mux_requested(video, eng_sub, requested, dest)
+    except DownloadError:
+        # A subtitle that won't mux (a malformed file, a codec mov_text can't
+        # carry) must not cost the episode that already downloaded.
+        log.warning("subtitle mux failed; keeping the bare video", exc_info=True)
+        _with_ext(dest, "subbed.mp4").unlink(missing_ok=True)
+        return video
+
+
+def _mux_requested(video: Path, eng_sub: Path, requested: list[str], dest: Path) -> Path:
     want_eng = "eng" in requested
     want_fas = "fas" in requested
     if not want_fas:
@@ -321,7 +335,7 @@ def _probe_height(video: Path) -> int | None:
         proc = subprocess.run(
             ["ffprobe", "-v", "error", "-select_streams", "v:0",
              "-show_entries", "stream=height", "-of", "csv=p=0", str(video)],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
         line = proc.stdout.strip()
         return int(line) if line else None
@@ -343,7 +357,7 @@ def _probe_dimensions(video: Path) -> tuple[int | None, int | None]:
         proc = subprocess.run(
             ["ffprobe", "-v", "error", "-select_streams", "v:0",
              "-show_entries", "stream=width,height", "-of", "csv=p=0", str(video)],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
         parts = [p.strip() for p in proc.stdout.strip().splitlines()[0].split(",")]
         width, height = int(parts[0]), int(parts[1])
@@ -374,7 +388,7 @@ def _probe_with_ffmpeg(video: Path) -> tuple[int | None, int | None]:
     try:
         proc = subprocess.run(
             ["ffmpeg", "-hide_banner", "-i", str(video)],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
     except Exception:  # noqa: BLE001 — no ffmpeg either: nothing to read
         return (None, None)
@@ -563,7 +577,7 @@ def download_video_track(
                 last_error = exc
                 _clean_partials(dest)
 
-    if quality_error is not None:
+    if quality_error is not None and is_video_resolution(resolution):
         raise DownloadError(
             f"Requested quality {resolution}p is unavailable for this episode."
         ) from quality_error

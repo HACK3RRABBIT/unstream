@@ -124,11 +124,15 @@ def _json(path: str, **params) -> dict:
 
 def _pick_episode_id(html: str, episode_number: int) -> str:
     """The site's numeric episode id for `episode_number` from the episode list."""
-    # Each episode is an <a> with data-number (human number) and data-id (site id).
-    for match in re.finditer(
-        r'data-number="(\d+)"[^>]*data-id="(\d+)"', html
-    ) | re.finditer(r'data-id="(\d+)"[^>]*data-number="(\d+)"', html):
+    # Each episode is an <a> with data-number (human number) and data-id (site
+    # id), in either attribute order. (The two scans used to be joined with
+    # `|`, which iterators don't support — every lookup raised TypeError.)
+    for match in re.finditer(r'data-number="(\d+)"[^>]*data-id="(\d+)"', html):
         num, eid = match.groups()
+        if int(num) == episode_number:
+            return eid
+    for match in re.finditer(r'data-id="(\d+)"[^>]*data-number="(\d+)"', html):
+        eid, num = match.groups()
         if int(num) == episode_number:
             return eid
     raise ProviderError(f"Episode {episode_number} not found on hianime.")
@@ -152,6 +156,16 @@ def _pick_subtitles(payload: dict) -> str | None:
         if any(pref.lower() in label for pref in _PREFERRED_SUB_LANGS):
             return track.get("file")
     return None
+
+
+def _show_id(slug: str) -> str | None:
+    """The site's numeric show id: the slug's trailing number
+    ("one-piece-100" → "100"), else the first data-id on its page."""
+    tail = re.search(r"-(\d+)$", slug)
+    if tail:
+        return tail.group(1)
+    match = re.search(r'data-id="(\d+)"', _get(f"/category/{quote(slug)}").text)
+    return match.group(1) if match else None
 
 
 class HianimeProvider:
@@ -194,11 +208,9 @@ class HianimeProvider:
         is the source of truth for how many have actually aired.
         """
         try:
-            slug = quote(src.anime_id)
-            show_match = re.search(r'data-id="(\d+)"', _get(f"/category/{slug}").text)
-            if not show_match:
+            show_id = _show_id(src.anime_id)
+            if not show_id:
                 return None
-            show_id = show_match.group(1)
             html = _json(f"/ajax/v2/episode/list/{show_id}").get("html", "")
             numbers = [
                 int(n) for n in re.findall(r'data-number="(\d+)"', html)
@@ -213,12 +225,10 @@ class HianimeProvider:
         `src.episode` is the human episode number (1..N); the site's numeric
         episode id is looked up from the season page.
         """
-        slug = quote(src.anime_id)
-        # 1. The category page carries the show id the episode list wants.
-        show_match = re.search(r'data-id="(\d+)"', _get(f"/category/{slug}").text)
-        if not show_match:
+        # 1. The show id the episode list wants.
+        show_id = _show_id(src.anime_id)
+        if not show_id:
             raise ProviderError("Could not find hianime show id.")
-        show_id = show_match.group(1)
 
         # 2. The episode list maps human numbers to site episode ids.
         episodes_html = _json(f"/ajax/v2/episode/list/{show_id}").get("html", "")

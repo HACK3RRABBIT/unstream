@@ -67,6 +67,16 @@ def build_srt(cues: list[Cue]) -> str:
     ) + ("\n" if cues else "")
 
 
+def _srt_timestamp(vtt: str) -> str:
+    """A VTT timestamp as SRT writes it: `,` before the millis, and the hours
+    VTT may leave out ("00:01.500" → "00:00:01,500") — an SRT line without
+    hours is not one ffmpeg reads."""
+    ts = vtt.replace(".", ",")
+    if ts.count(":") == 1:
+        ts = "00:" + ts
+    return ts
+
+
 def _parse_vtt(text: str) -> list[Cue]:
     """Parse VTT text into SRT-shaped cues. Drops the WEBVTT header, NOTE /
     STYLE / REGION blocks and per-cue ids; VTT `.mmm` timestamps become SRT
@@ -99,8 +109,8 @@ def _parse_vtt(text: str) -> list[Cue]:
         m = _TS_RE.match(block[ts_idx])
         if not m:
             continue
-        start = m.group(1).strip().split()[0].replace(".", ",")
-        end = m.group(2).strip().split()[0].replace(".", ",")
+        start = _srt_timestamp(m.group(1).strip().split()[0])
+        end = _srt_timestamp(m.group(2).strip().split()[0])
         body = "\n".join(block[ts_idx + 1 :]).strip()
         cues.append(Cue(index=len(cues) + 1, start=start, end=end, text=body))
     return cues
@@ -138,7 +148,9 @@ def mux_subtitles(
     from .downloader import _video_has_audio
 
     out = _with_ext(dest, "mp4")
-    tmp = _with_ext(dest, "subbed")
+    # The temporary output must end in .mp4: ffmpeg picks the container from
+    # the extension, and "x.subbed" made every mux fail.
+    tmp = _with_ext(dest, "subbed.mp4")
     args = ["-i", str(video)]
     for _lang, sub in tracks:
         args += ["-i", str(sub)]
@@ -157,5 +169,5 @@ def mux_subtitles(
     _run_ffmpeg(args, tmp, "subtitle mux")
     if video != out:
         video.unlink(missing_ok=True)
-    tmp.rename(out)
+    tmp.replace(out)  # rename() refuses to overwrite on Windows
     return out

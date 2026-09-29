@@ -970,7 +970,7 @@ class NyaaProvider:
             # what failed every batch on a machine with only libtorrent.)
             listing = subprocess.run(
                 ["aria2c", "--show-files", str(torrent_file)],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
             )
             if listing.returncode != 0:
                 raise DownloadError("Could not list torrent files.")
@@ -1076,7 +1076,7 @@ class NyaaProvider:
                 "-show_entries", "stream=index,codec_name:stream_tags=language,title",
                 "-of", "csv=p=0", str(video),
             ],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
         for sub_idx, line in enumerate(probe.stdout.strip().splitlines()):
             parts = [p.strip() for p in line.split(",")]
@@ -1126,6 +1126,22 @@ class NyaaProvider:
 
     @staticmethod
     def _finalize(video: Path, out: Path, subs: list[str]) -> None:
+        """Remux to mp4 with the requested subtitles — and when a subtitle
+        can't be muxed, still ship the episode that already downloaded."""
+        from ..downloader import _run_ffmpeg
+
+        try:
+            NyaaProvider._finalize_with_subs(video, out, subs)
+        except DownloadError:
+            if not video.exists():
+                raise
+            log.warning("subtitle mux failed; keeping the bare video", exc_info=True)
+            _run_ffmpeg(["-i", str(video), "-map", "0:v", "-map", "0:a?", "-c", "copy"],
+                        out, "torrent mux")
+            video.unlink(missing_ok=True)
+
+    @staticmethod
+    def _finalize_with_subs(video: Path, out: Path, subs: list[str]) -> None:
         """Remux a non-mp4 video to mp4, muxing the requested subtitle tracks.
 
         `subs` is a list of "eng"/"fas" (empty = none). The tracks are matched

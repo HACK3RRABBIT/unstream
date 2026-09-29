@@ -675,6 +675,11 @@ class AnivexaProvider:
         if not aid:
             raise ProviderError("Anivexa needs the AniList id to resolve an episode.")
         episode = src.episode
+        # Whether any source actually offered the episode as a video. Only
+        # then is a miss a *quality* verdict; an anime no source carries is a
+        # provider miss, and saying "that quality is unavailable" for it sent
+        # the user hunting for a quality that was never the problem.
+        offered = False
         for internal in _download_chain(aid, quality):
             try:
                 watch = _get(f"/watch/{internal}/{aid}/sub/{internal}-{episode}").json()
@@ -686,10 +691,13 @@ class AnivexaProvider:
                 # The sidecar carries the episode but only as an embed/slideshow
                 # — not a usable video at any quality from this source.
                 continue
+            offered = True
             try:
                 return _stream_from(internal, watch, quality, episode)
             except QualityUnavailable:
                 continue
+        if not offered:
+            raise ProviderError(f"Anivexa has no playable source for episode {episode}.")
         raise QualityUnavailable(
             f"Anivexa could not serve episode {episode} at {quality}."
         )

@@ -146,3 +146,58 @@ def test_libtorrent_proxy_only_for_an_explicit_proxy(restore_proxy):
     settings = nyaa._lt_proxy_settings()
     assert (settings["proxy_type"], settings["proxy_hostname"], settings["proxy_port"]) == (3, "127.0.0.1", 10808)
     assert settings["proxy_username"] == "user" and settings["proxy_peer_connections"]
+
+
+def test_hianime_episode_lookup_reads_both_attribute_orders():
+    from app.anime import hianime
+
+    html = (
+        '<a data-number="1" class="x" data-id="501">1</a>'
+        '<a data-id="502" class="x" data-number="2">2</a>'
+    )
+    assert hianime._pick_episode_id(html, 1) == "501"
+    assert hianime._pick_episode_id(html, 2) == "502"
+    assert hianime._show_id("one-piece-100") == "100"
+
+
+def test_vtt_timestamps_become_valid_srt():
+    from app.anime import subtitles
+
+    srt = subtitles.normalize_srt(b"WEBVTT\n\n00:00.500 --> 01:02:03.250 align:start\nHi\n")
+    assert "00:00:00,500 --> 01:02:03,250" in srt
+
+
+def test_a_subtitle_that_wont_mux_keeps_the_episode(monkeypatch, tmp_path):
+    video = tmp_path / "ep.mp4"
+    video.write_bytes(b"video")
+    sub = tmp_path / "ep.srt"
+    sub.write_text("1\n00:00:01,000 --> 00:00:02,000\nHi\n")
+
+    def broken(*a, **k):
+        raise anime_downloader.DownloadError("ffmpeg subtitle mux failed")
+
+    monkeypatch.setattr(anime_downloader, "_mux_subtitles", broken)
+    assert anime_downloader._finalize_subtitles(video, sub, ["eng"], tmp_path / "ep") == video
+    assert video.read_bytes() == b"video"
+
+
+@pytest.mark.skipif(__import__("shutil").which("ffmpeg") is None, reason="needs ffmpeg")
+def test_subtitle_mux_really_produces_an_mp4_track(tmp_path):
+    import subprocess
+
+    video = tmp_path / "ep.mp4"
+    subprocess.run(
+        ["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=320x180:rate=5",
+         "-t", "1", "-c:v", "libx264", str(video)],
+        check=True,
+    )
+    sub = tmp_path / "ep.srt"
+    sub.write_bytes(b"WEBVTT\n\n00:00.100 --> 00:00.900\nHello\n")
+    out = anime_downloader._finalize_subtitles(video, sub, ["eng"], tmp_path / "ep")
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type:stream_tags=language",
+         "-of", "csv=p=0", str(out)],
+        capture_output=True, text=True,
+    ).stdout.split()
+    assert "subtitle,eng" in probe
+    assert not list(tmp_path.glob("*.subbed*"))
