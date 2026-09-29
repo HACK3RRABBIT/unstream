@@ -22,10 +22,12 @@ import {
   checkForAppUpdates,
   getDesktopInfo,
   getDownloadsDir,
+  getVideoDownloadsDir,
   downloadAndInstallUpdate,
   relaunchApp,
   openFolder,
   pickDownloadsDir,
+  pickVideoDownloadsDir,
   type DesktopInfo,
   type UpdateProgress,
 } from '../lib/desktop'
@@ -49,9 +51,64 @@ function Credit({ href, image, name }: { href: string; image: string; name: stri
   )
 }
 
+/** One save-location row: where a kind of download lands, with a way to open
+ *  it and a way to move it. Music and anime each get one. */
+function FolderCard({
+  title,
+  hint,
+  dir,
+  onPick,
+}: {
+  title: string
+  hint: string
+  dir: string
+  onPick: () => void
+}) {
+  const m = useMessages()
+  return (
+    <section className={clsx(settingsCard, 'lg:col-span-2')}>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h2 className={settingsCardHeading}>
+            <span className="grid size-7 place-items-center rounded-lg bg-lime-flash/10 text-lime-flash">
+              <FolderOpen className="size-4" />
+            </span>
+            <span>{title}</span>
+          </h2>
+          <p className="mt-2 text-mini text-ink-400">{hint}</p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={() => dir && openFolder(dir)}
+            className="flex h-8.5 items-center gap-1.5 rounded-ctl border border-white/[0.08] bg-white/[0.03] px-3 text-mini font-medium text-ink-300 transition hover:border-lime-flash/40 hover:text-lime-flash active:scale-95"
+          >
+            <FolderOpen className="size-3.5 text-lime-flash" />
+            <span>{m.settings.openInFinder}</span>
+          </button>
+          <button
+            type="button"
+            onClick={onPick}
+            className="h-8.5 rounded-btn bg-lime-flash px-3.5 text-mini font-bold text-ink-950 transition hover:bg-lime-soft active:scale-95 shadow-sm"
+          >
+            {m.settings.changeFolder}
+          </button>
+        </div>
+      </div>
+      <div className="mt-4 flex min-h-11 items-center rounded-ctl border border-white/[0.07] bg-black/40 px-3.5 font-mono text-mini text-ink-300">
+        <HardDrive className="size-4 text-ink-500 me-2.5 shrink-0" />
+        <span dir="ltr" className="min-w-0 break-all text-start">
+          {dir || '...'}
+        </span>
+      </div>
+    </section>
+  )
+}
+
 export function DesktopSettingsView({ focusConnection = false }: { focusConnection?: boolean }) {
   const m = useMessages()
   const [downloadsDir, setDownloadsDir] = useState('')
+  const [videosDir, setVideosDir] = useState('')
   const [info, setInfo] = useState<DesktopInfo | null>(null)
   const [updateStatus, setUpdateStatus] = useState<string | null>(null)
   const [checkingUpdate, setCheckingUpdate] = useState(false)
@@ -65,12 +122,18 @@ export function DesktopSettingsView({ focusConnection = false }: { focusConnecti
 
   useEffect(() => {
     getDownloadsDir().then(setDownloadsDir)
+    getVideoDownloadsDir().then(setVideosDir)
     getDesktopInfo().then(setInfo)
   }, [])
 
   const handlePickFolder = async () => {
     const picked = await pickDownloadsDir()
     if (picked) setDownloadsDir(picked)
+  }
+
+  const handlePickVideosFolder = async () => {
+    const picked = await pickVideoDownloadsDir()
+    if (picked) setVideosDir(picked)
   }
 
   const handleCheckUpdate = async () => {
@@ -173,43 +236,19 @@ export function DesktopSettingsView({ focusConnection = false }: { focusConnecti
             </div>
           </section>
 
-          {/* Downloads Directory Card */}
-          <section className={clsx(card, 'lg:col-span-2')}>
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <h2 className={cardHeading}>
-                  <span className="grid size-7 place-items-center rounded-lg bg-lime-flash/10 text-lime-flash">
-                    <FolderOpen className="size-4" />
-                  </span>
-                  <span>{m.settings.downloadsFolder}</span>
-                </h2>
-                <p className="mt-2 text-mini text-ink-400">{m.desktopNav.downloadsFolderHint}</p>
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => downloadsDir && openFolder(downloadsDir)}
-                  className="flex h-8.5 items-center gap-1.5 rounded-ctl border border-white/[0.08] bg-white/[0.03] px-3 text-mini font-medium text-ink-300 transition hover:border-lime-flash/40 hover:text-lime-flash active:scale-95"
-                >
-                  <FolderOpen className="size-3.5 text-lime-flash" />
-                  <span>{m.settings.openInFinder}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handlePickFolder}
-                  className="h-8.5 rounded-btn bg-lime-flash px-3.5 text-mini font-bold text-ink-950 transition hover:bg-lime-soft active:scale-95 shadow-sm"
-                >
-                  {m.settings.changeFolder}
-                </button>
-              </div>
-            </div>
-            <div className="mt-4 flex min-h-11 items-center rounded-ctl border border-white/[0.07] bg-black/40 px-3.5 font-mono text-mini text-ink-300">
-              <HardDrive className="size-4 text-ink-500 me-2.5 shrink-0" />
-              <span dir="ltr" className="min-w-0 break-all text-start">
-                {downloadsDir || '...'}
-              </span>
-            </div>
-          </section>
+          <FolderCard
+            title={m.settings.downloadsFolder}
+            hint={m.desktopNav.downloadsFolderHint}
+            dir={downloadsDir}
+            onPick={handlePickFolder}
+          />
+
+          <FolderCard
+            title={m.settings.videosFolder}
+            hint={m.desktopNav.videosFolderHint}
+            dir={videosDir}
+            onPick={handlePickVideosFolder}
+          />
 
           <ConnectionCard autoCheck={focusConnection} />
 

@@ -180,7 +180,10 @@ jobs:
             "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/${{ matrix.platform.ffmpeg }}"
           tar -xf /tmp/ffmpeg.tar.xz -C /tmp
           cp /tmp/ffmpeg-*/bin/ffmpeg desktop/src-tauri/bin/ffmpeg
-          chmod +x desktop/src-tauri/bin/ffmpeg
+          # ffprobe is how the anime pipeline reads what resolution a
+          # downloaded episode really is, and which subtitle tracks it holds.
+          cp /tmp/ffmpeg-*/bin/ffprobe desktop/src-tauri/bin/ffprobe
+          chmod +x desktop/src-tauri/bin/ffmpeg desktop/src-tauri/bin/ffprobe
 
       - name: Bundle qjs + ffmpeg (macOS arm64)
         if: runner.os == 'macOS' && matrix.platform.target == 'aarch64-apple-darwin'
@@ -195,9 +198,11 @@ jobs:
           # beside it and rewrites the load paths to @executable_path.
           brew install ffmpeg dylibbundler
           cp "$(which ffmpeg)" desktop/src-tauri/bin/ffmpeg
-          chmod +x desktop/src-tauri/bin/ffmpeg
+          cp "$(which ffprobe)" desktop/src-tauri/bin/ffprobe
+          chmod +x desktop/src-tauri/bin/ffmpeg desktop/src-tauri/bin/ffprobe
           dylibbundler --overwrite-dir --bundle-deps --create-dir \
             --fix-file desktop/src-tauri/bin/ffmpeg \
+            --fix-file desktop/src-tauri/bin/ffprobe \
             --dest-dir desktop/src-tauri/bin/libs \
             --install-path "@executable_path/libs"
 
@@ -216,12 +221,18 @@ jobs:
             "https://evermeet.cx/ffmpeg/ffmpeg-7.1.zip"
           unzip -o -q /tmp/ffmpeg-mac-x64.zip -d /tmp/ffmpeg-mac-x64
           cp /tmp/ffmpeg-mac-x64/ffmpeg desktop/src-tauri/bin/ffmpeg
-          chmod +x desktop/src-tauri/bin/ffmpeg
-          file desktop/src-tauri/bin/ffmpeg | grep -q "x86_64" || {
-            echo "ffmpeg is not an Intel binary" >&2
-            file desktop/src-tauri/bin/ffmpeg >&2
-            exit 1
-          }
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 -o /tmp/ffprobe-mac-x64.zip \
+            "https://evermeet.cx/ffmpeg/ffprobe-7.1.zip"
+          unzip -o -q /tmp/ffprobe-mac-x64.zip -d /tmp/ffprobe-mac-x64
+          cp /tmp/ffprobe-mac-x64/ffprobe desktop/src-tauri/bin/ffprobe
+          chmod +x desktop/src-tauri/bin/ffmpeg desktop/src-tauri/bin/ffprobe
+          for tool in ffmpeg ffprobe; do
+            file desktop/src-tauri/bin/$tool | grep -q "x86_64" || {
+              echo "$tool is not an Intel binary" >&2
+              file desktop/src-tauri/bin/$tool >&2
+              exit 1
+            }
+          done
 
       - name: Bundle qjs + ffmpeg (Windows)
         if: runner.os == 'Windows'
@@ -251,12 +262,22 @@ jobs:
             & $exe -hide_banner -loglevel error -f lavfi -i sine=d=1 -f null - 2>&1 | Out-Null
             if ($LASTEXITCODE -eq 0) {
               Copy-Item $exe desktop/src-tauri/bin/ffmpeg.exe
+              Copy-Item (Join-Path (Split-Path $exe) "ffprobe.exe") desktop/src-tauri/bin/ffprobe.exe
               Write-Host "Using $($asset.name)"
               break
             }
             Write-Host ("::warning::{0} does not run here (exit 0x{1:X}); trying an older build" -f $asset.name, $LASTEXITCODE)
           }
           if (-not (Test-Path desktop/src-tauri/bin/ffmpeg.exe)) { throw "No recent BtbN ffmpeg build runs on this runner" }
+          # libtorrent publishes no Windows-on-ARM wheel, so the anime
+          # section's torrents go through aria2 there instead. aria2 ships no
+          # ARM build either; Windows on ARM runs the x64 one under emulation,
+          # like qjs above.
+          if ("${{ matrix.platform.target }}" -eq "aarch64-pc-windows-msvc") {
+            Invoke-WebRequest -Uri "https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0-win-64bit-build1.zip" -OutFile "$env:TEMP/aria2.zip"
+            Expand-Archive -Path "$env:TEMP/aria2.zip" -DestinationPath "$env:TEMP/aria2" -Force
+            Copy-Item (Get-ChildItem -Path "$env:TEMP/aria2" -Filter aria2c.exe -Recurse | Select-Object -First 1).FullName desktop/src-tauri/bin/aria2c.exe
+          }
 
       # Both binaries are useless if they cannot start on a machine that is
       # not this runner, and that failure would only show up as a download
@@ -271,7 +292,7 @@ jobs:
           # leaves an invalid seal behind. An invalid seal is exactly what the
           # OS reports as "damaged" even after `xattr -cr`, so fail here.
           chmod +x desktop/src-tauri/bin/* backend/dist/unstream-api/unstream-api
-          codesign --force --sign - desktop/src-tauri/bin/ffmpeg desktop/src-tauri/bin/qjs
+          codesign --force --sign - desktop/src-tauri/bin/ffmpeg desktop/src-tauri/bin/ffprobe desktop/src-tauri/bin/qjs
           codesign --force --sign - backend/dist/unstream-api/unstream-api
           for lib in desktop/src-tauri/bin/libs/*.dylib; do
             [ -e "$lib" ] && codesign --force --sign - "$lib"
@@ -292,21 +313,29 @@ jobs:
             ARCH_RUN="arch -x86_64"
           fi
           $ARCH_RUN "$BIN/ffmpeg$EXT" -version | head -1
+          $ARCH_RUN "$BIN/ffprobe$EXT" -version | head -1
+          if [ -e "$BIN/aria2c$EXT" ]; then "$BIN/aria2c$EXT" --version | head -1; fi
           # qjs has no --version and exits non-zero on --help.
           $ARCH_RUN "$BIN/qjs$EXT" --help 2>&1 | head -1 || true
           if [ "$RUNNER_OS" = "macOS" ]; then
             if [ "${{ matrix.platform.target }}" = "x86_64-apple-darwin" ]; then
               # A static build: anything outside the system libraries is a
               # dylib that will not exist on the user's machine.
-              if otool -L "$BIN/ffmpeg" | grep -qE "^[[:space:]]+/(opt|usr/local)/"; then
-                echo "Intel ffmpeg is not static" >&2
-                otool -L "$BIN/ffmpeg" >&2
-                exit 1
-              fi
-            elif otool -L "$BIN/ffmpeg" | grep -qE "/opt/homebrew|/usr/local/(opt|Cellar)"; then
-              echo "ffmpeg still links to Homebrew paths; it would not run elsewhere" >&2
-              otool -L "$BIN/ffmpeg" >&2
-              exit 1
+              for tool in ffmpeg ffprobe; do
+                if otool -L "$BIN/$tool" | grep -qE "^[[:space:]]+/(opt|usr/local)/"; then
+                  echo "Intel $tool is not static" >&2
+                  otool -L "$BIN/$tool" >&2
+                  exit 1
+                fi
+              done
+            else
+              for tool in ffmpeg ffprobe; do
+                if otool -L "$BIN/$tool" | grep -qE "/opt/homebrew|/usr/local/(opt|Cellar)"; then
+                  echo "$tool still links to Homebrew paths; it would not run elsewhere" >&2
+                  otool -L "$BIN/$tool" >&2
+                  exit 1
+                fi
+              done
             fi
           fi
           du -sh "$BIN"

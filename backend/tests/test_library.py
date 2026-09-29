@@ -1,5 +1,6 @@
 """The on-disk library: scan, tag reading, jail, streaming."""
 
+import pytest
 import struct
 import wave
 
@@ -212,3 +213,31 @@ def test_a_synced_sidecar_still_answers_with_the_words(monkeypatch, tmp_path):
     body = client.get(f"/api/library/lyrics/{ids['No Tags Here']}").json()
     assert "[00:04.50]" in body["synced"]
     assert body["plain"] == "one\ntwo"  # timestamps and [ar:] stripped
+
+
+@pytest.mark.skipif(__import__("shutil").which("ffmpeg") is None, reason="needs ffmpeg")
+def test_an_anime_episode_is_not_a_library_track(tmp_path):
+    import subprocess
+
+    subprocess.run(
+        ["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x90:rate=5",
+         "-f", "lavfi", "-i", "sine", "-t", "1", "-c:v", "libx264", "-c:a", "aac",
+         "-shortest", str(tmp_path / "Show - Episode 1.mp4")],
+        check=True,
+    )
+    subprocess.run(
+        ["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "sine", "-t", "1",
+         "-c:a", "aac", str(tmp_path / "Artist - Song.mp4")],
+        check=True,
+    )
+    titles = [t.title for t in library.scan(tmp_path)]
+    assert len(titles) == 1 and "Episode" not in titles[0]
+
+
+def test_the_videos_folder_is_not_scanned(tmp_path, monkeypatch):
+    music = tmp_path / "Music"
+    videos = music / "Anime"
+    videos.mkdir(parents=True)
+    (videos / "Show - 01.m4a").write_bytes(b"not really audio")
+    monkeypatch.setattr(jobs, "VIDEO_DOWNLOADS_DIR", videos)
+    assert library.scan(music) == []

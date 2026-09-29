@@ -533,7 +533,10 @@ class NyaaProvider:
     streams_hls = False
 
     def available(self) -> bool:
-        return True  # keyless and free; no credentials
+        # Keyless and free — but a machine with no torrent engine (a desktop
+        # build without libtorrent or aria2c) can't fetch anything, and
+        # skipping it up front beats failing every episode on it.
+        return _has_torrent_client()
 
     def resolve(
         self, title: str, year: int | None, anilist_id: int | None = None
@@ -1506,6 +1509,20 @@ def _lt_run(params, on_progress: Callable[[float], None],
             log.debug("libtorrent teardown failed", exc_info=True)
 
 
+_torrent_client_known: bool | None = None
+
+
+def _has_torrent_client() -> bool:
+    global _torrent_client_known
+    if _torrent_client_known is None:
+        try:
+            _pick_torrent_client()
+            _torrent_client_known = True
+        except DownloadError:
+            _torrent_client_known = False
+    return _torrent_client_known or bool(shutil.which("aria2c"))
+
+
 def _pick_torrent_client() -> str:
     """Prefer aria2c (simplest, no Python-version wheel issues); else libtorrent."""
     if shutil.which("aria2c"):
@@ -1514,7 +1531,7 @@ def _pick_torrent_client() -> str:
         import libtorrent  # noqa: F401
 
         return "libtorrent"
-    except ImportError:
+    except Exception:  # noqa: BLE001 — ImportError, or a native lib that won't load
         raise DownloadError(
             "No torrent client available — install aria2c or the libtorrent Python package."
         )

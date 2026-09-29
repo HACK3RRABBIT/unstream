@@ -16,6 +16,8 @@ description = "Every command Unstream Desktop registers in its invoke handler."
 commands.allow = [
   "get_downloads_dir",
   "set_downloads_dir",
+  "get_video_downloads_dir",
+  "set_video_downloads_dir",
   "set_cookies_from_browser",
   "set_proxy",
   "get_desktop_info",

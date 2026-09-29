@@ -15,7 +15,19 @@ hiddenimports = [
     "uvicorn.lifespan.off",
     "uvicorn.logging",
     "sqlite3",
+    # Imported only when first needed: httpcore loads socksio for a SOCKS
+    # proxy (the desktop's VPN setting), and the Nyaa provider loads
+    # libtorrent when a torrent starts. Named here so the bundle never
+    # depends on the analysis spotting a function-level import.
+    "socksio",
 ]
+
+try:
+    import libtorrent  # noqa: F401 — absent on builds with no wheel (see pyproject)
+
+    hiddenimports.append("libtorrent")
+except ImportError:
+    pass
 
 for pkg in ("yt_dlp", "yt_dlp_plugins", "uvicorn", "fastapi", "starlette", "mutagen", "certifi"):
     pkg_datas, pkg_binaries, pkg_hidden = collect_all(pkg)

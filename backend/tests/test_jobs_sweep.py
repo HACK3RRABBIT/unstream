@@ -294,3 +294,38 @@ def test_check_disk_off_when_zero(downloads, monkeypatch):
     )
 
     jobs._check_disk()
+
+
+def _mark(path):
+    """Drop the job marker as start() does — before the files, so as old."""
+    when = (path / "track.mp3").stat().st_mtime
+    marker = path / jobs.JOB_MARKER
+    marker.touch()
+    for target in (marker, path):
+        os.utime(target, (when, when))
+
+
+def test_a_season_named_job_folder_is_swept_but_an_unmarked_one_is_not(downloads, monkeypatch):
+    """Job folders are named after the album or season ("Frieren — Season 1"),
+    which no id-shape check can recognise — and after a restart there is no
+    in-memory job to vouch for them. The marker a job drops is what does."""
+    monkeypatch.setattr(jobs, "DOWNLOAD_RETENTION_HOURS", 1)
+    ours = make_job_dir(downloads, "Frieren — Season 1", age_hours=2)
+    _mark(ours)
+    theirs = make_job_dir(downloads, "My Anime Collection", age_hours=2)
+
+    assert jobs._sweep(ttl_hours=0, max_bytes=0) == 1
+    assert not ours.exists()
+    assert theirs.exists()
+
+
+def test_episodes_go_to_the_videos_folder_and_are_swept_there(downloads, tmp_path_factory, monkeypatch):
+    videos = tmp_path_factory.mktemp("Videos")
+    monkeypatch.setattr(jobs, "VIDEO_DOWNLOADS_DIR", videos)
+    monkeypatch.setattr(jobs, "DOWNLOAD_RETENTION_HOURS", 1)
+    assert jobs.Job(id="a", name="x", folder_name="Show — Season 1", video=True).dir == videos / "Show — Season 1"
+    assert jobs.Job(id="b", name="x", folder_name="Album").dir == downloads / "Album"
+    old = make_job_dir(videos, "Show — Season 1", age_hours=2)
+    _mark(old)
+    assert jobs._sweep(ttl_hours=0, max_bytes=0) == 1
+    assert not old.exists()

@@ -241,6 +241,26 @@ ffmpeg's `-map 0:s:N` wants the **per-type** subtitle index (ffprobe reports the
 global one), and real fansub language tags carry a title (`2,eng,English`) that
 a naive `eng` match silently failed on.
 
+### Anime on the desktop
+
+The desktop sidecar carries the same pipeline, with three differences:
+
+- **Where episodes go.** `UNSTREAM_VIDEO_DOWNLOADS_DIR` (the OS Videos
+  folder by default, its own picker in Settings) — a 700 MB episode in the
+  music folder showed up in the offline library as a nameless track.
+- **Tools.** `ffprobe` ships beside `ffmpeg` (it is how the served
+  resolution and embedded subtitle tracks are read; `ffmpeg -i` is the
+  fallback probe). Torrents run on libtorrent from the Python bundle; no
+  wheel exists for Windows on ARM or Intel macOS < 15, so the former bundles
+  aria2c (x64, emulated) and the latter has no torrent engine — Nyaa reports
+  itself unavailable there and the chain moves on.
+- **The connection setting applies.** Every anime request goes through
+  `net` (httpx included), and an explicit proxy is handed to libtorrent too
+  (SOCKS5 carries trackers, DHT and peers). The automatic mode's system
+  proxy is not forced onto torrents: it is usually an HTTP proxy for
+  browsers, and routing every peer through it would break swarms that work
+  directly.
+
 ### Known limitations
 
 - Non-zero-padded episode lists (`1 2 3`) and `S01E01 S01E02` forms are not

@@ -665,12 +665,15 @@ def job_path(job_id: str) -> dict:
         raise HTTPException(status_code=404, detail="Unknown job")
     return {
         "dir": str(job.dir.resolve()),
-        "downloads_dir": str(jobs.DOWNLOADS_DIR.resolve()),
+        # The root this job wrote into — the videos folder for an episode.
+        "downloads_dir": str(job.dir.parent.resolve()),
     }
 
 
 class DesktopConfigUpdate(BaseModel):
     downloads_dir: str | None = None
+    # Where anime episodes go (see jobs.VIDEO_DOWNLOADS_DIR).
+    video_downloads_dir: str | None = None
     # Browser to read YouTube cookies from (see app/ytdlp.py). Empty clears.
     cookies_from_browser: str | None = None
     # "system", "off", or a proxy URL (see app/net.py).
@@ -680,6 +683,7 @@ class DesktopConfigUpdate(BaseModel):
 def _desktop_config() -> dict:
     return {
         "downloads_dir": str(jobs.DOWNLOADS_DIR.resolve()),
+        "video_downloads_dir": str(jobs.video_downloads_dir().resolve()),
         "cookies_from_browser": ytdlp.cookies_from_browser() or None,
         "proxy": net.setting(),
         "system_proxy": net.detect_system(),
@@ -700,6 +704,8 @@ def update_desktop_config(payload: DesktopConfigUpdate) -> dict:
             raise HTTPException(status_code=400, detail=f"Bad proxy: {exc}")
     if payload.downloads_dir:
         jobs.set_downloads_dir(payload.downloads_dir)
+    if payload.video_downloads_dir:
+        jobs.set_video_downloads_dir(payload.video_downloads_dir)
     if payload.cookies_from_browser is not None:
         try:
             ytdlp.set_cookies_from_browser(payload.cookies_from_browser)

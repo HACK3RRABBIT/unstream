@@ -32,6 +32,7 @@ const fa: Messages = {
     open: 'باز کردن تنظیمات',
     close: 'بستن تنظیمات',
     downloadsFolder: 'پوشه دانلودها',
+    videosFolder: 'پوشه انیمه',
     downloadsLocation: 'محل ذخیره‌ی دانلودها',
     changeFolder: 'تغییر پوشه',
     openInFinder: 'باز کردن پوشه',
@@ -203,6 +204,8 @@ const fa: Messages = {
     audioDefaultsHint: 'این گزینه‌ها روی همه دانلودهای جدید اعمال می‌شوند.',
     languageHint: 'زبان و جهت نمایش نوشته‌ها در آنستریم را انتخاب کن.',
     downloadsFolderHint: 'آلبوم‌ها و آهنگ‌های دانلودشده داخل این پوشه مرتب می‌شوند.',
+    videosFolderHint:
+      'قسمت‌های انیمه اینجا ذخیره می‌شوند، هر فصل در یک پوشه — جدا از آهنگ‌هات، تا توی کتابخانه نیان.',
     about: 'درباره آنستریم',
     appName: 'آنستریم دسکتاپ',
     newVersion: 'نسخه جدید در دسترس است:',

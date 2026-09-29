@@ -36,6 +36,7 @@ const en = {
     open: 'Open settings',
     close: 'Close settings',
     downloadsFolder: 'Downloads folder',
+    videosFolder: 'Anime folder',
     downloadsLocation: 'Download destination',
     changeFolder: 'Change folder',
     openInFinder: 'Open folder',
@@ -223,6 +224,8 @@ const en = {
     audioDefaultsHint: 'These options apply to every new download.',
     languageHint: 'Choose the language and reading direction used throughout Unstream.',
     downloadsFolderHint: 'Finished albums and tracks are organized inside this folder.',
+    videosFolderHint:
+      'Anime episodes are saved here, one folder per season — apart from your music, so they never show up in the library.',
     about: 'About Unstream',
     appName: 'Unstream Desktop',
     newVersion: 'New version available:',

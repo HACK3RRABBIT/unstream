@@ -16,6 +16,9 @@ pub struct AppState {
     pub backend_child: Arc<Mutex<Option<Child>>>,
     pub port: Arc<Mutex<u16>>,
     pub downloads_dir: Arc<Mutex<PathBuf>>,
+    /// Where anime episodes go — kept apart from the music folder, which the
+    /// offline library scans as a shelf of songs.
+    pub video_downloads_dir: Arc<Mutex<PathBuf>>,
     pub app_data_dir: Arc<Mutex<PathBuf>>,
     /// Set once the sidecar answers /health and the main window is live.
     /// Links arriving before that are queued in `pending_link` instead.
@@ -26,6 +29,8 @@ pub struct AppState {
 #[derive(Serialize, Deserialize, Default, Clone)]
 struct SavedSettings {
     pub downloads_dir: Option<String>,
+    #[serde(default)]
+    pub video_downloads_dir: Option<String>,
     pub cookies_from_browser: Option<String>,
     /// "system", "off", or a proxy URL — see `backend/app/net.py`.
     pub proxy: Option<String>,
@@ -67,6 +72,12 @@ fn choose_port(saved: Option<u16>) -> u16 {
 fn get_default_downloads_dir() -> PathBuf {
     dirs::audio_dir()
         .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")).join("Music"))
+        .join("Unstream")
+}
+
+fn get_default_video_downloads_dir() -> PathBuf {
+    dirs::video_dir()
+        .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")).join("Videos"))
         .join("Unstream")
 }
 
@@ -279,10 +290,12 @@ fn spawn_backend(
         .unwrap_or_else(|| PathBuf::from("."))
         .join("Unstream");
     let downloads_dir = state.downloads_dir.lock().unwrap().clone();
+    let video_downloads_dir = state.video_downloads_dir.lock().unwrap().clone();
 
     let _ = fs::create_dir_all(&app_data_dir);
     let _ = fs::create_dir_all(&app_cache_dir);
     let _ = fs::create_dir_all(&downloads_dir);
+    let _ = fs::create_dir_all(&video_downloads_dir);
 
     let path_sep = if cfg!(windows) { ";" } else { ":" };
     let current_path = std::env::var("PATH").unwrap_or_default();
@@ -341,6 +354,10 @@ fn spawn_backend(
         .env(
             "UNSTREAM_DOWNLOADS_DIR",
             downloads_dir.to_str().unwrap_or_default(),
+        )
+        .env(
+            "UNSTREAM_VIDEO_DOWNLOADS_DIR",
+            video_downloads_dir.to_str().unwrap_or_default(),
         )
         .env("DOWNLOADS_TTL_HOURS", "0")
         .env("MAX_DOWNLOADS_GB", "0")
@@ -473,6 +490,28 @@ fn set_downloads_dir(
 }
 
 #[tauri::command]
+fn get_video_downloads_dir(state: State<AppState>) -> String {
+    state.video_downloads_dir.lock().unwrap().to_string_lossy().to_string()
+}
+
+#[tauri::command]
+fn set_video_downloads_dir(
+    path: String,
+    state: State<AppState>,
+) -> Result<(), String> {
+    let new_path = PathBuf::from(&path);
+    if !new_path.is_dir() {
+        fs::create_dir_all(&new_path).map_err(|e| e.to_string())?;
+    }
+    *state.video_downloads_dir.lock().unwrap() = new_path;
+
+    let app_data_dir = state.app_data_dir.lock().unwrap().clone();
+    let mut settings = load_saved_settings(&app_data_dir);
+    settings.video_downloads_dir = Some(path);
+    save_settings(&app_data_dir, &settings)
+}
+
+#[tauri::command]
 fn set_cookies_from_browser(
     browser: String,
     state: State<AppState>,
@@ -497,10 +536,12 @@ fn set_proxy(proxy: String, state: State<AppState>) -> Result<(), String> {
 fn get_desktop_info(state: State<AppState>) -> serde_json::Value {
     let port = *state.port.lock().unwrap();
     let downloads_dir = state.downloads_dir.lock().unwrap().to_string_lossy().to_string();
+    let video_downloads_dir = state.video_downloads_dir.lock().unwrap().to_string_lossy().to_string();
     serde_json::json!({
         "isDesktop": true,
         "port": port,
         "downloadsDir": downloads_dir,
+        "videoDownloadsDir": video_downloads_dir,
         "version": env!("CARGO_PKG_VERSION"),
     })
 }
@@ -702,6 +743,11 @@ pub fn run() {
         .clone()
         .map(PathBuf::from)
         .unwrap_or_else(get_default_downloads_dir);
+    let initial_video_downloads_dir = saved_settings
+        .video_downloads_dir
+        .clone()
+        .map(PathBuf::from)
+        .unwrap_or_else(get_default_video_downloads_dir);
 
     // Picked before the builder so the window, the sidecar and the saved copy
     // all agree on one port for the whole run.
@@ -714,6 +760,7 @@ pub fn run() {
 
     *app_state.app_data_dir.lock().unwrap() = app_data_dir;
     *app_state.downloads_dir.lock().unwrap() = initial_downloads_dir;
+    *app_state.video_downloads_dir.lock().unwrap() = initial_video_downloads_dir;
     *app_state.port.lock().unwrap() = port;
 
     let app_child_cleanup = app_state.backend_child.clone();
@@ -809,6 +856,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_downloads_dir,
             set_downloads_dir,
+            get_video_downloads_dir,
+            set_video_downloads_dir,
             set_cookies_from_browser,
             set_proxy,
             get_desktop_info,

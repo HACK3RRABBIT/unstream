@@ -11,7 +11,11 @@ dependencies = [
     "certifi>=2026.7.22",
     "fastapi>=0.139.0",
     "httpx[socks]>=0.28",
-    "libtorrent>=2.0.11; python_version < '3.14'",  # torrent engine for Nyaa
+    # Torrent engine for Nyaa. No wheel exists for Windows on ARM or for Intel
+    # macOS before 15 (the desktop builds those on runners that would have to
+    # compile it from source); those builds bundle aria2c instead, or run
+    # without torrents.
+    "libtorrent>=2.0.11; python_version < '3.14' and (sys_platform != 'win32' or platform_machine != 'ARM64') and (sys_platform != 'darwin' or platform_machine != 'x86_64')",
     "mutagen>=1.48.1",
     "pycryptodome>=3.20",
     "uvicorn[standard]>=0.51.0",

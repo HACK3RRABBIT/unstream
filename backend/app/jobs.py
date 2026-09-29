@@ -43,6 +43,41 @@ def set_downloads_dir(path: str | Path) -> str:
     DOWNLOADS_DIR = p
     return str(DOWNLOADS_DIR)
 
+
+# Where anime episodes land. Unset, they share DOWNLOADS_DIR (a server has one
+# download root). The desktop points it at the OS Videos folder: a 700 MB
+# episode in the music folder is not music, and the offline library scans
+# that folder as a record shelf.
+_video_dir_env = os.getenv("UNSTREAM_VIDEO_DOWNLOADS_DIR", "")
+VIDEO_DOWNLOADS_DIR: Path | None = Path(_video_dir_env) if _video_dir_env else None
+
+
+def video_downloads_dir() -> Path:
+    return VIDEO_DOWNLOADS_DIR or DOWNLOADS_DIR
+
+
+def set_video_downloads_dir(path: str | Path) -> str:
+    global VIDEO_DOWNLOADS_DIR
+    p = Path(path).resolve()
+    p.mkdir(parents=True, exist_ok=True)
+    VIDEO_DOWNLOADS_DIR = p
+    return str(VIDEO_DOWNLOADS_DIR)
+
+
+def _download_roots() -> list[Path]:
+    """Every folder jobs write into (one, unless videos have their own)."""
+    roots = [DOWNLOADS_DIR]
+    if VIDEO_DOWNLOADS_DIR is not None and VIDEO_DOWNLOADS_DIR.resolve() != DOWNLOADS_DIR.resolve():
+        roots.append(VIDEO_DOWNLOADS_DIR)
+    return roots
+
+
+# Dropped into a job folder the sweeper may later delete. Job folders are
+# named after the album or season, so a name alone can't tell one from a
+# folder the owner made — and one that survives a restart has no in-memory
+# job left to vouch for it.
+JOB_MARKER = ".unstream-job"
+
 # 0 keeps finished downloads forever. The default suits a server whose disk
 # is shared with strangers; it is the wrong default for someone downloading
 # to their own machine, which is why it is the first thing self-hosters set.
@@ -168,11 +203,13 @@ class Job:
     stopped: threading.Event = field(default_factory=threading.Event)
 
     folder_name: str = ""
+    # Episodes (media="video") go to the videos folder — see VIDEO_DOWNLOADS_DIR.
+    video: bool = False
 
     @property
     def dir(self) -> Path:
         target = self.folder_name or self.id
-        return DOWNLOADS_DIR / target
+        return (video_downloads_dir() if self.video else DOWNLOADS_DIR) / target
 
     @property
     def finished(self) -> bool:
@@ -375,7 +412,7 @@ def _run_track(job: Job, state: TrackState, generation: int) -> None:
         )
 
 
-def _check_disk() -> None:
+def _check_disk(root: Path | None = None) -> None:
     """Refuse to start into a nearly-full filesystem.
 
     Bails out before any provider fetch or worker is spawned: a 700 MB episode
@@ -383,9 +420,10 @@ def _check_disk() -> None:
     download time gets a reason instead of the server silently filling up.
     When MIN_FREE_DISK_MB <= 0 the check is off.
     """
-    if MIN_FREE_DISK_MB <= 0 or not DOWNLOADS_DIR.exists():
+    root = root or DOWNLOADS_DIR
+    if MIN_FREE_DISK_MB <= 0 or not root.exists():
         return
-    free_bytes = shutil.disk_usage(DOWNLOADS_DIR).free
+    free_bytes = shutil.disk_usage(root).free
     if free_bytes < MIN_FREE_DISK_MB * 1024**2:
         raise DiskFullError(
             f"Not enough free disk to start a download "
@@ -402,7 +440,8 @@ def start(
     owner: str = "",
     visitor: str = "",
 ) -> Job:
-    _check_disk()
+    video = bool(tracks) and tracks[0].media == "video"
+    _check_disk(video_downloads_dir() if video else DOWNLOADS_DIR)
     folder = downloader.safe_filename(name) or uuid.uuid4().hex[:12]
     job = Job(
         id=uuid.uuid4().hex[:12],
@@ -412,7 +451,14 @@ def start(
         embed_lyrics=embed_lyrics,
         owner=owner,
         visitor=visitor,
+        video=video,
     )
+    if _sweeping_enabled():
+        try:
+            job.dir.mkdir(parents=True, exist_ok=True)
+            (job.dir / JOB_MARKER).touch()
+        except OSError:
+            pass  # the download itself will report an unwritable folder
     # Two different tracks can share "Artist - Title" (playlist duplicates,
     # remastered copies). Concurrent downloads to one filename truncate each
     # other mid-conversion, so make every stem unique up front.
@@ -640,11 +686,7 @@ def _sweep(
 
     Returns how many job directories were removed.
     """
-    if ttl_hours <= 0 and max_bytes <= 0 and (
-        DOWNLOAD_RETENTION_HOURS <= 0 and DELIVERED_RETENTION_HOURS <= 0
-    ):
-        return 0
-    if not DOWNLOADS_DIR.exists():
+    if not _sweeping_enabled(ttl_hours, max_bytes):
         return 0
 
     # Fresh cap each pass — a sweep truncated by the log limit must not
@@ -657,16 +699,18 @@ def _sweep(
     # (newest mtime, bytes, path) for everything that survived retention.
     survivors: list[tuple[float, int, Path]] = []
 
-    for path in DOWNLOADS_DIR.iterdir():
-        if not path.is_dir() or not path.name.isalnum():
-            # A stray non-directory (a user's file dropped in the root, a
-            # half-swept left-over) is out of scope: never delete something
-            # the app did not generate inside a named job folder.
-            continue
+    for path in _job_dirs():
         job = _jobs.get(path.name)
         if not job:
             # Check by folder_name
             job = next((j for j in _jobs.values() if j.folder_name == path.name or j.id == path.name), None)
+        if not job and not path.name.isalnum() and not (path / JOB_MARKER).exists():
+            # Out of scope: a folder the owner made in the download root.
+            # Only a live job, a bare job id, or a folder carrying the job
+            # marker is ever deleted. (Checking the id shape alone skipped
+            # every album- or season-named job folder, so they were never
+            # swept at all.)
+            continue
         if job and not job.finished:
             continue  # never pull files out from under a running job
 
@@ -762,6 +806,31 @@ def _delivered_job(job: "Job | None") -> bool:
         return False  # an orphan's fate is decided by the undelivered clock
     with job.lock:
         return any(s.delivered for s in job.tracks.values() if s.status == "done")
+
+
+def _sweeping_enabled(
+    ttl_hours: float | None = None, max_bytes: int | None = None
+) -> bool:
+    ttl = DOWNLOADS_TTL_HOURS if ttl_hours is None else ttl_hours
+    cap = DOWNLOADS_MAX_BYTES if max_bytes is None else max_bytes
+    return not (
+        ttl <= 0 and cap <= 0
+        and DOWNLOAD_RETENTION_HOURS <= 0 and DELIVERED_RETENTION_HOURS <= 0
+    )
+
+
+def _job_dirs():
+    """Every directory directly under the download roots."""
+    for root in _download_roots():
+        if not root.exists():
+            continue
+        try:
+            entries = list(root.iterdir())
+        except OSError:
+            continue
+        for path in entries:
+            if path.is_dir():
+                yield path
 
 
 def start_sweeper() -> None:

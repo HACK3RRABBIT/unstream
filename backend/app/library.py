@@ -255,11 +255,63 @@ def scan(root: Path | None = None) -> list[LibraryTrack]:
     return tracks
 
 
+def _is_video_mp4(path: str) -> bool:
+    """Does this .mp4 carry a picture track — an anime episode, not a song?
+
+    Read from the atom tree's handler types (`hdlr` = "vide"), which mutagen
+    walks without loading any media, so a 700 MB episode costs a few reads.
+    An unreadable file is left to the tag reader to judge.
+    """
+    from mutagen.mp4 import Atoms
+
+    try:
+        with open(path, "rb") as handle:
+            atoms = Atoms(handle)
+            moov = atoms[b"moov"]
+            for trak in moov.findall(b"trak"):
+                try:
+                    hdlr = trak[b"mdia", b"hdlr"]
+                except KeyError:
+                    continue
+                handle.seek(hdlr.offset + 16)
+                if handle.read(4) == b"vide":
+                    return True
+    except Exception:  # noqa: BLE001 — not an mp4 we can read
+        return False
+    return False
+
+
+_video_cache: dict[str, tuple[float, int, bool]] = {}
+
+
+def _video_cached(entry) -> bool:
+    """`_is_video_mp4`, remembered until the file changes."""
+    try:
+        st = entry.stat()
+    except OSError:
+        return False
+    hit = _video_cache.get(entry.path)
+    if hit is not None and hit[0] == st.st_mtime and hit[1] == st.st_size:
+        return hit[2]
+    verdict = _is_video_mp4(entry.path)
+    if len(_video_cache) > 20_000:
+        _video_cache.clear()
+    _video_cache[entry.path] = (st.st_mtime, st.st_size, verdict)
+    return verdict
+
+
 def _walk(base: Path):
-    """Audio files under `base`, depth-first, skipping what we can't read."""
+    """Audio files under `base`, depth-first, skipping what we can't read.
+
+    The anime videos folder is never entered, and a video .mp4 is not a track
+    even when the two folders are one.
+    """
     stack = [base]
+    videos = jobs.VIDEO_DOWNLOADS_DIR.resolve() if jobs.VIDEO_DOWNLOADS_DIR else None
     while stack:
         current = stack.pop()
+        if videos is not None and current != base and current.resolve() == videos:
+            continue
         try:
             with os.scandir(current) as it:
                 for entry in it:
@@ -267,6 +319,8 @@ def _walk(base: Path):
                         if entry.is_dir(follow_symlinks=False):
                             stack.append(Path(entry.path))
                         elif entry.is_file() and Path(entry.name).suffix.lower() in _EXTS:
+                            if entry.name.lower().endswith(".mp4") and _video_cached(entry):
+                                continue
                             yield entry
                     except OSError:
                         continue

@@ -104,6 +104,48 @@ export async function setDownloadsDir(path: string): Promise<boolean> {
   }
 }
 
+/** Where anime episodes are saved — a folder of its own, since the offline
+ *  library reads the music folder as a shelf of songs. */
+export async function getVideoDownloadsDir(): Promise<string> {
+  if (!isDesktop()) return ''
+  try {
+    const fromTauri = await invoke<string>('get_video_downloads_dir')
+    if (fromTauri) return fromTauri
+  } catch {
+    // an older shell without the command: ask the backend instead
+  }
+  try {
+    const res = await fetch('/api/desktop/config')
+    if (res.ok) {
+      const data = await res.json()
+      return data.video_downloads_dir || ''
+    }
+  } catch {
+    // ignore
+  }
+  return ''
+}
+
+export async function setVideoDownloadsDir(path: string): Promise<boolean> {
+  if (!isDesktop()) return false
+  try {
+    await invoke('set_video_downloads_dir', { path })
+  } catch (err) {
+    console.error('Failed to set videos dir in Tauri:', err)
+  }
+  try {
+    const res = await fetch('/api/desktop/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ video_downloads_dir: path }),
+    })
+    return res.ok
+  } catch (err) {
+    console.error('Failed to sync videos dir to backend:', err)
+    return false
+  }
+}
+
 /** What reading the chosen browser's cookie store turned up. `ok` false means
  *  the store could not be opened at all, and the backend has stopped handing
  *  it to yt-dlp; `ok` with `signed_in` false means it opened but holds no
@@ -270,6 +312,21 @@ export async function pickDownloadsDir(): Promise<string | null> {
   }
 }
 
+export async function pickVideoDownloadsDir(): Promise<string | null> {
+  if (!isDesktop()) return null
+  try {
+    const selected = await open({ directory: true, multiple: false })
+    if (typeof selected === 'string') {
+      await setVideoDownloadsDir(selected)
+      return selected
+    }
+    return null
+  } catch (err) {
+    console.error('Failed to pick directory:', err)
+    return null
+  }
+}
+
 export async function revealFile(filePath: string): Promise<void> {
   if (!isDesktop() || !filePath) return
   try {
@@ -292,6 +349,7 @@ export interface DesktopInfo {
   isDesktop: boolean
   port: number
   downloadsDir: string
+  videoDownloadsDir?: string
   version: string
 }
 
