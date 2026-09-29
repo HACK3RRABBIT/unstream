@@ -81,6 +81,9 @@ class AniMedia:
     # (relationType, mediaId, format) — format included so search can tell a
     # series' sequel from a movie without an extra fetch.
     relations: list[tuple[str, int, str]] = field(default_factory=list)
+    # (year, month, day) the season started airing; unknown parts are None.
+    # Two cours of one year are ordered by this, not by their titles.
+    start_date: tuple[int | None, int | None, int | None] = (None, None, None)
 
     @property
     def best_title(self) -> str:
@@ -117,6 +120,7 @@ query ($search: String, $id: Int, $idIn: [Int], $page: Int, $perPage: Int, $type
       format
       episodes
       seasonYear
+      startDate { year month day }
       status
       coverImage { large }
       description
@@ -156,6 +160,11 @@ def _media_from_node(node: dict) -> AniMedia:
         description=_strip_html(node.get("description")),
         next_airing_episode=(node.get("nextAiringEpisode") or {}).get("episode"),
         relations=relations,
+        start_date=(
+            (node.get("startDate") or {}).get("year"),
+            (node.get("startDate") or {}).get("month"),
+            (node.get("startDate") or {}).get("day"),
+        ),
     )
 
 
@@ -183,6 +192,10 @@ def _gql(variables: dict) -> list[dict]:
             data = json.loads(resp.read().decode("utf-8"))
     except URLError as exc:
         raise ProviderError(f"Could not reach AniList: {exc.reason}") from exc
+    except OSError as exc:
+        # A read that times out or a connection reset mid-response is not a
+        # URLError, and used to escape as a 500.
+        raise ProviderError(f"Could not reach AniList: {exc}") from exc
     except json.JSONDecodeError as exc:
         raise ProviderError("AniList returned an unreadable response.") from exc
 
@@ -335,11 +348,16 @@ def franchise(media_id: int) -> list[AniMedia]:
         tv = chain
     else:
         tv = [m for m in chain if m.format == "TV"]
+    # Within a year, the air date decides: "Part 2" of a split cour aired
+    # after Part 1 whatever the titles say, and the position is the season
+    # number the Nyaa search asks for.
     ordered = sorted(
         tv,
         key=lambda m: (
             m.season_year is None,
-            m.season_year or 0,
+            m.season_year or m.start_date[0] or 0,
+            m.start_date[1] or 13,
+            m.start_date[2] or 32,
             m.best_title.lower(),
         ),
     )

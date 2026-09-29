@@ -335,7 +335,9 @@ def test_nyaa_asks_its_two_query_forms_together(monkeypatch):
     )
     with pytest.raises(ProviderError):
         nyaa.NyaaProvider()._search_episode(src, 1100)
-    assert sorted(asked) == ["One Piece 1100", "One Piece S01E1100"]
+    # Both episode forms, then — nothing seeded — the show itself, where its
+    # season packs and batches live.
+    assert sorted(asked) == ["One Piece", "One Piece 1100", "One Piece S01E1100"]
 
 
 def test_nyaa_search_failure_is_never_an_empty_result(monkeypatch):
@@ -1099,7 +1101,7 @@ def test_nyaa_range_separators_are_batches(monkeypatch):
 def test_nyaa_range_first_episode_is_batch(monkeypatch):
     """The first episode of a tilde range is a batch, not a single."""
     html = _nyaa_page(
-        _nyaa_row(1, "[Erai-raws] Naruto Shippuuden - 001 ~ 079 [480p CR]", "seedbatch", 32),
+        _nyaa_row(1, "[Erai-raws] Show - 001 ~ 079 [480p CR]", "seedbatch", 32),
     )
     torrent = _search_page(monkeypatch, html, episode=1, quality="480")
     assert torrent.get("batch") is True

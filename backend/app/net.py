@@ -26,6 +26,8 @@ from concurrent.futures import ThreadPoolExecutor
 from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlsplit
 
+import httpx
+
 SYSTEM = "system"
 OFF = "off"
 
@@ -230,6 +232,64 @@ class _Router(urllib.request.ProxyHandler):
 
 
 urllib.request.install_opener(urllib.request.build_opener(_Router()))
+
+
+# --------------------------------------------------------------------------
+# httpx routing
+#
+# The anime providers speak httpx (connection reuse matters when a season is a
+# few hundred small requests), which never goes through urllib's opener — so
+# they need the same per-request routing, or the proxy setting silently
+# skipped the whole anime section.
+
+
+class _HttpxRouter(httpx.BaseTransport):
+    """An httpx transport that picks the proxy per request from the live
+    setting, keeping one pooled transport per proxy."""
+
+    def __init__(self, **transport_kwargs):
+        self._kwargs = transport_kwargs
+        self._transports: dict[str | None, object] = {}
+        self._lock = threading.Lock()
+
+    def _transport_for(self, url: str):
+        proxy = proxy_for(url) or None
+        with self._lock:
+            transport = self._transports.get(proxy)
+            if transport is None:
+                transport = httpx.HTTPTransport(proxy=proxy, **self._kwargs)
+                self._transports[proxy] = transport
+            return transport
+
+    def handle_request(self, request):
+        return self._transport_for(str(request.url)).handle_request(request)
+
+    def close(self) -> None:
+        with self._lock:
+            transports, self._transports = list(self._transports.values()), {}
+        for transport in transports:
+            transport.close()
+
+
+
+_shared_client = None
+_shared_lock = threading.Lock()
+
+
+def http_client(**kwargs):
+    """An httpx.Client whose every request follows the proxy setting.
+
+    With no arguments, one shared, pooled client for ad-hoc requests; with
+    arguments (headers, timeout, follow_redirects…) a client of its own.
+    """
+    global _shared_client
+    if kwargs:
+        kwargs.setdefault("follow_redirects", True)
+        return httpx.Client(transport=_HttpxRouter(), **kwargs)
+    with _shared_lock:
+        if _shared_client is None:
+            _shared_client = httpx.Client(transport=_HttpxRouter(), follow_redirects=True)
+        return _shared_client
 
 
 # --------------------------------------------------------------------------

@@ -34,6 +34,7 @@ from urllib.parse import quote
 import httpx
 from Crypto.Cipher import AES
 
+from .. import net
 from ..models import ProviderError
 from .providers import EpisodeSource, EpisodeStream
 
@@ -42,7 +43,8 @@ BASE_URL = os.getenv("HIANIME_BASE_URL", "https://hianime.to")
 KEYGEN_URL = os.getenv("HIANIME_KEYGEN_URL", "")
 
 _TIMEOUT = 20
-_client = httpx.Client(
+# Routed through net: the desktop's proxy / VPN setting applies here too.
+_client = net.http_client(
     headers={
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "

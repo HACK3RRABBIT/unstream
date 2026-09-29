@@ -506,7 +506,7 @@ def test_master_heights_parses_resolution_lines(monkeypatch):
         "#EXT-X-STREAM-INF:BANDWIDTH=2000000,RESOLUTION=1920x1080\n"
         "index_1080.m3u8\n"
     )
-    monkeypatch.setattr(anivexa.httpx, "get", lambda *a, **k: _FakeHttp(master))
+    monkeypatch.setattr(anivexa, "_cdn_get", lambda *a, **k: _FakeHttp(master))
     assert anivexa._master_heights("https://cdn/x/master.m3u8", {}) == [720, 1080]
 
 
@@ -521,18 +521,18 @@ def test_master_heights_reports_rungs_not_raw_heights(monkeypatch):
         "#EXT-X-STREAM-INF:BANDWIDTH=2000000,RESOLUTION=1920x804\n"
         "index_1080.m3u8\n"
     )
-    monkeypatch.setattr(anivexa.httpx, "get", lambda *a, **k: _FakeHttp(master))
+    monkeypatch.setattr(anivexa, "_cdn_get", lambda *a, **k: _FakeHttp(master))
     assert anivexa._master_heights("https://cdn/x/master.m3u8", {}) == [720, 1080]
 
 
 def test_master_heights_rejects_non_playlist(monkeypatch):
-    monkeypatch.setattr(anivexa.httpx, "get", lambda *a, **k: _FakeHttp("<html>challenge</html>"))
+    monkeypatch.setattr(anivexa, "_cdn_get", lambda *a, **k: _FakeHttp("<html>challenge</html>"))
     assert anivexa._master_heights("https://cdn/x/master.m3u8", {}) is None
 
 
 def test_master_heights_rejects_slideshow(monkeypatch):
     slideshow = "#EXTM3U\n#EXTINF:5,\nhttps://cdn/x/frame001.jpg\n"
-    monkeypatch.setattr(anivexa.httpx, "get", lambda *a, **k: _FakeHttp(slideshow))
+    monkeypatch.setattr(anivexa, "_cdn_get", lambda *a, **k: _FakeHttp(slideshow))
     assert anivexa._master_heights("https://cdn/x/master.m3u8", {}) == []
 
 
@@ -540,7 +540,7 @@ def test_master_heights_unknown_on_fetch_error(monkeypatch):
     def boom(*a, **k):
         raise Exception("refused")  # noqa: TRY002
 
-    monkeypatch.setattr(anivexa.httpx, "get", boom)
+    monkeypatch.setattr(anivexa, "_cdn_get", boom)
     assert anivexa._master_heights("https://cdn/x/master.m3u8", {}) is None
 
 

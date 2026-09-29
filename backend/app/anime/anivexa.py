@@ -33,6 +33,7 @@ from typing import Callable
 
 import httpx
 
+from .. import net
 from ..models import ProviderError
 from . import quality as quality_rungs
 from .providers import (
@@ -159,6 +160,12 @@ def _internal_status(name: str, anilist_id: int, deadline: float) -> str:
     return "ok" if sub else "unavailable"
 
 
+
+def _cdn_get(url: str, **kwargs):
+    """GET from a streaming source's CDN. Unlike the local sidecar, the CDN is
+    a public host, so it follows the proxy setting like every other request."""
+    return net.http_client().get(url, **kwargs)
+
 def _master_heights(url: str, headers: dict) -> list[int] | None:
     """The resolutions a master playlist actually offers, or None if unreadable.
 
@@ -173,13 +180,7 @@ def _master_heights(url: str, headers: dict) -> list[int] | None:
     fetch failed, which must be treated as UNKNOWN, never as a quality absence.
     """
     try:
-        resp = httpx.get(
-            url,
-            headers=headers or {},
-            timeout=_HTTP_TIMEOUT,
-            follow_redirects=True,
-            trust_env=False,
-        )
+        resp = _cdn_get(url, headers=headers or {}, timeout=_HTTP_TIMEOUT)
         resp.raise_for_status()
         text = resp.text
         if not text.lstrip().startswith("#EXTM3U"):

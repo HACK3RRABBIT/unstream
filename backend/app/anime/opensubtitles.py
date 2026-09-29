@@ -16,8 +16,7 @@ import os
 from pathlib import Path
 from urllib.parse import quote
 
-import httpx
-
+from .. import net
 from .subtitles import parse_subtitles
 
 # The account-level key from opensubtitles.com (free tier). Empty disables the
@@ -26,7 +25,8 @@ API_KEY = os.getenv("OPENSUBTITLES_API_KEY", "")
 BASE_URL = "https://api.opensubtitles.com/api/v1"
 _TIMEOUT = 20
 
-_client = httpx.Client(
+# Routed through net: the desktop's proxy / VPN setting applies here too.
+_client = net.http_client(
     headers={
         "Api-Key": API_KEY,
         "User-Agent": (
@@ -99,12 +99,10 @@ def _download(file_id: str, dest: Path) -> Path | None:
         link = (resp.json() or {}).get("link")
         if not link:
             return None
-        file_resp = httpx.get(
+        file_resp = net.http_client().get(
             link,
             headers={"User-Agent": _client.headers.get("User-Agent", "")},
             timeout=_TIMEOUT,
-            follow_redirects=True,
-            trust_env=False,
         )
         file_resp.raise_for_status()
     except Exception:  # noqa: BLE001

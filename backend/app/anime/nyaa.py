@@ -27,11 +27,14 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import quote
 
-import httpx
+import logging
 
+from .. import net
 from ..downloader import Cancelled, DownloadError
 from ..models import ProviderError
 from .providers import EpisodeSource, EpisodeStream, QualityUnavailable
+
+log = logging.getLogger("unstream.anime.nyaa")
 
 BASE_URL = "https://nyaa.si"
 # The English-translated category filter (f=0 means "no filter", c=1_2 means
@@ -40,7 +43,8 @@ BASE_URL = "https://nyaa.si"
 _CATEGORY_ENGLISH = "1_2"
 
 _TIMEOUT = 25
-_client = httpx.Client(
+# Routed through net: the desktop's proxy / VPN setting applies here too.
+_client = net.http_client(
     headers={
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -266,12 +270,12 @@ _RES_TAG = re.compile(r"(?<![0-9])(\d{3,4})p(?!\d)", re.IGNORECASE)
 _DIM_TAG = re.compile(r"(?<![0-9])(\d{3,4})\s*[x×]\s*(480|720|1080)(?!\d)", re.IGNORECASE)
 
 # A multi-episode range in a release title: two episode-like numbers joined by
-# a dash, en/em dash or tilde, spaces allowed around the separator (001 ~ 079,
+# a dash, en/em dash, tilde, `&` or `+` (1100 & 1101), spaces allowed around the separator (001 ~ 079,
 # 001-079, E01–E06). Either endpoint may carry an E/EP/Episode marker. The
 # digit boundaries keep it from matching inside a longer number, a width
 # (1280x720), or a hash.
 _RANGE_RE = re.compile(
-    r"(?<!\d)(?:EP|Ep|Episode|E)?\s*(\d{1,4})\s*[-–—~]\s*"
+    r"(?<!\d)(?:EP|Ep|Episode|E)?\s*(\d{1,4})\s*[-–—~&+]\s*"
     r"(?:EP|Ep|Episode|E)?\s*(\d{1,4})(?!\d)",
     re.IGNORECASE,
 )
@@ -292,6 +296,155 @@ _MULTI_EP_LIST_RE = re.compile(
     r"(?:\s+|\s*,\s*)"
     r"(?<!\d)(?:0\d{1,3}|(?:EP|Ep|Episode|E)\s*\d{1,4})(?!\d)"
 )
+
+
+# ── Reading a release title ───────────────────────────────────────────────────
+#
+# Release titles carry a lot of numbers that are not episode numbers: a CRC
+# ([EDA405E2] — whose "E2" read as episode 2), codecs (x265, H 264), bit depth,
+# audio channels (AAC2.0), years, frame rates, and season designators
+# ("S2 - 03", "2nd Season", "Season 2"). Matching an episode against the raw
+# title picked a Season 2 episode for a Season 1 request and an unrelated show
+# for a hash; so a title is first *scrubbed* of that noise, its season read
+# out separately, and only then searched for the episode.
+
+_CRC_RE = re.compile(r"[\[(][0-9A-Fa-f]{8}[\])]")
+_NOISE_RE = re.compile(
+    r"(?<![0-9a-z])(?:"
+    r"[xh][ .]?26[45]"  # x264 / H.265 / H 264
+    r"|\d{3,4}[pi]"  # 1080p / 1080i
+    r"|\d{3,4}\s*[x×]\s*\d{3,4}"  # 1920x1080
+    r"|\d{1,2}[- ]?bits?"  # 10bit / 10-Bit
+    r"|(?:aac|ddp?|e-?ac-?3|ac-?3|flac|opus|lpcm|dts|truehd|atmos)\s*\d?(?:\.\d)?"
+    r"|\d\.\d"  # 2.0 / 5.1
+    r"|\d{1,3}(?:\.\d+)?\s*fps"
+    r"|(?:19|20)\d{2}\s*[-–]\s*(?:19|20)\d{2}"  # 2011-2012
+    r"|[(\[](?:19|20)\d{2}[)\]]"  # (2023)
+    r")(?![0-9a-z])",
+    re.IGNORECASE,
+)
+# A season designator, capturing its number: S02E01 (the S02 part), S2 - 03,
+# S01 on its own, "2nd Season", "Season 2" / "Season 02".
+_SEASON_RE = re.compile(
+    r"(?<![0-9a-z])(?:"
+    r"s(?:eason)?\s*0*(\d{1,2})(?=e\d|\s*[-–—+]|[\s\]).,_]|$)"
+    r"|(\d{1,2})(?:st|nd|rd|th)\s+season"
+    r")",
+    re.IGNORECASE,
+)
+_SEASON_SPAN_RE = re.compile(r"(?<![0-9a-z])s0*(\d{1,2})\s*[-–~]\s*s0*(\d{1,2})(?!\d)", re.IGNORECASE)
+# Cour/part/volume numbers name a slice of a season, not an episode.
+_PART_RE = re.compile(r"(?<![0-9a-z])(?:part|cour|vol\.?|volume)\s*\d{1,2}(?!\d)", re.IGNORECASE)
+_DUB_RE = re.compile(r"(?<![a-z])(?:english\s+)?dub(?:bed)?(?![a-z])", re.IGNORECASE)
+_DUAL_AUDIO_RE = re.compile(r"(?:dual|multi)[- ]?audio", re.IGNORECASE)
+
+
+def _scrub(title: str) -> str:
+    """The title with hashes and codec/format numbers blanked out."""
+    return _NOISE_RE.sub(" ", _CRC_RE.sub(" ", title))
+
+
+def _declared_seasons(title: str) -> set[int]:
+    """The season(s) a title says it belongs to; empty when it says none."""
+    clean = _scrub(title)
+    seasons = {int(a or b) for a, b in _SEASON_RE.findall(clean)}
+    for lo, hi in _SEASON_SPAN_RE.findall(clean):
+        lo_i, hi_i = sorted((int(lo), int(hi)))
+        seasons.update(range(lo_i, hi_i + 1))
+    return seasons
+
+
+def _episode_text(title: str) -> str:
+    """The title with every non-episode number removed — what episode
+    markers, ranges and lists are read from."""
+    return _PART_RE.sub(" ", _SEASON_RE.sub(" ", _scrub(title)))
+
+
+def _names_episode(text: str, episode: int) -> tuple[bool, bool]:
+    """(does `text` name this episode, does it name it with a marker).
+
+    `text` is already `_episode_text`-cleaned. A marker is E/EP/Episode/#
+    standing on its own (so a hash's "5E2" never counts); a bare number counts
+    only between delimiters (- 03, (03), 03 [, 03v2).
+    """
+    marker = re.search(
+        rf"(?<![0-9a-z])(?:EP|Episode|E|#)\s*\.?\s*0*{episode}(?:v\d)?(?!\d)",
+        text,
+        re.IGNORECASE,
+    )
+    if marker:
+        return True, True
+    bare = re.search(
+        rf"(?:^|[\s\-–—(\[_])0*{episode}(?:v\d)?\s*(?=[\]\s\-–—,)_]|\.mkv|\.mp4|$)",
+        text,
+    )
+    return bool(bare), False
+
+
+def _tokens(text: str) -> list[str]:
+    import unicodedata
+
+    folded = unicodedata.normalize("NFKD", text)
+    folded = "".join(c for c in folded if not unicodedata.combining(c)).lower()
+    folded = re.sub(r"['’`]", "", folded)  # Journey's / Journey`s / Journeys
+    return re.findall(r"[a-z0-9]+", folded)
+
+
+def _core_title(title: str) -> str:
+    """A show title without its season/part designator — what a release of any
+    season of it still contains."""
+    return re.sub(r"\s+", " ", _PART_RE.sub(" ", _SEASON_RE.sub(" ", _scrub(title)))).strip()
+
+
+def _title_matches(row_title: str, wanted: list[str], full: bool = False) -> bool:
+    """Is this release plausibly of one of the `wanted` shows?
+
+    Every word of a wanted title (season designator aside) must appear in the
+    release title, or the words run together ("DAN DA DAN" / "Dandadan").
+    Nyaa's search is loose — "DAN DA DAN 2" answers with any title containing
+    "dan" — so without this an unrelated show could be downloaded. An empty
+    `wanted` accepts everything. `full` keeps the season designator in the
+    comparison ("Sousou no Frieren 2nd Season" must say "2nd Season").
+    """
+    if not wanted:
+        return True
+    row = _tokens(row_title)
+    row_set = set(row)
+    windows = {
+        "".join(row[i:j]) for i in range(len(row)) for j in range(i + 1, min(len(row), i + 6) + 1)
+    }
+    for title in wanted:
+        words = _tokens(title if full else _core_title(title))
+        if not words:
+            continue
+        if set(words) <= row_set or "".join(words) in windows:
+            return True
+    return False
+
+
+def effective_season(src_season: int, titles: list[str]) -> int:
+    """The season number releases of this entry are labeled with.
+
+    A title that names its own season ("Jujutsu Kaisen 2nd Season") is the
+    better witness than the franchise position, which counts split cours as
+    seasons; otherwise the franchise position is all there is.
+    """
+    for title in titles:
+        declared = _declared_seasons(title)
+        if len(declared) == 1:
+            return next(iter(declared))
+    return src_season
+
+
+def _without_titles(text: str, wanted: list[str]) -> str:
+    """`text` with the show's own name removed, so the "8" of "Kaiju No. 8"
+    or the "100" of "Mob Psycho 100" is never read as an episode number."""
+    for title in wanted:
+        words = _tokens(_core_title(title))
+        if any(w.isdigit() for w in words):
+            pattern = r"[\W_]*".join(re.escape(w) for w in words)
+            text = re.sub(pattern, " ", text, flags=re.IGNORECASE)
+    return text
 
 
 def _title_resolution(title: str) -> str | None:
@@ -316,11 +469,26 @@ def _title_resolution(title: str) -> str | None:
     return None
 
 
+# Below this many seeders a single-episode release is a weak swarm, and a
+# well-seeded batch holding the episode is the faster download.
+_WEAK_SWARM = 5
+
+
 def _best_seeded(candidates: dict[str, dict]) -> dict | None:
-    """Pick the best-scored candidate: a true single-episode marker adds 200."""
+    """Pick the best-scored candidate: a true single-episode marker adds 200,
+    and an English dub (see `_parse_rows`) ranks below every seeded subbed
+    release — it only wins when it is all there is."""
     best = None
-    for t in candidates.values():
-        score = t["seeders"] + (200 if t.get("explicit") else 0)
+    # A dead row (0 seeders) can't be downloaded however well it's named, so
+    # it only competes when nothing is alive — otherwise its marker bonus let
+    # it outrank a live release and the search reported "nothing seeded".
+    live = [t for t in candidates.values() if t["seeders"] > 0]
+    for t in live or candidates.values():
+        score = (
+            t["seeders"]
+            + (200 if t.get("explicit") else 0)
+            - (100_000 if t.get("dub") else 0)
+        )
         if best is None or score > best["score"]:
             best = {**t, "score": score}
     return best
@@ -400,21 +568,44 @@ class NyaaProvider:
         resolution the fansub released.
         """
         title = src.anime_id
-        queries = []
-        if src.season > 0:
-            queries.append(f"{title} S{src.season:02d}E{episode:02d}")
-        queries.append(f"{title} {episode}")
+        queries, season, titles = self._queries(src, episode)
 
         wanted = quality if (quality != "original" and quality.isdigit()) else ""
 
         singles: dict[str, dict] = {}
         batches: dict[str, dict] = {}
         for page in _search_pages(queries):
-            page_singles, page_batches = self._parse_rows(page, episode)
+            page_singles, page_batches = self._parse_rows(page, episode, season, titles)
             for t in page_singles:
                 singles.setdefault(t["torrent_id"], t)
             for t in page_batches:
                 batches.setdefault(t["torrent_id"], t)
+
+        def healthy(rows: dict[str, dict]) -> bool:
+            return any(
+                t["seeders"] >= _WEAK_SWARM
+                and (not wanted or _title_resolution(t["title"]) == wanted)
+                for t in rows.values()
+            )
+
+        if not healthy(singles) and not healthy(batches):
+            # Nothing well-seeded names the episode. An older show's single-episode
+            # releases are often dead while its season packs and batches
+            # ("Show S01 [BD 1080p]", "Show (01-25) (Batch)") are seeded — and
+            # those never answer an episode-number query. Ask for the show
+            # itself and let _parse_rows keep the packs that hold the episode.
+            extra = []
+            for t in titles[:2]:
+                q = _core_title(t)
+                if q and q.lower() not in (x.lower() for x in queries + extra):
+                    extra.append(q)
+            if extra:
+                for page in _search_pages(extra):
+                    page_singles, page_batches = self._parse_rows(page, episode, season, titles)
+                    for t in page_singles:
+                        singles.setdefault(t["torrent_id"], t)
+                    for t in page_batches:
+                        batches.setdefault(t["torrent_id"], t)
 
         # An explicit request accepts only releases that claim that resolution.
         if wanted:
@@ -431,7 +622,15 @@ class NyaaProvider:
 
         best = _best_seeded(singles)
         best_batch = _best_seeded(batches)
-        if (best is None or best["seeders"] == 0) and best_batch is not None:
+        # A batch is extracted file-by-file, so it costs the same bytes as a
+        # single. It wins when there is no live single — or when the single is
+        # barely alive (a couple of seeders can take hours) and the batch has
+        # a healthy swarm.
+        if best_batch is not None and best_batch["seeders"] > 0 and (
+            best is None
+            or best["seeders"] == 0
+            or (best["seeders"] < _WEAK_SWARM and best_batch["seeders"] >= 3 * best["seeders"])
+        ):
             best = {**best_batch, "batch": True}
         if best is None or best["seeders"] == 0:
             if wanted:
@@ -474,11 +673,9 @@ class NyaaProvider:
         title = src.anime_id
         season = src.season
 
+        queries, label_season, titles = self._queries(src, episode)
+
         def probe() -> list[str]:
-            queries = []
-            if season > 0:
-                queries.append(f"{title} S{season:02d}E{episode:02d}")
-            queries.append(f"{title} {episode}")
 
             found: list[str] = []
             emptied: int = 0  # queries that answered a genuine empty search
@@ -497,7 +694,7 @@ class NyaaProvider:
                     inconclusive += 1
                     continue
 
-                singles, batches = self._parse_rows(page, episode)
+                singles, batches = self._parse_rows(page, episode, label_season, titles)
                 for torrent in [*singles, *batches]:
                     # Seeded or not: a 0-seeder row still proves the resolution
                     # was released for this episode. Only the *download* path
@@ -553,29 +750,32 @@ class NyaaProvider:
         return "block"
 
     @staticmethod
-    def _parse_rows(html: str, episode: int) -> tuple[list[dict], list[dict]]:
+    def _parse_rows(
+        html_text: str,
+        episode: int,
+        season: int = 0,
+        titles: list[str] | None = None,
+    ) -> tuple[list[dict], list[dict]]:
         """Parse a Nyaa search page into (single-episode rows, batch rows).
 
         Every row naming the episode is returned (not just the best), so the
-        caller can filter by resolution before choosing. An episode number is
-        "real" when it appears with a delimiter or marker (EP 01, E01, - 001,
-        (001), 001 [) — never as bare digits that could be a hash, a year, or
-        a resolution. A row is a batch when it holds more than one episode: a
-        range (001-574, E01-E06, 001 ~ 079, first/middle/last covered), an
-        explicit `[BATCH]` label, or a space/comma-separated episode list
-        (001 002 003, E01 E02). Batches are kept as an extractable fallback —
-        a single episode is always extracted, never the whole multi-GiB torrent.
-        """
-        # An episode number is "real" when it appears with a delimiter or
-        # marker (EP 01, E01, - 001, (001), 001 [) — never as bare digits
-        # that could be a hash, a year, or a resolution.
-        ep_re = re.compile(
-            rf"(?:EP|Ep|Episode|E|#)\s*0*{episode}(?!\d)"
-            rf"|(?:^|[\s\-–—(\[])\s*0*{episode}\s*(?=[\]\s\-–—,]|$)"
-        )
-        marker = r"(?:EP|Ep|Episode|E|#)\s*0*%d(?!\d)" % episode
+        caller can filter by resolution before choosing. A row is kept only
+        when it is of the wanted show (`titles`, see `_title_matches`), does
+        not declare a different season than `season` (0 = don't check), and
+        names the episode after the title has been scrubbed of hashes, codec
+        numbers and season designators (see `_episode_text`).
 
-        rows = re.findall(r"<tr[^>]*>.*?</tr>", html, re.S)
+        A row is a batch when it holds more than one episode: a range
+        (001-574, E01-E06, 001 ~ 079, 1100 & 1101), an explicit `[BATCH]`
+        label, a space/comma-separated episode list (001 002 003, E01 E02), or
+        a whole-season pack of the requested season (Show S01 [1080p]).
+        Batches are kept as an extractable fallback — a single episode is
+        always extracted, never the whole multi-GiB torrent.
+        """
+        import html as html_lib
+
+        wanted = [t for t in (titles or []) if t]
+        rows = re.findall(r"<tr[^>]*>.*?</tr>", html_text, re.S)
         singles: list[dict] = []
         batches: list[dict] = []
         for row in rows[1:]:  # first row is the header
@@ -586,23 +786,77 @@ class NyaaProvider:
             size_m = re.search(r"([\d.]+\s+(?:GiB|MiB))", row)
             if not title_m or not magnet:
                 continue
-            title = title_m.group(1)
-            ranges = _episode_ranges(title)
-            if not (ep_re.search(title) or any(lo <= episode <= hi for lo, hi in ranges)):
+            title = html_lib.unescape(title_m.group(1))
+            if not _title_matches(title, wanted):
+                continue
+            declared = _declared_seasons(title)
+            if season > 0 and declared and season not in declared:
+                continue  # another season's release of the same show
+            if season > 1 and not declared and not _title_matches(title, wanted, full=True):
+                # "Sousou no Frieren - 03" says no season, so it is the first
+                # season's — a later season's release names it ("2nd Season",
+                # "S2") or carries the later entry's own title.
+                continue
+            text = _without_titles(_episode_text(title), wanted)
+            ranges = _episode_ranges(text)
+            named, explicit = _names_episode(text, episode)
+            in_range = any(lo <= episode <= hi for lo, hi in ranges)
+            batch_tag = bool(_BATCH_TAG_RE.search(title))
+            # A season pack names no episode at all ("Show S01 [BD 1080p]",
+            # "Show (Season 1) (Batch)"). It holds the episode when it is the
+            # requested season's — or, undeclared and tagged a batch, when the
+            # request is for the first season.
+            season_pack = (
+                not named and not ranges
+                and ((season > 0 and season in declared)
+                     or (batch_tag and not declared and season <= 1))
+            )
+            if not (named or in_range or season_pack):
                 continue
             seeders = int(seeders_m.group(1)) if seeders_m else 0
             common = {
                 "title": title,
-                "magnet": magnet.group(1),
+                "magnet": html_lib.unescape(magnet.group(1)),
                 "torrent_id": (view_m.group(1) if view_m else "").rsplit("/", 1)[-1],
                 "seeders": seeders,
                 "size": size_m.group(1) if size_m else "",
+                # An English dub is a different product from the subbed
+                # release the subtitle pipeline expects; it only wins when
+                # nothing else is seeded.
+                "dub": bool(_DUB_RE.search(title)) and not _DUAL_AUDIO_RE.search(title),
             }
-            if ranges or _BATCH_TAG_RE.search(title) or _multi_episode_space_list(title):
+            if ranges or batch_tag or season_pack or _multi_episode_space_list(text):
                 batches.append(common)
             else:
-                singles.append({**common, "explicit": bool(re.search(marker, title))})
+                singles.append({**common, "explicit": explicit})
         return singles, batches
+
+    @staticmethod
+    def _queries(src: EpisodeSource, episode: int) -> tuple[list[str], int, list[str]]:
+        """(search queries, the season releases are labeled with, wanted titles).
+
+        Each title the show is known by (the plan's, then AniList's romaji —
+        fansub groups mostly name releases in romaji) is asked two ways: the
+        SxxExx form under its season-less name, and the zero-padded episode
+        number under its full name ("Sousou no Frieren 03" — the unpadded "3"
+        matched every release that merely contained the show's name).
+        """
+        titles: list[str] = []
+        for t in (src.anime_id, src.anime_title, *src.alt_titles):
+            t = (t or "").strip()
+            if t and t.lower() not in (x.lower() for x in titles):
+                titles.append(t)
+        season = effective_season(src.season, titles)
+        queries: list[str] = []
+        for t in titles[:2]:
+            forms = []
+            if season > 0:
+                forms.append(f"{_core_title(t)} S{season:02d}E{episode:02d}")
+            forms.append(f"{t} {episode:02d}")
+            for q in forms:
+                if q.lower() not in (x.lower() for x in queries):
+                    queries.append(q)
+        return queries, season, titles
 
     def episode_count(self, src: EpisodeSource) -> int | None:
         """Nyaa has no per-show episode registry — the episode number is in
@@ -624,6 +878,7 @@ class NyaaProvider:
             url=torrent["magnet"],
             headers={},
             episode=src.episode,
+            season=effective_season(src.season, [src.anime_id, src.anime_title, *src.alt_titles]),
             batch=torrent.get("batch", False),
             torrent_id=torrent.get("torrent_id", ""),
         )
@@ -669,17 +924,22 @@ class NyaaProvider:
                 raise DownloadError("No video file found in the torrent.")
 
             out = dest.with_name(dest.name + ".mp4")
-            if video.suffix.lower() == ".mp4":
-                video.rename(out)
+            if video.suffix.lower() == ".mp4" and not subs:
+                video.replace(out)
             else:
+                # An mp4 release still goes through the subtitle pass when
+                # subtitles were asked for — Persian is generated from its
+                # English track like any mkv's.
                 self._finalize(video, out, subs or [])
             return out
-        except Exception:
-            import traceback
-
-            raise DownloadError(
-                f"Nyaa download failed: {traceback.format_exc(limit=6)}"
-            ) from None
+        except (Cancelled, QualityUnavailable, DownloadError):
+            # Being called off is not a failure, and a quality verdict must
+            # reach the chain as itself — wrapping either made a cancelled
+            # download try the next provider.
+            raise
+        except Exception as exc:  # noqa: BLE001 — surfaced as a provider failure
+            log.warning("Nyaa download failed", exc_info=True)
+            raise DownloadError(f"Nyaa download failed: {exc}") from exc
         finally:
             # Clean the torrent working directory either way.
             shutil.rmtree(workdir, ignore_errors=True)
@@ -704,14 +964,16 @@ class NyaaProvider:
         torrent_file = workdir / f"batch-{stream.torrent_id}.torrent"
         torrent_file.write_bytes(resp.content)
 
-        # aria2 lists files as "idx|path|length" lines.
-        listing = subprocess.run(
-            ["aria2c", "--show-files", str(torrent_file)],
-            capture_output=True, text=True, timeout=30,
-        )
-        if listing.returncode != 0:
-            raise DownloadError("Could not list torrent files.")
         if client == "aria2c":
+            # aria2 lists files as "idx|path|length" lines. (libtorrent reads
+            # the file list itself — asking aria2 when it isn't installed was
+            # what failed every batch on a machine with only libtorrent.)
+            listing = subprocess.run(
+                ["aria2c", "--show-files", str(torrent_file)],
+                capture_output=True, text=True, timeout=30,
+            )
+            if listing.returncode != 0:
+                raise DownloadError("Could not list torrent files.")
             target_idx = None
             target_rel = None
             for line in listing.stdout.splitlines():
@@ -724,7 +986,7 @@ class NyaaProvider:
                 if (
                     len(parts) >= 2
                     and parts[0].strip().isdigit()
-                    and self._file_is_episode(parts[1], stream.episode)
+                    and self._file_is_episode(parts[1], stream.episode, stream.season)
                 ):
                     target_idx = parts[0].strip()
                     target_rel = self._batch_rel_path(parts[1])
@@ -749,19 +1011,32 @@ class NyaaProvider:
             return video
         # libtorrent: find the file by name and set priorities.
         return self._libtorrent_batch_download(
-            str(torrent_file), workdir, stream.episode, on_progress, should_cancel
+            str(torrent_file), workdir, stream.episode, on_progress, should_cancel,
+            season=stream.season,
         )
 
     @staticmethod
-    def _file_is_episode(path: str, episode: int) -> bool:
-        """Does a batch file name identify this episode (EP 01 / E01 / - 01)?"""
-        return bool(
-            re.search(
-                rf"(?:EP|Ep|Episode|E|#)\s*0*{episode}(?!\d)"
-                rf"|(?:^|[\s\-–—(\[])\s*0*{episode}\s*(?=[\]\s\-–—.]|$)",
-                path,
-            )
-        )
+    def _file_is_episode(path: str, episode: int, season: int = 0) -> bool:
+        """Does a batch file name identify this episode (EP 01 / E01 / - 01)?
+
+        Read from the file's own name (folders are "Show S01" / "Batch" noise)
+        with the same scrubbing as release titles, so a CRC is never an
+        episode marker. In a multi-season pack a file that declares another
+        season is not this one — nor is a file inside another season's folder.
+        """
+        parts = [p for p in re.split(r"[\\/]", path.strip()) if p]
+        if not parts:
+            return False
+        name = parts[-1]
+        if season > 0:
+            for piece in (name, *parts[:-1]):
+                declared = _declared_seasons(piece)
+                if declared and season not in declared:
+                    return False
+        text = re.sub(r"\.(?:mkv|mp4|avi|webm)$", "", _episode_text(name), flags=re.IGNORECASE)
+        if _episode_ranges(text):
+            return False  # "01-02.mkv" is a double episode, never extract it as one
+        return _names_episode(text + " ", episode)[0]
 
     @staticmethod
     def _batch_rel_path(raw: str) -> Path:
@@ -1050,75 +1325,55 @@ class NyaaProvider:
                              should_cancel: Callable[[], bool] | None) -> Path | None:
         import libtorrent as lt
 
-        session = lt.session({"listen_interfaces": "0.0.0.0:6881"})
         params = lt.parse_magnet_uri(magnet)
         params.save_path = str(workdir)
-        # The magnet's own trackers plus public fallbacks — some Nyaa swarms
-        # only announce on the public UDP trackers.
-        params.trackers = [
-            "udp://tracker.opentrackr.org:1337/announce",
-            "udp://tracker.openbittorrent.com:6969/announce",
-            "udp://tracker.leechers-paradise.org:6969/announce",
+        # The magnet's own trackers PLUS public fallbacks — some Nyaa swarms
+        # only announce on the public UDP trackers. (Assigning the list used
+        # to replace the magnet's own trackers, Nyaa's among them.)
+        params.trackers = list(params.trackers) + [
+            t for t in _PUBLIC_TRACKERS if t not in params.trackers
         ]
-        handle = session.add_torrent(params)
-        started = time.monotonic()
-        last_progress = -1.0
-        # No stall timeout — a large episode downloads until done or cancelled.
-        while not handle.is_seed():
-            if should_cancel and should_cancel():
-                session.pause()
-                raise Cancelled()
-            status = handle.status()
-            if status.progress > last_progress + 0.02:
-                on_progress(status.progress)
-                last_progress = status.progress
-            time.sleep(1)
-        session.pause()
+        _lt_run(params, on_progress, should_cancel)
         return self._largest_video(workdir)
 
     def _libtorrent_batch_download(self, torrent_path: str, workdir: Path, episode: int,
                                    on_progress: Callable[[float], None],
-                                   should_cancel: Callable[[], bool] | None) -> Path | None:
+                                   should_cancel: Callable[[], bool] | None,
+                                   season: int = 0) -> Path | None:
         """Download only the requested episode's file from a batch torrent."""
         import libtorrent as lt
 
-        session = lt.session({"listen_interfaces": "0.0.0.0:6881"})
-        params = lt.parse_torrent_file(torrent_path)
-        params.save_path = str(workdir)
-        handle = session.add_torrent(params)
-
-        # Wait for the file list, then download only the matching file.
-        started = time.monotonic()
+        try:
+            info = lt.torrent_info(torrent_path)
+        except Exception as exc:  # noqa: BLE001 — a corrupt .torrent
+            raise DownloadError(f"Could not read the batch torrent: {exc}") from exc
+        # layout() is libtorrent 2.1's name for what files() used to return.
+        files = info.layout() if hasattr(info, "layout") else info.files()
         target = None
-        while target is None and time.monotonic() - started < 60:
-            try:
-                for idx, f in enumerate(handle.torrent_file().files()):
-                    if self._file_is_episode(f.path, episode):
-                        target = idx
-                        break
-            except Exception:
-                pass
-            time.sleep(0.5)
-        if target is None:
-            session.pause()
-            raise DownloadError(f"Episode {episode} not found inside the batch.")
-        for idx in range(len(handle.torrent_file().files())):
-            handle.file_priority(idx, 1 if idx == target else 0)
-
-        last_progress = -1.0
-        while True:
-            if should_cancel and should_cancel():
-                session.pause()
-                raise Cancelled()
-            status = handle.status()
-            if status.progress > last_progress + 0.02:
-                on_progress(status.progress)
-                last_progress = status.progress
-            if status.progress >= 1.0:
+        for idx in range(files.num_files()):
+            if self._file_is_episode(files.file_path(idx), episode, season):
+                target = idx
                 break
-            time.sleep(1)
-        session.pause()
-        return self._largest_video(workdir)
+        if target is None:
+            raise DownloadError(f"Episode {episode} not found inside the batch.")
+
+        params = lt.add_torrent_params()
+        params.ti = info
+        params.save_path = str(workdir)
+        # Priorities set before the torrent is added, so the unselected files
+        # are never created at all.
+        params.file_priorities = [
+            4 if idx == target else 0 for idx in range(files.num_files())
+        ]
+        params.trackers = list(_PUBLIC_TRACKERS)
+        _lt_run(params, on_progress, should_cancel)
+        # The exact file that was selected — never "the largest video", which
+        # in a batch can be a neighbour's partial file.
+        rel = self._batch_rel_path(files.file_path(target))
+        video = workdir / rel
+        if not video.is_file():
+            raise DownloadError(f"Episode {episode} was not downloaded from the batch.")
+        return video
 
     @staticmethod
     def _largest_video(workdir: Path) -> Path | None:
@@ -1133,6 +1388,106 @@ class NyaaProvider:
             and p.suffix.lower() in (".mp4", ".mkv", ".avi", ".webm")
         ]
         return max(vids, key=lambda p: p.stat().st_size) if vids else None
+
+
+# ── libtorrent ────────────────────────────────────────────────────────────────
+#
+# One session for the whole process. A session per download bound every one of
+# them to port 6881 (the second concurrent episode could not listen) and was
+# only ever paused, never torn down, so its file handles outlived the download
+# — on Windows that made cleaning the working directory fail.
+_lt_session = None
+_lt_lock = threading.Lock()
+
+
+def _lt_proxy_settings() -> dict:
+    """libtorrent proxy settings for an explicitly configured proxy.
+
+    Only an explicit proxy (Settings → Connection) is applied: the automatic
+    mode's system proxy is usually a plain HTTP proxy meant for browsers, and
+    forcing every peer connection through it would break torrents that work
+    fine directly. SOCKS5 carries trackers, DHT and peers alike.
+    """
+    from urllib.parse import unquote, urlsplit
+
+    current = net.setting()
+    if current in (net.SYSTEM, net.OFF):
+        return {"proxy_type": 0}
+    parts = urlsplit(current)
+    scheme = parts.scheme.lower()
+    user = unquote(parts.username) if parts.username else ""
+    password = unquote(parts.password) if parts.password else ""
+    if scheme.startswith("socks5"):
+        kind = 3 if user else 2  # socks5_pw / socks5
+    elif scheme.startswith("socks4"):
+        kind = 1
+    else:
+        kind = 5 if user else 4  # http_pw / http
+    return {
+        "proxy_type": kind,
+        "proxy_hostname": parts.hostname or "",
+        "proxy_port": parts.port or 0,
+        "proxy_username": user,
+        "proxy_password": password,
+        "proxy_hostnames": True,
+        "proxy_peer_connections": True,
+        "proxy_tracker_connections": True,
+    }
+
+
+def _lt_get_session():
+    import libtorrent as lt
+
+    global _lt_session
+    with _lt_lock:
+        if _lt_session is None:
+            _lt_session = lt.session({
+                # Port 0: let the OS pick, so another torrent client on the
+                # machine (or a second copy of the app) can't block this one.
+                "listen_interfaces": "0.0.0.0:0,[::]:0",
+                "enable_dht": True,
+                "enable_lsd": True,
+                "enable_upnp": True,
+                "enable_natpmp": True,
+                "connections_limit": 400,
+                "alert_mask": 0,
+            })
+        _lt_session.apply_settings(_lt_proxy_settings())
+        return _lt_session
+
+
+def _lt_run(params, on_progress: Callable[[float], None],
+            should_cancel: Callable[[], bool] | None) -> None:
+    """Add a torrent to the shared session, drive it to completion (or a
+    cancel), and always take it back out so its files are closed."""
+    session = _lt_get_session()
+    handle = session.add_torrent(params)
+    try:
+        last = -1.0
+        while True:
+            if should_cancel and should_cancel():
+                raise Cancelled()
+            status = handle.status()
+            # is_finished: every *wanted* piece is on disk (a batch's
+            # unselected files are not wanted).
+            if status.is_finished or status.is_seeding:
+                break
+            if on_progress and status.progress > last + 0.01:
+                last = status.progress
+                on_progress(status.progress)
+            time.sleep(1)
+        if on_progress:
+            on_progress(1.0)
+    finally:
+        try:
+            session.remove_torrent(handle)
+            # Removal closes the files asynchronously; wait briefly so the
+            # caller can move or delete them (Windows refuses an open file).
+            deadline = time.monotonic() + 10
+            while handle.is_valid() and time.monotonic() < deadline:
+                time.sleep(0.1)
+        except Exception:  # noqa: BLE001 — teardown must not mask the result
+            log.debug("libtorrent teardown failed", exc_info=True)
 
 
 def _pick_torrent_client() -> str:

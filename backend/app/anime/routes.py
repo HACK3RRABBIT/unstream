@@ -72,6 +72,34 @@ class AnimeDownloadRequest(BaseModel):
         return out
 
 
+def _alt_titles(media: anilist.AniMedia) -> tuple[str, ...]:
+    """The show's other names worth searching under — romaji first, since
+    fansub groups title most releases in it, then English."""
+    out: list[str] = []
+    for title in (media.title_romaji, media.title_english):
+        if title and title != media.best_title and title not in out:
+            out.append(title)
+    return tuple(out)
+
+
+def _plan_url(
+    plan: EpisodeSource, season: anilist.AniMedia, season_component: int, episode: int
+) -> str:
+    """`anime://<provider>/<animeId>/<season>/<episode>#anilist=…&title=…&alt=…`.
+
+    Every component is percent-encoded: a Nyaa plan's id is the show's title,
+    and "Fate/Zero" split into an extra path segment (the download then died
+    parsing "Zero" as a season), while a "#" in a title cut the plan short.
+    """
+    fragment = f"anilist={season.id}&title={quote(season.best_title, safe='')}"
+    for alt in _alt_titles(season):
+        fragment += f"&alt={quote(alt, safe='')}"
+    return (
+        f"anime://{quote(plan.provider, safe='')}/{quote(plan.anime_id, safe='')}/"
+        f"{season_component}/{episode}#{fragment}"
+    )
+
+
 def _episode_id(media_id: int, season: int, episode: int) -> str:
     return f"{media_id}:s{season}e{episode}"
 
@@ -234,7 +262,10 @@ def anime_detail(media_id: int, request: Request) -> dict:
     if not seasons:
         raise HTTPException(status_code=404, detail="Anime not found")
 
-    seed = anilist.get(media_id)
+    try:
+        seed = anilist.get(media_id)
+    except ProviderError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     analytics.record(
         "anime_view",
         visitor=limits.visitor(request),
@@ -345,17 +376,13 @@ def anime_download(body: AnimeDownloadRequest, request: Request) -> dict:
                 title=f"Episode {episode}",
                 artists=[anime_title],
                 album=f"{anime_title} — Season {body.season}",
-                duration_ms=24 * 60 * 60 * 1000,  # ~24 min; UI/analytics only
+                duration_ms=24 * 60 * 1000,  # ~24 min; UI/analytics only
                 cover_url=season.cover_url,
                 track_number=episode,
                 media="video",
                 subs=body.subs,
                 quality=body.episode_qualities.get(episode_key),
-                source_url=(
-                    f"anime://{plan.provider}/{plan.anime_id}/"
-                    f"{season_component}/{episode}"
-                    f"#anilist={season.id}&title={quote(season.best_title)}"
-                ),
+                source_url=_plan_url(plan, season, season_component, episode),
             )
         )
     if not tracks:
@@ -429,6 +456,7 @@ def anime_sources(media_id: int, season: int, request: Request) -> dict:
             season=season,
             episode=1,
             anilist_id=season_media.id,
+            alt_titles=_alt_titles(season_media),
         )
         capability = getattr(provider, "capabilities", None)
         if capability is None:
@@ -597,6 +625,7 @@ def _episode_provider_qualities(
             season=season,
             episode=episode,
             anilist_id=season_media_id,
+            alt_titles=_alt_titles(season_media),
         )
         if name == "nyaa":
             from . import nyaa

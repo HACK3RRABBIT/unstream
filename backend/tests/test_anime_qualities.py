@@ -158,13 +158,13 @@ def test_nyaa_episode_resolution_parsing_is_explicit(monkeypatch):
     """Only explicit NNNp / WxH markers count — not bitrates or bare digits."""
     _stub_nyaa(monkeypatch, [
         [
-            _nyaa_row(1, "[X] Show - 01 [48000Hz FLAC]", "a", 10),
-            _nyaa_row(2, "[X] Show - 01 (48000 Hz)", "b", 10),
-            _nyaa_row(3, "[X] Show 001-480", "c", 10),
-            _nyaa_row(4, "[X] Show 480", "d", 10),
-            _nyaa_row(5, "[X] Show - 01 [480p].mkv", "e", 10),
-            _nyaa_row(6, "[X] Show - 01 (1280x720)", "f", 10),
-            _nyaa_row(7, "[X] Show - 01 [1080p HEVC]", "g", 10),
+            _nyaa_row(1, "[X] One Piece - 01 [48000Hz FLAC]", "a", 10),
+            _nyaa_row(2, "[X] One Piece - 01 (48000 Hz)", "b", 10),
+            _nyaa_row(3, "[X] One Piece 001-480", "c", 10),
+            _nyaa_row(4, "[X] One Piece 480", "d", 10),
+            _nyaa_row(5, "[X] One Piece - 01 [480p].mkv", "e", 10),
+            _nyaa_row(6, "[X] One Piece - 01 (1280x720)", "f", 10),
+            _nyaa_row(7, "[X] One Piece - 01 [1080p HEVC]", "g", 10),
         ],
     ])
     got = nyaa.NyaaProvider().episode_resolutions(_episode_src(), 1)
@@ -192,7 +192,7 @@ def test_nyaa_episode_cache_serves_repeat_without_requery(monkeypatch):
 
     def fake_get(url, **kwargs):
         calls["n"] += 1
-        rows = [_nyaa_row(1, "[SubsPlease] Show - 01 (720p)", "a", 20)]
+        rows = [_nyaa_row(1, "[SubsPlease] One Piece - 01 (720p)", "a", 20)]
         return _FakeResp(_nyaa_page(*rows))
 
     monkeypatch.setattr(nyaa._client, "get", fake_get)
@@ -227,7 +227,7 @@ def test_nyaa_episode_cache_single_flights_concurrent_same_key(monkeypatch):
 
     def fake_get(url, **kwargs):
         calls["n"] += 1
-        return _FakeResp(_nyaa_page(_nyaa_row(1, "[S] Show - 01 (720p)", "a", 9)))
+        return _FakeResp(_nyaa_page(_nyaa_row(1, "[S] One Piece - 01 (720p)", "a", 9)))
 
     monkeypatch.setattr(nyaa._client, "get", fake_get)
     pr = nyaa.NyaaProvider()
@@ -290,7 +290,7 @@ def test_nyaa_episode_probe_error_never_becomes_a_verdict(monkeypatch):
     def fake_get(url, **kwargs):
         if failing["on"]:
             return Boom()
-        return _FakeResp(_nyaa_page(_nyaa_row(1, "[X] S - 01 (720p)", "a", 25)))
+        return _FakeResp(_nyaa_page(_nyaa_row(1, "[X] One Piece - 01 (720p)", "a", 25)))
 
     monkeypatch.setattr(nyaa._client, "get", fake_get)
     pr = nyaa.NyaaProvider()
@@ -317,9 +317,9 @@ def test_nyaa_episode_probe_reports_verified_qualities(monkeypatch):
     proves the resolution exists (a swarm can reseed tomorrow)."""
     _stub_nyaa(monkeypatch, [
         [
-            _nyaa_row(1, "[X] Show - 01 [720p]", "a", 50),
-            _nyaa_row(2, "[X] Show - 01 [1080p]", "b", 40),
-            _nyaa_row(3, "[X] Show - 01 [480p]", "c", 0),  # 0 seeders — released
+            _nyaa_row(1, "[X] One Piece - 01 [720p]", "a", 50),
+            _nyaa_row(2, "[X] One Piece - 01 [1080p]", "b", 40),
+            _nyaa_row(3, "[X] One Piece - 01 [480p]", "c", 0),  # 0 seeders — released
         ],
     ])
     got = nyaa.NyaaProvider().episode_resolutions(_episode_src(), 1)
@@ -331,8 +331,8 @@ def test_nyaa_episode_all_0_seeders_is_verified_not_empty(monkeypatch):
     empty discovery. Seed counts churn; the resolutions exist."""
     _stub_nyaa(monkeypatch, [
         [
-            _nyaa_row(1, "[X] Show - 01 [1080p]", "b", 0),
-            _nyaa_row(2, "[X] Show - 01 [720p]", "a", 0),
+            _nyaa_row(1, "[X] One Piece - 01 [1080p]", "b", 0),
+            _nyaa_row(2, "[X] One Piece - 01 [720p]", "a", 0),
         ],
     ])
     got = nyaa.NyaaProvider().episode_resolutions(_episode_src(), 1)
@@ -365,8 +365,8 @@ def test_nyaa_episode_one_query_hit_one_empty_still_returns_hit(monkeypatch):
     OTHER query proved — this is the exact mechanism the intermittent blank
     picker exploited."""
     pages = {
-        "One Piece S01E01": [_nyaa_row(1, "[X] Show - 01 [1080p]", "b", 60)],
-        "One Piece 1": "empty",
+        "One Piece S01E01": [_nyaa_row(1, "[X] One Piece - 01 [1080p]", "b", 60)],
+        "One Piece 01": "empty",
     }
 
     def fake_get(url, **kwargs):
@@ -426,8 +426,8 @@ def test_nyaa_episode_miss_is_unknown_not_empty(monkeypatch):
     # A listing of unrelated episodes (E02/E03) for a search that wanted E01.
     _stub_nyaa(monkeypatch, [
         [
-            _nyaa_row(1, "[X] Show - 02 [1080p]", "b", 90),
-            _nyaa_row(2, "[X] Show - 03 [720p]", "a", 80),
+            _nyaa_row(1, "[X] One Piece - 02 [1080p]", "b", 90),
+            _nyaa_row(2, "[X] One Piece - 03 [720p]", "a", 80),
         ],
     ])
     with pytest.raises(ProviderError):
@@ -920,13 +920,13 @@ def test_qualities_endpoint_nyaa_probe_uses_title_not_anilist_id(monkeypatch):
 
     # The Nyaa probe must have searched by the title, never the numeric id.
     # `episode_resolutions` issues two queries: the season-tagged form
-    # (NARUTO S01E01) and the bare-number fallback (NARUTO 1) — both must carry
+    # (NARUTO S01E01) and the zero-padded fallback (NARUTO 01) — both must carry
     # the title, neither may carry the AniList id.
     assert seen, "expected Nyaa to be queried for the episode"
     for q in seen:
         assert "16498" not in q, f"Nyaa probed by AniList id instead of title: {q}"
         assert "NARUTO" in q, f"Nyaa probe missing the searchable title: {q}"
-        assert any(tag in q for tag in ("S01E01", " 1")), f"Nyaa query missing the episode tag: {q}"
+        assert any(tag in q for tag in ("S01E01", " 01")), f"Nyaa query missing the episode tag: {q}"
 
     # anivexa still keys by the id — untouched by the fix.
     assert anivexa_ids == [16498], f"anivexa did not receive the AniList id: {anivexa_ids}"

@@ -24,6 +24,7 @@ import json
 import os
 import re
 import shutil
+from dataclasses import replace
 from pathlib import Path
 from typing import Callable
 from urllib.parse import unquote
@@ -81,20 +82,28 @@ def parse_source_url(url: str) -> EpisodeSource:
     provider, anime_id, season, episode = path.split("/", 3)
     anilist_id: int | None = None
     title = ""
+    alt_titles: list[str] = []
     for pair in fragment.split("&"):
         key, _, value = pair.partition("=")
         if key == "anilist" and value.isdigit():
             anilist_id = int(value)
         elif key == "title":
             title = unquote(value)
+        elif key == "alt" and value:
+            alt_titles.append(unquote(value))
+    try:
+        season_number, episode_number = int(season), int(episode)
+    except ValueError as exc:
+        raise DownloadError(f"Malformed anime plan: {url}") from exc
     return EpisodeSource(
         provider=provider,
         anime_id=unquote(anime_id),
         anime_title=title,
         year=None,
-        season=int(season),
-        episode=int(episode),
+        season=season_number,
+        episode=episode_number,
         anilist_id=anilist_id,
+        alt_titles=tuple(alt_titles),
     )
 
 
@@ -211,9 +220,11 @@ def _fetch_subs(stream: EpisodeStream, dest: Path) -> Path | None:
         return None
     sub = _with_ext(dest, "srt")
     try:
-        import httpx
+        from .. import net
 
-        resp = httpx.get(stream.subtitle_url, headers=stream.headers or {}, timeout=30)
+        resp = net.http_client().get(
+            stream.subtitle_url, headers=stream.headers or {}, timeout=30
+        )
         resp.raise_for_status()
         # VTT is fine for players but srt is the most portable; the site mostly
         # serves .vtt, which we keep as-is in an .srt-looking file only if it
@@ -340,7 +351,38 @@ def _probe_dimensions(video: Path) -> tuple[int | None, int | None]:
             return (width if width > 0 else None, height)
     except Exception:  # noqa: BLE001 — an unreadable file isn't worth failing on
         pass
-    return (None, _probe_height(video))
+    height = _probe_height(video)
+    if height is not None:
+        return (None, height)
+    return _probe_with_ffmpeg(video)
+
+
+# ffmpeg's own banner names every stream: "Stream #0:0(jpn): Video: h264
+# (High), yuv420p(tv, bt709, progressive), 1920x1080 [SAR 1:1 DAR 16:9], ..."
+_FFMPEG_VIDEO_RE = re.compile(r"Stream #\d+:\d+[^\n]*?: Video: [^\n]*?(\d{2,5})x(\d{2,5})")
+
+
+def _probe_with_ffmpeg(video: Path) -> tuple[int | None, int | None]:
+    """(width, height) read from `ffmpeg -i`, for a machine with no ffprobe.
+
+    ffprobe is what the checks above use, but ffmpeg is the one binary the
+    pipeline can't run without — and without *some* probe every explicit
+    resolution would be refused as "couldn't be verified".
+    """
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-i", str(video)],
+            capture_output=True, text=True, timeout=30,
+        )
+    except Exception:  # noqa: BLE001 — no ffmpeg either: nothing to read
+        return (None, None)
+    match = _FFMPEG_VIDEO_RE.search(proc.stderr or "")
+    if not match:
+        return (None, None)
+    width, height = int(match.group(1)), int(match.group(2))
+    return (width if width > 0 else None, height if height > 0 else None)
 
 
 def _check_served_quality(
@@ -476,6 +518,17 @@ def download_video_track(
                         should_cancel,
                         subs=track.subs,
                     )
+                # Verify the resolution while the file is still a bare
+                # download: a mislabeled release is refused here, before it
+                # pays for subtitle extraction, translation and a remux. (The
+                # mux copies streams, so it can't change the dimensions.)
+                width, height = _probe_dimensions(video)
+                if meta is not None:
+                    served = quality_rungs.rung(width, height)
+                    meta["provider"] = provider.name
+                    meta["served_quality"] = f"{served}p" if served else None
+                _check_served_quality(resolution, height, width)
+                audio._stop_if_cancelled(should_cancel)
                 on_progress("tagging", 1.0)
                 sub = _fetch_subs(stream, dest)
                 if sub is None and track.subs and provider.streams_hls:
@@ -496,19 +549,7 @@ def download_video_track(
                                 None, ", ".join(track.artists),
                                 source.season, source.episode, dest,
                             )
-                final = _finalize_subtitles(video, sub, track.subs, dest)
-                # The file now exists and is probed; enforce the requested
-                # resolution BEFORE the track can be marked done. A release
-                # whose real height differs from what its title claimed is a
-                # quality mismatch, not a completed download — fall through to
-                # the next provider at the same resolution.
-                width, height = _probe_dimensions(final)
-                if meta is not None:
-                    served = quality_rungs.rung(width, height)
-                    meta["provider"] = provider.name
-                    meta["served_quality"] = f"{served}p" if served else None
-                _check_served_quality(resolution, height, width)
-                return final
+                return _finalize_subtitles(video, sub, track.subs, dest)
             except (Cancelled, KeyboardInterrupt):
                 _clean_partials(dest)
                 raise
@@ -568,11 +609,22 @@ def _reanchor(provider, source: EpisodeSource) -> EpisodeSource:
     if resolve is None:
         return source
     try:
-        return resolve(
+        resolved = resolve(
             source.anime_title, source.year, anilist_id=source.anilist_id
         )
     except (ProviderError, TypeError):
         return source  # let episode_stream raise the real failure
+    # resolve() finds the *show*; it knows nothing of which episode is wanted
+    # and answers season=0/episode=0. Those — and the AniList id and other
+    # titles — belong to the plan. Dropping them sent every fallback provider
+    # looking for episode 0.
+    return replace(
+        resolved,
+        season=source.season,
+        episode=source.episode,
+        anilist_id=source.anilist_id or resolved.anilist_id,
+        alt_titles=source.alt_titles or resolved.alt_titles,
+    )
 
 
 def _chain_excluding(primary: str, excluded: set[str], quality: str):

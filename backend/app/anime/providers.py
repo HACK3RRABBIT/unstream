@@ -83,6 +83,11 @@ class EpisodeSource:
     # (anivexa) can serve an episode even when another provider resolved the
     # plan (Nyaa's anime_id is a title, which anivexa cannot read).
     anilist_id: int | None = None
+    # Other names the show is known by (AniList's romaji when the plan's title
+    # is the English one). Fansub groups mostly title releases in romaji, so a
+    # title-keyed provider (Nyaa) searches under both. Carried in the plan
+    # URL as `&alt=`.
+    alt_titles: tuple[str, ...] = ()
 
 
 @dataclass
@@ -114,6 +119,9 @@ class EpisodeStream:
     # Nyaa torrent metadata: the requested episode + whether the magnet is a
     # whole batch we must extract the single episode file from.
     episode: int = 0
+    # The season releases of this show are labeled with, so a batch holding
+    # several seasons gives up the right season's episode.
+    season: int = 0
     batch: bool = False
     torrent_id: str = ""
 
